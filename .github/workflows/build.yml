@@ -21,11 +21,13 @@ jobs:
             name: Lime-mac-arm64
             script: dist:mac
             asset: dist/*.dmg
+            app: dist/Lime-darwin-arm64/Lime.app/Contents/Resources/app
           - os: windows-latest
             target: win32-x64
             name: Lime-windows-x64
             script: dist:win
             asset: dist/*.exe
+            app: dist/Lime-win32-x64/resources/app
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -57,6 +59,11 @@ jobs:
           path: ${{ matrix.asset }}
           compression-level: 0
           retention-days: 30
+      - name: Test every tool in the packaged app
+        run: npm test -- "${{ matrix.app }}"
+        timeout-minutes: 40
+        env:
+          LIME_NO_GPU: 1
       - if: github.ref_type == 'tag'
         run: |
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --title "Lime $GITHUB_REF_NAME" --notes "Lime for Mac (Apple silicon) and Windows (64-bit). See the README for first-launch steps." || true

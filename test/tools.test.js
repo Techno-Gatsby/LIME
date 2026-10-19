@@ -158,6 +158,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   let n = 0;
   for (const c of C) {
     if (only && !only.test(c.name)) continue;
+    const missing = c.inputs.filter((f) => !fs.existsSync(f)).map((f) => path.basename(f));
+    if (missing.length) { console.log(`SKIP ${c.name.padEnd(34)} no ${missing.join(', ')} sample`); results.push({ name: c.name, status: 'SKIP', detail: missing.join(', ') }); continue; }
     n++;
     const dest = { kind: 'dir', path: path.join(OUT, String(n).padStart(3, '0')) };
     fs.mkdirSync(dest.path, { recursive: true });
@@ -169,6 +171,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); if (Date.now() - t0 > 240000) throw new Error('timeout'); }
       if (j.status !== 'done') throw new Error(`${j.status}: ${j.error}`);
       const outs = j.results.flatMap((r) => r.paths || (r.path ? [r.path] : []));
+      ok(!outs.some((o) => / x(\.[^.]+)?$/.test(path.basename(o))), `duplicate name ${outs.map((o) => path.basename(o))}`);
       await c.check(outs, j.results);
       detail = outs.map((o) => path.relative(OUT, o)).join(', ') || (j.results[0]?.note || '').split('\n')[0];
     } catch (e) { status = 'FAIL'; detail = e.message; }
@@ -176,8 +179,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     console.log(line);
     results.push({ name: c.name, status, detail });
   }
-  const fail = results.filter((r) => r.status === 'FAIL');
-  console.log(`\n${results.length - fail.length}/${results.length} passed`);
+  const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
+  console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));
   app.isQuitting = true;
   app.exit(fail.length ? 1 : 0);

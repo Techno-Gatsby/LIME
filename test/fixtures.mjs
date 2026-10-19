@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
@@ -9,8 +11,24 @@ const extra = process.argv[3] || '';
 fs.mkdirSync(dir, { recursive: true });
 const P = (f) => path.join(dir, f);
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
-const crafts = path.resolve('vendor/crafts', `${process.platform}-${process.arch}`);
-const cli = (n) => path.join(crafts, `${n}-cli`);
+const WIN = process.platform === 'win32', EXE = WIN ? '.exe' : '', PT = `${process.platform}-${process.arch}`;
+const vendored = (n, alt = n) => [path.resolve('vendor/bin', PT, n + EXE)].find((f) => fs.existsSync(f)) || alt;
+const crafts = path.resolve('vendor/crafts', PT), unpacked = fs.mkdtempSync(path.join(os.tmpdir(), 'lime-cli-'));
+const cli = (n) => {
+  const f = path.join(crafts, `${n}-cli${EXE}`);
+  if (fs.existsSync(f) || !fs.existsSync(`${f}.br`)) return f;
+  const out = path.join(unpacked, path.basename(f));
+  if (!fs.existsSync(out)) fs.writeFileSync(out, zlib.brotliDecompressSync(fs.readFileSync(`${f}.br`)), { mode: 0o755 });
+  return out;
+};
+const ffmpeg = vendored('ffmpeg'), sevenZ = vendored(WIN ? '7z' : '7zz', '7z');
+const TAR = WIN ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+const NOTO = path.resolve('vendor/data/fonts/NotoSans-Regular.ttf');
+const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+const label = async (w, h, bg, fg, size, x, y, out) => {
+  const text = await sharp({ text: { text: `<span foreground="${fg}">${esc(SENTENCE)}</span>`, font: `Noto Sans ${size}`, fontfile: NOTO, rgba: true, dpi: 72 } }).png().toBuffer();
+  await sharp({ create: { width: w, height: h, channels: 3, background: bg } }).composite([{ input: text, left: x, top: y }]).png().toFile(out);
+};
 const SENTENCE = 'The quick brown fox jumps over the lazy dog. Invoice 2026-0419 total due: $1,284.50 by October 31.';
 fs.writeFileSync(P('sentence.txt'), SENTENCE);
 
@@ -21,9 +39,9 @@ await sharp(P('photo.jpg')).resize(640).webp().toFile(P('photo.webp'));
 await sharp(P('photo.jpg')).resize(400).toFile(P('photo2.jpg'));
 await sharp(P('photo.jpg')).resize(500).tiff().toFile(P('photo.tiff'));
 await sharp({ create: { width: 600, height: 600, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><circle cx="300" cy="300" r="220" fill="#86c23a"/></svg>') }]).png().toFile(P('alpha.png'));
-sh('convert', ['-size', '1400x220', 'xc:white', '-font', 'DejaVu-Sans', '-pointsize', '22', '-fill', '#222', '-annotate', '+30+120', SENTENCE, P('text.png')]);
-sh('convert', ['-size', '900x70', 'xc:#1e1e1e', '-font', 'DejaVu-Sans', '-pointsize', '15', '-fill', '#ddd', '-annotate', '+10+40', SENTENCE, P('dark-text.png')]);
-try { sh('heif-enc', ['-q', '80', P('photo.png'), '-o', P('photo.heic')]); } catch (_) { console.log('no heif-enc; HEIC sample skipped'); }
+await label(1400, 220, '#ffffff', '#222222', 22, 30, 98, P('text.png'));
+await label(900, 70, '#1e1e1e', '#dddddd', 15, 10, 25, P('dark-text.png'));
+try { process.platform === 'darwin' ? sh('sips', ['-s', 'format', 'heic', P('photo.png'), '--out', P('photo.heic')]) : sh('heif-enc', ['-q', '80', P('photo.png'), '-o', P('photo.heic')]); } catch (_) { console.log('no HEIC encoder; HEIC sample skipped'); }
 try { sh(cli('photocraft'), ['convert', P('photo.png'), P('layers.psd')]); } catch (e) { console.log('psd', e.message); }
 try { sh(cli('lightcraft'), ['synth-merge', 'hdr', '-o', P('hdr')]); fs.copyFileSync(P('hdr/bracket-1.dng'), P('raw.dng')); } catch (e) { console.log('dng', e.message); }
 
@@ -83,19 +101,18 @@ s2.addTable([['Fruit', 'Count'], ['Lime', '12']], { x: 0.5, y: 1.5, w: 6 });
 s2.addShape(deck.ShapeType.ellipse, { x: 7, y: 2, w: 2, h: 2, fill: { color: '86C23A' } });
 await deck.writeFile({ fileName: P('deck.pptx') });
 
-sh('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', P('clip.mp4')]);
-sh('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=660', '-t', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', P('clip2.mp4')]);
-sh('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=44100', '-t', '3', P('tone.wav')]);
-sh('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=550:sample_rate=44100', '-t', '2', '-c:a', 'libmp3lame', '-b:a', '128k', P('tone.mp3')]);
+sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '4', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', P('clip.mp4')]);
+sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=660', '-t', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', P('clip2.mp4')]);
+sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=44100', '-t', '3', P('tone.wav')]);
+sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=550:sample_rate=44100', '-t', '2', '-c:a', 'libmp3lame', '-b:a', '128k', P('tone.mp3')]);
 fs.writeFileSync(P('sub.srt'), '1\n00:00:00,500 --> 00:00:02,000\nHello Lime\n\n2\n00:00:02,500 --> 00:00:03,800\nSecond line\n');
-const sevenZ = fs.existsSync(path.resolve('vendor/bin', `${process.platform}-${process.arch}`, '7zz')) ? path.resolve('vendor/bin', `${process.platform}-${process.arch}`, '7zz') : '7z';
 fs.mkdirSync(P('folder/inner'), { recursive: true });
 fs.writeFileSync(P('folder/a.txt'), 'alpha');
 fs.writeFileSync(P('folder/inner/b.txt'), 'beta');
 for (const [f, t] of [['archive.zip', 'zip'], ['archive.7z', '7z']]) { fs.rmSync(P(f), { force: true }); sh(sevenZ, ['a', `-t${t}`, P(f), 'a.txt', 'inner'], { cwd: P('folder') }); }
-sh('tar', ['-czf', P('archive.tar.gz'), '-C', P('folder'), '.']);
+sh(TAR, ['-czf', P('archive.tar.gz'), '-C', P('folder'), '.']);
 
-const cadS = extra || '';
+const cadS = extra || path.join(import.meta.dirname, 'cad');
 for (const f of ['test.dxf', 'sample_2018.dwg', 'as1.stp', 'cube.igs']) if (cadS && fs.existsSync(path.join(cadS, f))) fs.copyFileSync(path.join(cadS, f), P(f === 'as1.stp' ? 'part.stp' : f));
 const cad = require(path.resolve('src/main/engines/cad.js'));
 const cube = { pos: Float32Array.from([0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 10, 0, 0, 0, 10, 10, 0, 10, 10, 10, 10, 0, 10, 10]), idx: Uint32Array.from([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]) };
@@ -106,4 +123,5 @@ for (const [f, t] of [['logo.ai', 'ai'], ['logo.eps', 'eps']]) try { sh(cli('vec
 try { sh(cli('designcraft'), ['run', '--sample', '--export', P('layout.idml')]); } catch (e) { console.log('idml', e.message); }
 try { sh(cli('effectcraft'), ['--demo', 'exec', 'file.exportLottie', '--params', JSON.stringify({ path: P('anim.json') })]); } catch (e) { console.log('lottie', e.message); }
 try { sh(cli('filmcraft'), ['--demo', 'exec', 'file.exportOtio', `path=${P('timeline.otio')}`]); } catch (e) { console.log('otio', e.message); }
+fs.rmSync(unpacked, { recursive: true, force: true });
 console.log('fixtures in', dir, fs.readdirSync(dir).length, 'files');

@@ -1,0 +1,5 @@
+Sample CAD files used only by the tool tests (not shipped in Lime).
+sample_2018.dwg  LibreDWG test data (GPL-3.0)  https://github.com/LibreDWG/libredwg/blob/master/test/test-data/sample_2018.dwg
+as1.stp          CAx-IF AS1 assembly via occt-import-js (LGPL-2.1)  https://github.com/kovacsv/occt-import-js/blob/main/test/testfiles/cax-if/as1_pe_203.stp
+cube.igs         occt-import-js test file (LGPL-2.1)  https://github.com/kovacsv/occt-import-js/blob/main/test/testfiles/cube-10x10mm/Cube%2010x10.igs
+test.dxf         written for Lime

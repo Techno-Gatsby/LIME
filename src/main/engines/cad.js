@@ -765,8 +765,7 @@ async function convert(p, opts, ctx) {
     if (['ai', 'eps', 'emf', 'wmf'].includes(to)) {
       const tmp = path.join(await U.tmpDir('cad'), `${U.base(p)}.svg`);
       await fsp.writeFile(tmp, drawingSvg(items, { ...opts, transparent: true }).svg);
-      fsp.rm(out, { force: true }).catch(() => {});
-      return require('./crafts').vector(tmp, { to }, { ...ctx, out: { ...ctx.out, file: (s, n) => ctx.out.file(p, n) } });
+      return require('./crafts').vector(tmp, { to }, { ...ctx, out: { ...ctx.out, file: () => out } });
     }
     throw new Error(`Drawings can be saved as SVG, PDF, PNG, JPG or DXF, not ${to.toUpperCase()}.`);
   }

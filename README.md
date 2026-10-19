@@ -60,8 +60,9 @@ Bundled, all offline: MuPDF and pdf-lib, libvips (sharp), FFmpeg 6.1, 7-Zip 26, 
 npm install
 npm run engines            # engines for this computer
 npm start                  # run in development
+npm test                   # run every tool on generated samples (add a packaged app folder to test that build)
 npm run dist:mac           # dist/Lime-1.0.0-arm64.dmg
-npm run dist:win           # dist/Lime-Setup-1.0.0-x64.exe (needs NSIS and 7-Zip)
+npm run dist:win           # dist/Lime-Setup-1.0.0-x64.exe (needs 7-Zip; NSIS too when not on Windows)
 ```
 
 The ArtCraft source code is linked under `crafts/` at the exact versions Lime bundles (`git submodule update --init` fetches it). Builds use the projects' official signed release binaries.
