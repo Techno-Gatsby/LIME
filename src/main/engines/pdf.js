@@ -32,7 +32,7 @@ async function loadLib(p, password) {
     return d;
   } catch (_) {
     const { doc } = await readPdf(p, password);
-    const clean = doc.saveToBuffer('garbage=compact,encrypt=none').asUint8Array();
+    const clean = Buffer.from(doc.saveToBuffer('garbage=compact,encrypt=none').asUint8Array());
     return PDFDocument.load(clean, { updateMetadata: false });
   }
 }
@@ -318,13 +318,13 @@ async function readMetadata(input) {
 
 async function repair(input, out) {
   const { doc } = await readPdf(input);
-  await fsp.writeFile(out, doc.saveToBuffer('garbage=deduplicate,compress=yes,clean=yes').asUint8Array());
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('garbage=deduplicate,compress=yes,clean=yes').asUint8Array()));
   return out;
 }
 async function flatten(input, out) {
   const { doc } = await readPdf(input);
   doc.bake(true, true);
-  await fsp.writeFile(out, doc.saveToBuffer('garbage=deduplicate,compress=yes').asUint8Array());
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('garbage=deduplicate,compress=yes').asUint8Array()));
   return out;
 }
 async function protect(input, opts, out) {
@@ -339,7 +339,7 @@ async function protect(input, opts, out) {
   const owner = opts.ownerPassword || opts.userPassword + '\u0001owner';
   const esc = (s) => String(s).replace(/,/g, '');
   const enc = `encrypt=aes-256,user-password=${esc(opts.userPassword || '')},owner-password=${esc(owner)},permissions=${p | 0},garbage=compact`;
-  await fsp.writeFile(out, doc.saveToBuffer(enc).asUint8Array());
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer(enc).asUint8Array()));
   return out;
 }
 async function unlock(input, opts, out) {
@@ -349,7 +349,7 @@ async function unlock(input, opts, out) {
   if (doc.needsPassword() && !doc.authenticatePassword(opts.password || '')) {
     throw new Error(opts.password ? 'That password is wrong. Check it and try again.' : 'This PDF needs its password to unlock.');
   }
-  await fsp.writeFile(out, doc.saveToBuffer('encrypt=none,garbage=compact').asUint8Array());
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('encrypt=none,garbage=compact').asUint8Array()));
   return out;
 }
 async function redact(input, opts, out) {
@@ -381,7 +381,7 @@ async function redact(input, opts, out) {
     if (rects.length) page.applyRedactions(opts.boxes !== false, 2, 1, 0);
   }
   if (!hits) throw new Error('None of those words or patterns appear in this PDF, so nothing was redacted.');
-  await fsp.writeFile(out, doc.saveToBuffer('garbage=deduplicate,compress=yes,clean=yes').asUint8Array());
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('garbage=deduplicate,compress=yes,clean=yes').asUint8Array()));
   return { path: out, note: `Redacted ${hits} match${hits === 1 ? '' : 'es'}` };
 }
 const quadRect = (q) => [Math.min(q[0], q[4]), Math.min(q[1], q[3]), Math.max(q[2], q[6]), Math.max(q[5], q[7])];
@@ -684,7 +684,7 @@ async function compress(input, opts, out, ctx) {
   const mid = await doc.save({ useObjectStreams: true });
   const m = await mupdf();
   const md = m.Document.openDocument(mid, 'application/pdf');
-  const final = md.saveToBuffer('garbage=deduplicate,compress=yes,compress-fonts=yes,compress-images=yes,objstms=yes').asUint8Array();
+  const final = Buffer.from(md.saveToBuffer('garbage=deduplicate,compress=yes,compress-fonts=yes,compress-images=yes,objstms=yes').asUint8Array());
   const best = final.length < mid.length ? final : mid;
   if (best.length >= before) {
     await fsp.copyFile(input, out);

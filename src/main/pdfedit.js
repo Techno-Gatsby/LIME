@@ -36,7 +36,7 @@ async function open(file, password) {
   }
   const s = { id: ++seq, path: file, password, undo: [], redo: [], dirty: false };
 
-  const clean = probe.needsPassword() ? probe.saveToBuffer('encrypt=none').asUint8Array() : bytes;
+  const clean = probe.needsPassword() ? Buffer.from(probe.saveToBuffer('encrypt=none').asUint8Array()) : bytes;
   await loadState(s, clean);
   sessions.set(s.id, s);
   return info(s);
@@ -106,7 +106,7 @@ async function apply(id, edits) {
       page.applyRedactions(false, 0, 0, 0);
     }
   }
-  const redacted = work.saveToBuffer('garbage=compact').asUint8Array();
+  const redacted = Buffer.from(work.saveToBuffer('garbage=compact').asUint8Array());
 
   const doc = await PDFDocument.load(redacted, { updateMetadata: false });
   const fonts = P.fontCache(doc);

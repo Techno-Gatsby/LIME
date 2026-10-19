@@ -39,7 +39,15 @@ async function open(p, opts = {}) {
     if (preview) return s(preview, lim);
     throw new Error('This camera RAW file has no embedded preview. Open it in LightCraft from Studio Apps to develop it.');
   }
+  if (e === 'jxl') return s(await jxlDecode(p), lim);
   return s(await ffmpegDecode(p), lim);
+}
+async function jxlDecode(p) {
+  const dir = await U.tmpDir('dec');
+  const out = await require('./crafts').render(p, path.join(dir, 'frame.png'));
+  const buf = await fsp.readFile(out);
+  fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  return buf;
 }
 async function ffmpegDecode(p) {
   const dir = await U.tmpDir('dec');
@@ -97,9 +105,11 @@ async function writeAs(pipe, to, out, opts = {}) {
   await pipe.png().toFile(tmp);
   const args = ['-v', 'error', '-y', '-i', tmp];
   if (to === 'bmp') args.push('-pix_fmt', 'bgr24');
-  if (to === 'jxl') args.push('-c:v', 'libjxl', '-distance', '1');
   args.push('-frames:v', '1', out);
-  try { await U.run(U.binPath('ffmpeg'), args, { errorMessage: `Couldn’t write ${to.toUpperCase()}` }); } finally { fsp.rm(tmp, { force: true }).catch(() => {}); }
+  try {
+    if (to === 'jxl') await require('./crafts').render(tmp, out, { quality: q });
+    else await U.run(U.binPath('ffmpeg'), args, { errorMessage: `Couldn’t write ${to.toUpperCase()}` });
+  } finally { fsp.rm(tmp, { force: true }).catch(() => {}); }
   return out;
 }
 async function makeIco(png) {

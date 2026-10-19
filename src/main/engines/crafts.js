@@ -61,6 +61,12 @@ async function photo(p, opts, ctx) {
   await run('photocraft', args, ctx, `Rendering with PhotoCraft`);
   return out;
 }
+async function render(p, out, opts = {}, ctx) {
+  const args = ['render', p, '-o', out, '--opt', 'metadata=none'];
+  if (opts.quality) args.push('--quality', String(opts.quality));
+  await run('lightcraft', args, ctx, 'Rendering with LightCraft');
+  return out;
+}
 async function develop(p, opts, ctx) {
   const to = opts.to || 'jpg';
   const out = ctx.out.file(p, `${U.base(p)}${opts.auto ? '-enhanced' : ''}.${to}`);
@@ -212,4 +218,4 @@ function status() {
   return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) }));
 }
 
-module.exports = { APPS, cli, photo, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, appFor, openApp, status };
+module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, appFor, openApp, status };

@@ -1,3 +1,3 @@
-test/cad/*.dxf -text
-test/cad/*.stp -text
-test/cad/*.igs -text
+test/samples/*.dxf -text
+test/samples/*.stp -text
+test/samples/*.igs -text
