@@ -1,65 +1,73 @@
-# Clementine
+# Lime
 
-An offline file converter, PDF editor and media toolkit for Windows. Drag a file, tap a key, drop: a wheel opens under your pointer with the formats and tools that fit that file. Everything runs on your PC; nothing is uploaded.
+A drop-anything converter that lives on your desktop as a small wheel. Drop files on it, spin or click a petal, and Lime converts, compresses or edits them. Everything runs on your computer; nothing is uploaded.
 
 ## Install
 
-- **Installer:** run `Clementine-Setup-1.0.0.exe`. Per-user install, no admin rights. Adds “Convert with Clementine” to the File Explorer right-click menu and to Send To.
-- **Portable:** unzip `Clementine-1.0.0-x64-portable.zip` anywhere and run `Clementine.exe`. Turn on the Explorer menu in Settings › Quick wheel.
+### Mac (Apple silicon)
 
-Windows 10 or 11, 64-bit. The installer isn’t code-signed yet, so SmartScreen will warn: choose **More info › Run anyway**.
+1. Open `Lime-1.0.0-arm64.dmg` and drag **Lime** onto **Applications**.
+2. Open Lime from Applications or Launchpad. The wheel appears on your desktop and a lime icon appears in the menu bar.
 
-## Using it
+Apple hasn't notarised Lime yet, so macOS blocks the first launch:
 
-| Where | How |
+- **macOS 15 and later:** open Lime once and click **Done**. Then go to **System Settings › Privacy & Security**, scroll down and click **Open Anyway**.
+- **macOS 13–14:** right-click Lime in Applications › **Open** › **Open**.
+- If macOS says Lime "is damaged", run this once in Terminal: `xattr -dr com.apple.quarantine /Applications/Lime.app`
+
+### Windows 10 / 11 (64-bit)
+
+Run `Lime-Setup-1.0.0-x64.exe`. It installs for your account only, with no admin rights needed. It adds Start menu and desktop shortcuts, plus **Convert with Lime** in the File Explorer right-click menu.
+
+The installer isn't code-signed yet, so SmartScreen shows a warning: click **More info › Run anyway**. On a managed work laptop, IT policy may block unsigned apps entirely; if so, ask IT to allow `Lime.exe`.
+
+## Using the wheel
+
+| Do this | What happens |
 |---|---|
-| In the window | Drop files on Home to see every tool that fits, or open a tool from the sidebar. |
-| Quick wheel | While dragging, tap **Shift** (convert), **Ctrl** (tools) or **Alt** (actions). Drop on a slice. |
-| File Explorer | Right-click › **Convert with Clementine** (Windows 11: *Show more options*), or select files and press **Ctrl+Shift+Space**. |
-| Drop dock | Settings › Drop dock: a small target above the taskbar. |
+| Drop files on the wheel | Petals show what those files can become. Click a petal, or scroll / use the arrow keys and press Return. |
+| **Convert · Tools · More** | Switches the ring (or press Tab). **More** lists every tool that fits. |
+| Right-click a petal | Options for that tool (quality, size, pages, password…). |
+| Drag the centre after a job | Drags the results into any app or folder. |
+| **Control + Option + L** (Windows: **Ctrl + Alt + L**) | Shows or hides the wheel. On a Mac with files selected in Finder, opens them in the wheel. |
+| Menu bar / tray icon | Show the wheel, choose files, recent results, settings. |
 
-Results save next to the original with a new name (or to one folder of your choice). Originals are never changed.
+Lime asks where to save each result. To save next to the original instead, switch this off in Settings. Originals are never changed.
 
-## What it does (67 tools)
+## What it does (85 tools)
 
-**PDF** — edit existing text (true removal, not white boxes), add text, images, shapes, highlights, drawing, signatures; merge, split, compress (real image recompression), rotate, crop, organise pages, remove/extract pages, page numbers, watermark, redact (words and patterns like emails, phone and card numbers), protect (AES-256) and unlock, OCR (searchable PDFs), repair, flatten, metadata, extract images; PDF ↔ Word, PowerPoint, Excel, JPG/PNG, text, HTML; Word/PowerPoint/Excel/HTML/images → PDF.
+**PDF** — edit text, sign, organise pages, merge, split, compress, optimise, rotate, crop, page numbers, watermark, redact and check redactions, protect and unlock, searchable PDF (OCR), repair, flatten, extract images. Also PDF to Word, PowerPoint, Excel, images, text, HTML and SVG, and anything to PDF.
 
-**Images** — convert (JPG, PNG, WebP, AVIF, HEIC in, TIFF, GIF, BMP, ICO, JPEG XL, PSD in, RAW previews), compress, resize, smart crop, background removal (on-device AI), upscale (AI with Real-ESRGAN), rotate/flip, photo adjustments and filters, watermark, meme, strip EXIF/GPS, collage, GIF maker, OCR, web page screenshots.
+**Images** — convert (HEIC, RAW, PSD/PSB, EXR, WebP, AVIF, JPEG XL, TIFF and more), develop RAW, auto-enhance, HDR merge, panorama, compress, resize, crop, remove background (on-device AI), upscale, rotate, adjust, watermark, remove photo info, collage, GIF maker, and image to text (OCR in 13 languages).
 
-**Video & audio** — convert (MP4/H.264, HEVC, WebM, MOV, MKV, AVI, WMV, GIF; MP3, M4A, WAV, FLAC, OGG, Opus, AIFF, WMA), compress (by quality or target size), trim, merge (mixed sizes OK), extract audio, mute, resize, rotate, speed, video to GIF, frames, burn subtitles, loudness levelling, photo slideshows, subtitle conversion.
+**Video and audio** — convert (MP4, MOV, HEVC, WebM, MKV, AVI, GIF; MP3, M4A, WAV, FLAC, OGG, Opus), compress, trim, merge, extract audio, mute, resize, rotate, speed, video to GIF or frames, subtitles, loudness and slideshows. Lottie animations and edit timelines (OTIO, FCPXML) render to video.
 
-**Documents** — Word, ODT, RTF, Markdown, HTML, EPUB, text, PowerPoint formats; spreadsheets (XLSX, XLS, ODS, CSV, TSV, JSON, HTML, PDF); merge any mix of documents into one PDF; merge workbooks.
+**Documents** — Word, ODT, RTF, Markdown, HTML, EPUB and text; spreadsheets (XLSX, XLS, ODS, CSV, JSON); slides (PowerPoint); page layouts (IDML) to PDF, EPUB or PowerPoint; merge documents into one PDF. On a Mac with Pages, Numbers or Keynote installed, their files convert too.
 
-**Archives** — extract 40+ formats including RAR/RAR5, 7Z, ISO, CAB, TAR.GZ; create ZIP/7Z/TAR.GZ/TAR.XZ with AES-256 passwords and split volumes; convert and test archives.
+**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ, PLY, GLB and 3MF. Drawings convert to PDF, SVG, PNG, DXF, AI, EPS or EMF; 3D models convert between formats and to rendered images; plus measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
 
-**Utilities** — checksums (MD5/SHA-1/SHA-256/SHA-512 with compare), batch rename.
+**Archives** — extract 40+ formats including RAR, 7Z and ISO; create ZIP, 7Z or TAR.GZ with passwords; convert and test archives.
 
-**Studio apps** — installs, updates and launches the seven open-source ArtCraft Crafting Apps (PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, EffectCraft, DesignCraft) from their official releases, and opens your files in them.
+**Utilities** — checksums, batch rename.
 
 ## Engines
 
-Bundled: MuPDF + pdf-lib, libvips (sharp), FFmpeg 8.1, 7-Zip 26, Tesseract, IMG.LY background removal.
-Optional, one click in Settings › Engines: **LibreOffice** (best Office fidelity), **Pandoc** (EPUB/markup), **Real-ESRGAN** (AI upscaling, needs a Vulkan GPU).
-
-## Known limits
-
-- PDF text editing replaces whole lines using a matched standard font (Noto/Helvetica family), not the document’s embedded font. Rotated or vertical text can’t be edited in place; erase it and add new text.
-- PDF → Word rebuilds paragraphs, headings and images; complex layouts won’t match exactly. Choose “Keep layout” (needs LibreOffice) for positional fidelity.
-- Office ↔ PDF without LibreOffice uses built-in converters that handle text and simple formatting; install LibreOffice for complex documents and all PowerPoint conversions.
-- On Windows 11 the right-click entry sits under “Show more options”.
-- Not code-signed.
+Bundled, all offline: MuPDF and pdf-lib, libvips (sharp), FFmpeg 6.1, 7-Zip 26, Tesseract, IMG.LY background removal, LibreDWG, Open CASCADE, and the command-line engines of the seven ArtCraft apps (PhotoCraft, LightCraft, VectorCraft, DesignCraft, EffectCraft, FilmCraft, PdfCraft). If LibreOffice is installed, Lime uses it for the most faithful Office conversions.
 
 ## Build from source
 
-```
+```sh
 npm install
-npm run fetch-engines      # FFmpeg, 7-Zip, OCR model, fonts → vendor/
+npm run engines            # engines for this computer
 npm start                  # run in development
-npm test                   # end-to-end engine tests (43 cases)
-npm run dist               # Windows installer + zip in dist/ (on Linux, needs Wine)
+npm run dist:mac           # dist/Lime-1.0.0-arm64.dmg
+npm run dist:win           # dist/Lime-Setup-1.0.0-x64.exe (needs NSIS and 7-Zip)
 ```
-`.github/workflows/build-windows.yml` builds the installer on a Windows runner.
+
+The ArtCraft source code is linked under `crafts/` at the exact versions Lime bundles (`git submodule update --init` fetches it). Builds use the projects' official signed release binaries.
+
+Building the Mac DMG on Linux needs `rcodesign`, `mkfs.hfsplus`, and the `hfsplus` and `dmg` tools from libdmg-hfsplus; set `RCODESIGN`, `HFSPLUS` and `DMG` if they aren't on PATH. Set `LIME_ELECTRON_ZIPS` to a folder of Electron zips to build offline.
 
 ## Licence
 
-AGPL-3.0-or-later (required by MuPDF). Third-party notices: `LICENSES/THIRD-PARTY-NOTICES.txt`.
+AGPL-3.0-or-later. See `LICENSES/THIRD-PARTY-NOTICES.txt` for the components Lime is built on.

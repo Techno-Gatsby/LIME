@@ -1,0 +1,21 @@
+[submodule "crafts/photocraft"]
+	path = crafts/photocraft
+	url = https://github.com/storytold/photocraft.git
+[submodule "crafts/lightcraft"]
+	path = crafts/lightcraft
+	url = https://github.com/storytold/lightcraft.git
+[submodule "crafts/vectorcraft"]
+	path = crafts/vectorcraft
+	url = https://github.com/storytold/vectorcraft.git
+[submodule "crafts/designcraft"]
+	path = crafts/designcraft
+	url = https://github.com/storytold/designcraft.git
+[submodule "crafts/effectcraft"]
+	path = crafts/effectcraft
+	url = https://github.com/storytold/effectcraft.git
+[submodule "crafts/filmcraft"]
+	path = crafts/filmcraft
+	url = https://github.com/storytold/filmcraft.git
+[submodule "crafts/pdfcraft"]
+	path = crafts/pdfcraft
+	url = https://github.com/storytold/pdfcraft.git

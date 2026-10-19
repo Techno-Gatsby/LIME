@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron .",
     "engines": "node scripts/engines.mjs",
-    "test": "node test/engines.test.js",
+    "test": "node test/run.mjs",
     "dist:mac": "node scripts/dist-mac.mjs",
     "dist:win": "node scripts/dist-win.mjs"
   },
@@ -34,6 +34,10 @@
     "xlsx": "0.18.5"
   },
   "devDependencies": {
+    "@electron/packager": "20.3.0",
     "electron": "44.9.0"
+  },
+  "overrides": {
+    "sharp": "$sharp"
   }
 }

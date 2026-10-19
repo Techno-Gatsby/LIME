@@ -1,0 +1,40 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { packager } from '@electron/packager';
+
+export const ROOT = path.resolve(import.meta.dirname, '..');
+export const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+export const V = path.join(ROOT, 'vendor'), OUT = path.join(ROOT, 'dist');
+export const sh = (c, a, o = {}) => execFileSync(c, a, { stdio: ['ignore', 'ignore', 'inherit'], ...o });
+export const which = (env, ...n) => process.env[env] || n.find((x) => { try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [x], { stdio: 'ignore' }); return true; } catch { return false; } });
+export const rm = (...p) => fs.rmSync(path.join(...p), { recursive: true, force: true });
+export const ls = (d) => (fs.existsSync(d) ? fs.readdirSync(d) : []);
+
+const KEEP = /^\/(src|build|node_modules|package\.json)(\/|$)/;
+const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests__|docs?|examples?|benchmarks?|\.github)\/|\/(?!licen[cs]e|copying|notice)[^/]*\.(md|markdown|map|ts|tsbuildinfo|flow)$/i;
+
+export async function pack(platform, arch, opts) {
+  const T = `${platform}-${arch}`;
+  if (!fs.existsSync(path.join(V, 'crafts', T, 'manifest.json'))) execFileSync(process.execPath, [path.join(ROOT, 'scripts/engines.mjs'), T], { stdio: 'inherit' });
+  const slim = ({ buildPath }) => {
+    const nm = path.join(buildPath, 'node_modules');
+    for (const d of ls(path.join(nm, '@img'))) if (d.startsWith('sharp-')) rm(nm, '@img', d);
+    fs.cpSync(path.join(V, 'npm', T, '@img'), path.join(nm, '@img'), { recursive: true });
+    const ort = path.join(nm, 'onnxruntime-node/bin/napi-v3');
+    for (const os of ls(ort)) for (const a of ls(path.join(ort, os))) if (`${os}-${a}` !== T) rm(ort, os, a);
+    for (const f of ls(path.join(nm, 'tesseract.js-core'))) if (/^tesseract-core/.test(f) && !/simd-lstm/.test(f)) rm(nm, 'tesseract.js-core', f);
+  };
+  const [dir] = await packager({
+    dir: ROOT, out: OUT, platform, arch, overwrite: true, asar: false, prune: true, quiet: true,
+    name: pkg.productName, executableName: pkg.productName, appVersion: pkg.version, buildVersion: pkg.version,
+    appCopyright: 'Open source · see resources/LICENSES', electronZipDir: process.env.LIME_ELECTRON_ZIPS,
+    ignore: (p) => !!p && (!KEEP.test(p) || DROP.test(p)), afterPrune: [slim], ...opts,
+  });
+  return { dir, T };
+}
+
+export function addResources(res, T) {
+  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], ['data', 'data']]) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
+  fs.cpSync(path.join(ROOT, 'LICENSES'), path.join(res, 'LICENSES'), { recursive: true });
+}
