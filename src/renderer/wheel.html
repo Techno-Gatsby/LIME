@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' media:">
+<title>Lime</title>
+<link rel="stylesheet" href="lime.css">
+<link rel="stylesheet" href="wheel.css">
+</head>
+<body>
+<div id="stage" class="idle">
+  <div class="pill" role="tablist" aria-label="Mode"></div>
+  <div class="wheel">
+    <svg class="dial" viewBox="-150 -150 300 300" aria-hidden="true">
+      <defs>
+        <radialGradient id="gBody" cx="50%" cy="38%" r="62%"><stop offset="0" class="s-body-hi"/><stop offset="1" class="s-body-lo"/></radialGradient>
+        <linearGradient id="gPetal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s-petal-hi"/><stop offset="1" class="s-petal-lo"/></linearGradient>
+        <radialGradient id="gHot" cx="50%" cy="30%" r="80%"><stop offset="0" class="s-hot-hi"/><stop offset="1" class="s-hot-lo"/></radialGradient>
+        <radialGradient id="gBtn" cx="50%" cy="28%" r="75%"><stop offset="0" class="s-btn-hi"/><stop offset="1" class="s-btn-lo"/></radialGradient>
+        <linearGradient id="gProg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5aad3c"/><stop offset="1" stop-color="#24561a"/></linearGradient>
+      </defs>
+      <circle class="halo" r="141"/>
+      <circle class="body" r="132"/>
+      <circle class="rim" r="131.2"/>
+      <circle class="edge" r="132"/>
+      <g class="petals"></g>
+      <circle class="track" r="139"/>
+      <path class="prog" d=""/>
+      <circle class="btn" r="42"/>
+      <circle class="btn-rim" r="42"/>
+    </svg>
+    <div class="center" draggable="false"></div>
+  </div>
+  <div class="caption"><b class="name"></b><span class="meta"></span></div>
+  <div class="card" hidden></div>
+</div>
+<script type="module" src="wheel.js"></script>
+</body>
+</html>

@@ -1,0 +1,493 @@
+'use strict';
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, nativeTheme, Tray, Menu, globalShortcut, screen, clipboard, Notification, nativeImage } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const fsp = fs.promises;
+const os = require('os');
+const crypto = require('crypto');
+const { Worker } = require('worker_threads');
+const { pathToFileURL } = require('url');
+const { execFile } = require('child_process');
+
+const isMac = process.platform === 'darwin';
+const isWin = process.platform === 'win32';
+const ROOT = path.join(__dirname, '..', '..');
+const RENDERER = path.join(__dirname, '..', 'renderer');
+const RES = app.isPackaged ? process.resourcesPath : path.join(ROOT, 'vendor');
+const BIN = app.isPackaged ? path.join(RES, 'bin') : path.join(ROOT, 'vendor', 'bin', `${process.platform}-${process.arch}`);
+const DATA = path.join(RES, 'data');
+const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
+const asset = (n) => path.join(ROOT, 'build', n);
+
+app.setName('Lime');
+if (isWin) app.setAppUserModelId('app.lime.converter');
+if (process.env.LIME_NO_GPU) app.disableHardwareAcceleration();
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
+  { scheme: 'media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
+]);
+if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
+
+let incoming = new Set(), incomingT = null;
+const takeFiles = (list) => {
+  list.filter((f) => f && path.isAbsolute(f) && fs.existsSync(f) && path.resolve(f) !== path.resolve(process.execPath)).forEach((f) => incoming.add(f));
+  clearTimeout(incomingT);
+  incomingT = setTimeout(() => { const files = [...incoming]; incoming = new Set(); if (app.isReady()) showWheel(files.length ? files : null); }, 300);
+};
+const argFiles = (argv) => argv.slice(1).filter((a) => !a.startsWith('-') && a !== '.');
+app.on('open-file', (e, f) => { e.preventDefault(); takeFiles([f]); });
+app.on('second-instance', (e, argv) => takeFiles(argFiles(argv)).length || showWheel());
+
+const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
+const DEFAULTS = { theme: 'system', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, recent: [], signatures: [] };
+let settings = { ...DEFAULTS };
+let saveT = null;
+const loadSettings = () => {
+  try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS(), 'utf8')) }; } catch (_) { settings = { ...DEFAULTS }; }
+  if (!settings.outFolder) settings.outFolder = path.join(app.getPath('downloads'), 'Lime');
+};
+const saveSettings = () => { clearTimeout(saveT); saveT = setTimeout(() => fsp.writeFile(SETTINGS(), JSON.stringify(settings, null, 1)).catch(() => {}), 200); };
+const publicSettings = () => { const { recent, ...rest } = settings; return { ...rest, platform: process.platform }; };
+function addRecent(paths, kind) {
+  const at = Date.now();
+  settings.recent = [...paths.map((p) => ({ path: p, kind, at })), ...settings.recent.filter((r) => !paths.includes(r.path))].slice(0, 30);
+  saveSettings();
+  buildTray();
+}
+
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '' });
+const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
+const pool = [];
+let utility = null, seq = 0;
+const calls = new Map();
+const jobs = new Map();
+const queue = [];
+function spawnWorker(role) {
+  const w = new Worker(path.join(__dirname, 'worker.js'), { workerData: { cfg: engineCfg(), role } });
+  w.busy = null;
+  w.on('message', (m) => onWorker(w, m));
+  w.on('error', (e) => { if (w.busy) failJob(w.busy, e.message || 'The engine stopped unexpectedly.'); });
+  w.on('exit', () => {
+    if (w.busy) failJob(w.busy, 'The engine stopped unexpectedly. Try again.');
+    for (const [id, c] of calls) if (c.w === w) { calls.delete(id); c.reject(new Error('The engine restarted. Try again.')); }
+    if (role === 'utility') utility = spawnWorker('utility');
+    else { const i = pool.indexOf(w); if (i >= 0) pool[i] = spawnWorker('jobs'); pump(); }
+  });
+  return w;
+}
+const call = (method, ...args) => new Promise((resolve, reject) => {
+  const id = ++seq;
+  calls.set(id, { resolve, reject, w: utility });
+  utility.postMessage({ type: 'call', id, method, args });
+});
+function onWorker(w, m) {
+  if (m.type === 'callResult') {
+    const c = calls.get(m.id);
+    if (!c) return;
+    calls.delete(m.id);
+    m.error ? c.reject(Object.assign(new Error(m.error), { code: m.code })) : c.resolve(m.result);
+  } else if (m.type === 'host') runHost(m.method, m.payload).then((result) => w.postMessage({ type: 'hostResult', id: m.id, result }), (e) => w.postMessage({ type: 'hostResult', id: m.id, error: e.message }));
+  else if (m.type === 'progress') patchJob(m.jobId, { progress: m.progress, label: m.label || jobs.get(m.jobId)?.label });
+  else if (m.type === 'done') finishJob(w, m.jobId, m.results);
+  else if (m.type === 'failed') {
+    w.busy = null;
+    const j = jobs.get(m.jobId);
+    if (j) Object.assign(j, { status: m.cancelled ? 'cancelled' : 'error', error: m.error, code: m.code, finishedAt: Date.now() });
+    emitJobs();
+    pump();
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function loadInto(win, { file, url }) {
+  const load = url ? win.loadURL(url, { userAgent: win.webContents.getUserAgent().replace(/Electron\/\S+\s?/, '') }) : win.loadFile(file);
+  await Promise.race([load.catch((e) => { if (!/ERR_ABORTED/.test(e.message)) throw e; }), sleep(45000).then(() => { throw new Error('The page took too long to load.'); })]);
+  await sleep(url ? 1800 : 400);
+}
+async function runHost(method, p) {
+  const win = new BrowserWindow({ show: false, width: method === 'urlToImage' ? 1366 : 1100, height: method === 'urlToImage' ? 900 : 1400, useContentSize: true, webPreferences: { sandbox: true, javascript: !!p.url || !!p.js } });
+  try {
+    await loadInto(win, p);
+    if (method === 'htmlToPdf') {
+      await fsp.writeFile(p.out, await win.webContents.printToPDF({ landscape: !!p.landscape, pageSize: p.pageSize || 'A4', printBackground: true, margins: { marginType: p.margins === 'none' ? 'none' : 'default' } }));
+      return p.out;
+    }
+    if (method === 'urlToImage') {
+      const h = await win.webContents.executeJavaScript('Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)').catch(() => 900);
+      win.setContentSize(1366, Math.min(Math.max(900, h), 16000));
+      await sleep(700);
+      await fsp.writeFile(p.out, (await win.webContents.capturePage()).toPNG());
+      return p.out;
+    }
+    throw new Error(`Unknown host call ${method}`);
+  } finally { win.destroy(); }
+}
+
+const tools = require('./tools');
+function submit({ tool, files = [], opts = {}, dest = null }) {
+  const t = tools.get(tool);
+  if (!t) throw new Error('Unknown tool.');
+  if (!t.run) throw new Error(`${t.name} opens in its own window.`);
+  const id = crypto.randomUUID();
+  jobs.set(id, { id, tool, name: t.name, files, opts, dest, status: 'queued', progress: 0, label: 'Waiting', results: [], createdAt: Date.now(), outMode: settings.outMode, outFolder: settings.outFolder });
+  queue.push(id);
+  if (files.length) addRecent(files.slice(0, 8), 'input');
+  pump();
+  return id;
+}
+function pump() {
+  for (const w of pool) {
+    if (w.busy || !queue.length) continue;
+    const id = queue.shift();
+    const j = jobs.get(id);
+    if (!j || j.status !== 'queued') continue;
+    w.busy = id;
+    Object.assign(j, { status: 'running', startedAt: Date.now(), label: 'Starting' });
+    w.postMessage({ type: 'run', job: { id, tool: j.tool, files: j.files, opts: j.opts, dest: j.dest, outMode: j.outMode, outFolder: j.outFolder } });
+  }
+  emitJobs();
+}
+const patchJob = (id, patch) => { const j = jobs.get(id); if (j) { Object.assign(j, patch); emitJobs(); } };
+const outputsOf = (j) => j.results.flatMap((r) => r.paths || (r.path ? [r.path] : []));
+function finishJob(w, id, results) {
+  w.busy = null;
+  const j = jobs.get(id);
+  if (j) {
+    Object.assign(j, { status: 'done', progress: 1, results, finishedAt: Date.now(), label: 'Done' });
+    const outs = outputsOf(j);
+    if (outs.length) addRecent(outs.slice(0, 8), 'output');
+    if (settings.reveal && outs[0] && !results[0]?.inPlace) shell.showItemInFolder(outs[0]);
+    notify(j, outs);
+  }
+  emitJobs();
+  pump();
+}
+function failJob(id, error) {
+  const j = jobs.get(id);
+  if (j && j.status === 'running') Object.assign(j, { status: 'error', error, finishedAt: Date.now() });
+  pool.forEach((w) => { if (w.busy === id) w.busy = null; });
+  emitJobs();
+}
+function cancelJob(id) {
+  const j = jobs.get(id);
+  if (!j) return;
+  if (j.status === 'queued') { j.status = 'cancelled'; queue.splice(queue.indexOf(id), 1); emitJobs(); return; }
+  pool.find((w) => w.busy === id)?.postMessage({ type: 'cancel', jobId: id });
+}
+let emitT = null;
+function emitJobs() {
+  if (emitT) return;
+  emitT = setTimeout(() => {
+    emitT = null;
+    const list = [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    broadcast('jobs', list);
+    const live = list.filter((j) => j.status === 'running' || j.status === 'queued');
+    if (isMac && app.dock) app.dock.setBadge(live.length ? String(live.length) : '');
+  }, 80);
+}
+function notify(j, outs) {
+  if (!settings.notify || !Notification.isSupported() || (wheel?.isVisible() && wheel.isFocused())) return;
+  const note = j.results.map((r) => r.note).find((n) => n && !n.includes('\n'));
+  const n = new Notification({ title: `${j.name} finished`, body: [outs.slice(0, 3).map((o) => path.basename(o)).join(', '), note].filter(Boolean).join('\n') || 'Done', silent: true });
+  n.on('click', () => outs[0] && shell.showItemInFolder(outs[0]));
+  n.show();
+}
+
+let wheel = null, prefsWin = null, tray = null, dragTimer = null;
+const editors = new Set();
+const webPrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false };
+const workArea = (pt) => screen.getDisplayNearestPoint(pt).workArea;
+function defaultAnchor() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  return { x: wa.x + wa.width - 150, y: wa.y + Math.round(wa.height * 0.6) };
+}
+let layout = { w: 220, h: 220, ax: 110, ay: 110 };
+function placeWheel() {
+  if (!wheel) return;
+  const a = settings.anchor || defaultAnchor();
+  const wa = workArea(a);
+  const x = Math.round(Math.min(Math.max(a.x - layout.ax, wa.x - layout.ax + 60), wa.x + wa.width - layout.w + (layout.w - layout.ax) - 60));
+  const y = Math.round(Math.min(Math.max(a.y - layout.ay, wa.y), wa.y + wa.height - layout.h));
+  wheel.setBounds({ x, y, width: Math.round(layout.w), height: Math.round(layout.h) });
+}
+function createWheel() {
+  wheel = new BrowserWindow({
+    width: layout.w, height: layout.h, show: false, frame: false, transparent: true, resizable: false, movable: false, maximizable: false, minimizable: false,
+    fullscreenable: false, hasShadow: false, skipTaskbar: true, backgroundColor: '#00000000', title: 'Lime', acceptFirstMouse: true, roundedCorners: false,
+    alwaysOnTop: settings.float, ...(isMac ? { type: 'panel' } : {}), webPreferences: webPrefs,
+  });
+  applyFloat();
+  placeWheel();
+  wheel.loadURL('app://local/wheel.html');
+  wheel.once('ready-to-show', () => { if (!settings.hidden || pendingShow) { wheel.showInactive(); pendingShow = false; } });
+  wheel.on('closed', () => { wheel = null; });
+  wheel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wheel.webContents.on('will-navigate', (e) => e.preventDefault());
+  if (process.env.LIME_SHOTS) wheel.webContents.on('console-message', (e) => console.log('[wheel]', e.message ?? e));
+}
+let pendingShow = false;
+function applyFloat() {
+  if (!wheel) return;
+  wheel.setAlwaysOnTop(!!settings.float, 'floating');
+  if (isMac) wheel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !!settings.float, skipTransformProcessType: true });
+}
+function showWheel(files) {
+  if (!wheel) createWheel();
+  settings.hidden = false;
+  saveSettings();
+  const go = () => {
+    if (!wheel.isVisible()) wheel.show(); else wheel.moveTop();
+    wheel.focus();
+    wheel.webContents.send(files ? 'wheel:files' : 'wheel:pulse', files || null);
+  };
+  if (wheel.webContents.isLoading()) { pendingShow = true; wheel.webContents.once('did-finish-load', () => setTimeout(go, 120)); } else go();
+  buildTray();
+}
+function hideWheel() {
+  if (wheel?.isVisible()) wheel.hide();
+  settings.hidden = true;
+  saveSettings();
+  buildTray();
+}
+const toggleWheel = () => (wheel?.isVisible() ? hideWheel() : showWheel());
+
+function openPrefs(tab) {
+  if (prefsWin) { prefsWin.show(); prefsWin.focus(); if (tab) prefsWin.webContents.send('prefs:tab', tab); return; }
+  prefsWin = new BrowserWindow({
+    width: 560, height: 640, minWidth: 480, minHeight: 480, show: false, title: 'Lime Settings', resizable: true, fullscreenable: false,
+    ...(isMac ? { titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' } : { autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2' }),
+    icon: asset('icon.png'), webPreferences: webPrefs,
+  });
+  prefsWin.loadURL(`app://local/prefs.html${tab ? `#${tab}` : ''}`);
+  prefsWin.once('ready-to-show', () => prefsWin.show());
+  prefsWin.on('closed', () => { prefsWin = null; });
+}
+function openEditor(file, mode) {
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const win = new BrowserWindow({
+    width: Math.min(1240, area.width - 80), height: Math.min(860, area.height - 60), minWidth: 720, minHeight: 520, show: false, title: path.basename(file),
+    ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 18 } } : { autoHideMenuBar: true }),
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2', icon: asset('icon.png'), webPreferences: webPrefs,
+  });
+  win.editorData = { file, mode };
+  win.loadURL('app://local/editor.html');
+  win.once('ready-to-show', () => win.show());
+  editors.add(win);
+  win.on('closed', () => editors.delete(win));
+  return true;
+}
+
+function trayImage() {
+  const img = nativeImage.createFromPath(asset(isMac ? 'trayTemplate.png' : 'tray.png'));
+  if (isMac) img.setTemplateImage(true);
+  return img;
+}
+function buildTray() {
+  if (!app.isReady()) return;
+  if (!tray) {
+    tray = new Tray(trayImage());
+    tray.setToolTip('Lime');
+    if (!isMac) tray.on('click', toggleWheel);
+  }
+  const recent = settings.recent.filter((r) => r.kind === 'output' && fs.existsSync(r.path)).slice(0, 10);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: wheel?.isVisible() ? 'Hide Wheel' : 'Show Wheel', accelerator: 'Control+Alt+L', click: toggleWheel },
+    { label: 'Choose Files…', click: pickFiles },
+    { label: 'Recent', enabled: recent.length > 0, submenu: recent.length ? recent.map((r) => ({ label: path.basename(r.path), click: () => shell.showItemInFolder(r.path) })) : [{ label: 'Nothing yet', enabled: false }] },
+    { type: 'separator' },
+    { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
+    { label: 'Settings…', accelerator: isMac ? 'Command+,' : undefined, click: () => openPrefs() },
+    { type: 'separator' },
+    { label: 'Quit Lime', accelerator: isMac ? 'Command+Q' : undefined, click: () => { app.isQuitting = true; app.quit(); } },
+  ]));
+}
+async function pickFiles() {
+  const r = await dialog.showOpenDialog({ properties: ['openFile', 'openDirectory', 'multiSelections'], title: 'Choose files for Lime' });
+  if (!r.canceled && r.filePaths.length) showWheel(r.filePaths);
+}
+const finderSelection = () => new Promise((resolve) => {
+  if (!isMac) return resolve([]);
+  const script = 'tell application "System Events" to set fp to name of first process whose frontmost is true\nif fp is not "Finder" then return ""\ntell application "Finder"\nset out to ""\nrepeat with f in (selection as alias list)\nset out to out & POSIX path of f & linefeed\nend repeat\nreturn out\nend tell';
+  execFile('osascript', ['-e', script], { timeout: 4000 }, (err, stdout) => resolve(err ? [] : String(stdout).split('\n').map((s) => s.trim()).filter((s) => s && fs.existsSync(s))));
+});
+async function hotkey() {
+  const files = await finderSelection();
+  if (files.length) showWheel(files.map((f) => f.replace(/\/$/, '')));
+  else toggleWheel();
+}
+
+const crafts = require('./engines/crafts');
+function actionsFor(files) {
+  const one = files.length === 1;
+  const a = [
+    { action: 'open', label: 'Open', hint: one ? 'Default app' : `${files.length} files` },
+    { action: 'show', label: isMac ? 'Finder' : 'Show', hint: 'Reveal' },
+    { action: 'copyPath', label: 'Path', hint: 'Copy' },
+    { action: 'all', label: 'All tools', hint: 'Browse' },
+  ];
+  if (one) {
+    a.push({ action: 'hash', label: 'SHA-256', hint: 'Copy hash' });
+    const c = crafts.appFor(files[0]);
+    if (c) a.push({ action: 'craft', app: c.id, label: c.name, hint: 'Open in' });
+    if (isMac) a.push({ action: 'quicklook', label: 'Preview', hint: 'Quick Look' });
+  }
+  a.push({ action: 'trash', label: 'Trash', hint: 'Move', danger: true });
+  return a;
+}
+async function doAction(item, files) {
+  switch (item.action) {
+    case 'open': files.slice(0, 20).forEach((f) => shell.openPath(f)); return null;
+    case 'show': shell.showItemInFolder(files[0]); return null;
+    case 'copyPath': clipboard.writeText(files.join('\n')); return `Copied ${files.length === 1 ? 'path' : `${files.length} paths`}`;
+    case 'hash': { const h = await require('./engines/util').hashFile(files[0], 'sha256'); clipboard.writeText(h); return `SHA-256 copied · ${h.slice(0, 12)}…`; }
+    case 'craft': crafts.openApp(item.app, files); return null;
+    case 'quicklook': execFile('qlmanage', ['-p', ...files.slice(0, 10)], () => {}); return null;
+    case 'trash': for (const f of files) await shell.trashItem(f); return `Moved ${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} to the Trash`;
+    case 'reveal': shell.showItemInFolder(files[0]); return null;
+    default: return null;
+  }
+}
+
+function broadcast(ch, payload) { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(ch, payload); }
+async function setSettings(patch) {
+  const before = { ...settings };
+  Object.assign(settings, patch);
+  saveSettings();
+  if ('theme' in patch) nativeTheme.themeSource = settings.theme;
+  if ('float' in patch) applyFloat();
+  if ('anchor' in patch) placeWheel();
+  if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
+  if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
+  if ('soffice' in patch && patch.soffice !== before.soffice) [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() }));
+  buildTray();
+  broadcast('settings', publicSettings());
+  return publicSettings();
+}
+function registerIpc() {
+  const h = (ch, fn) => ipcMain.handle(ch, (e, ...a) => fn(...a));
+  const hE = (ch, fn) => ipcMain.handle(ch, (e, ...a) => fn(e, ...a));
+  h('app:info', () => ({ version: app.getVersion(), platform: process.platform, dark: nativeTheme.shouldUseDarkColors, home: os.homedir() }));
+  h('catalog', () => tools.catalog());
+  h('wheel:items', (files) => ({ ...tools.wheelsFor(files), more: actionsFor(files), all: tools.toolsFor(files) }));
+  h('wheel:action', (item, files) => doAction(item, files));
+  h('wheel:layout', (l) => { layout = { ...layout, ...l }; placeWheel(); });
+  h('wheel:hide', () => hideWheel());
+  h('wheel:menu', () => Menu.buildFromTemplate([
+    { label: 'Choose Files…', click: pickFiles },
+    { label: 'Settings…', click: () => openPrefs() },
+    { type: 'separator' },
+    { label: 'Size', submenu: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([v, l]) => ({ label: l, type: 'radio', checked: settings.size === v, click: () => setSettings({ size: v }) })) },
+    { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
+    { label: 'Reset Position', click: () => { settings.anchor = null; saveSettings(); placeWheel(); } },
+    { type: 'separator' },
+    { label: 'Hide Wheel', click: hideWheel },
+    { label: 'Quit Lime', click: () => { app.isQuitting = true; app.quit(); } },
+  ]).popup({ window: wheel }));
+  h('wheel:dragStart', () => {
+    clearInterval(dragTimer);
+    const start = screen.getCursorScreenPoint();
+    const a0 = settings.anchor || defaultAnchor();
+    dragTimer = setInterval(() => {
+      const p = screen.getCursorScreenPoint();
+      settings.anchor = { x: a0.x + p.x - start.x, y: a0.y + p.y - start.y };
+      placeWheel();
+    }, 12);
+  });
+  h('wheel:dragEnd', () => { clearInterval(dragTimer); dragTimer = null; saveSettings(); });
+  h('files:thumb', (p, size) => call('thumbnail', p, size).catch(() => null));
+  h('tools:suggest', (tool, files, opts) => tools.suggest(tool, files, opts));
+  h('files:dataUrl', async (p, max = 1800) => {
+    const buf = await (await require('./engines/image').open(p)).rotate().resize(max, max, { fit: 'inside', withoutEnlargement: true }).png().toBuffer();
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  });
+  h('app:paths', () => ({ licenses: app.isPackaged ? path.join(RES, 'LICENSES') : path.join(ROOT, 'LICENSES'), userData: app.getPath('userData') }));
+  h('files:describe', (p) => call('describe', p).catch(() => null));
+  h('files:exists', (paths) => paths.filter((p) => fs.existsSync(p)));
+  h('jobs:submit', (job) => submit(job));
+  h('save:ask', async ({ tool, files, opts }) => {
+    const s = tools.suggest(tool, files, opts);
+    if (s.kind === 'none') return { kind: 'none' };
+    if (!settings.askSave) return { kind: 'auto' };
+    const dir = settings.outMode === 'folder' && settings.outFolder ? settings.outFolder : files[0] ? path.dirname(files[0]) : app.getPath('downloads');
+    if (isMac) app.focus({ steal: true });
+    if (s.kind === 'dir') {
+      const r = await dialog.showOpenDialog({ title: `Save ${files.length} results`, message: `Choose a folder for the ${files.length} new files`, buttonLabel: 'Save Here', defaultPath: dir, properties: ['openDirectory', 'createDirectory'] });
+      return r.canceled || !r.filePaths[0] ? null : { kind: 'dir', path: r.filePaths[0] };
+    }
+    const r = await dialog.showSaveDialog({ title: s.kind === 'folder' ? 'Save Folder As' : 'Save As', nameFieldLabel: s.kind === 'folder' ? 'Folder:' : 'Save As:', defaultPath: path.join(dir, s.name), buttonLabel: 'Save', filters: s.ext ? [{ name: s.ext.toUpperCase(), extensions: [s.ext] }] : undefined, properties: ['createDirectory', 'showOverwriteConfirmation'] });
+    return r.canceled || !r.filePath ? null : { kind: s.kind, path: r.filePath };
+  });
+  h('jobs:cancel', (id) => cancelJob(id));
+  h('jobs:list', () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt));
+  h('editor:open', (file, mode) => openEditor(file, mode));
+  hE('editor:data', (e) => BrowserWindow.fromWebContents(e.sender)?.editorData || null);
+  h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
+  hE('dialog:open', async (e, o = {}) => {
+    const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });
+    return r.canceled ? [] : r.filePaths;
+  });
+  hE('dialog:save', async (e, o = {}) => { const r = await dialog.showSaveDialog(BrowserWindow.fromWebContents(e.sender), { defaultPath: o.defaultPath, filters: o.filters }); return r.canceled ? null : r.filePath; });
+  h('shell:open', (p) => shell.openPath(p));
+  h('shell:show', (p) => shell.showItemInFolder(p));
+  h('shell:external', (u) => (/^https?:\/\//.test(u) ? shell.openExternal(u) : null));
+  h('shell:trash', (p) => shell.trashItem(p));
+  h('clip:text', (t) => clipboard.writeText(String(t)));
+  ipcMain.on('drag:start', (e, paths) => {
+    const list = paths.filter((p) => fs.existsSync(p));
+    if (list.length) e.sender.startDrag({ files: list, file: list[0], icon: nativeImage.createFromPath(asset('drag.png')) });
+  });
+  h('settings:get', () => publicSettings());
+  h('settings:set', (patch) => setSettings(patch));
+  h('prefs:open', (tab) => openPrefs(tab));
+  h('engines:status', () => call('enginesStatus'));
+  h('recent:list', () => settings.recent.filter((r) => fs.existsSync(r.path)));
+}
+
+function registerProtocols() {
+  protocol.handle('app', (req) => {
+    const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '') || 'wheel.html';
+    const file = path.normalize(path.join(RENDERER, rel));
+    return file.startsWith(RENDERER) ? net.fetch(pathToFileURL(file).href) : new Response('Forbidden', { status: 403 });
+  });
+  protocol.handle('media', (req) => {
+    const u = new URL(req.url);
+    const p = u.host === 'font' ? path.join(DATA, 'fonts', path.basename(decodeURIComponent(u.pathname))) : decodeURIComponent(u.pathname.slice(1));
+    return fs.existsSync(p) ? net.fetch(pathToFileURL(p).href, { headers: req.headers }) : new Response('Not found', { status: 404 });
+  });
+}
+
+function appMenu() {
+  if (!isMac) { Menu.setApplicationMenu(null); return; }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: 'Lime', submenu: [{ role: 'about' }, { type: 'separator' }, { label: 'Settings…', accelerator: 'Command+,', click: () => openPrefs() }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'File', submenu: [{ label: 'Choose Files…', accelerator: 'Command+O', click: pickFiles }, { label: 'Show Wheel', accelerator: 'Control+Alt+L', click: () => showWheel() }, { type: 'separator' }, { role: 'close' }] },
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+  ]));
+}
+
+app.whenReady().then(async () => {
+  loadSettings();
+  nativeTheme.themeSource = settings.theme;
+  if (isMac && !settings.dock) app.dock.hide();
+  registerProtocols();
+  registerIpc();
+  appMenu();
+  utility = spawnWorker('utility');
+  for (let i = 0; i < POOL; i++) pool.push(spawnWorker('jobs'));
+  buildTray();
+  globalShortcut.register('Control+Alt+L', hotkey);
+  createWheel();
+  const files = argFiles(process.argv);
+  if (files.length) takeFiles(files);
+  if (incoming.size) clearTimeout(incomingT), takeFiles([]);
+  nativeTheme.on('updated', () => broadcast('theme', { dark: nativeTheme.shouldUseDarkColors }));
+  screen.on('display-removed', placeWheel);
+  screen.on('display-metrics-changed', placeWheel);
+  if (process.env.LIME_TEST && !app.isPackaged) require(path.join(ROOT, 'test', 'tools.test'))({ submit, jobs, app, tools, dir: process.env.LIME_TEST });
+  if (process.env.LIME_SHOTS && !app.isPackaged) require(path.join(ROOT, 'test', 'shots'))({ wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, dir: process.env.LIME_SHOTS });
+});
+app.on('activate', () => showWheel());
+app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });
+app.on('before-quit', () => { app.isQuitting = true; });
+app.on('will-quit', () => globalShortcut.unregisterAll());

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:">
+<title>Lime Settings</title>
+<link rel="stylesheet" href="lime.css">
+<style>
+  body { background: transparent; }
+  html:not(.os-darwin) body, :root[data-theme] body.solid { background: var(--bg); }
+  .drag { height: 38px; -webkit-app-region: drag; }
+  main { padding: 0 22px 26px; display: grid; gap: 18px; max-width: 620px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 14px; padding: 2px 4px 4px; }
+  header h1 { font-size: 22px; font-weight: 700; }
+  header p { margin: 1px 0 0; color: var(--ink-2); font-size: 12px; }
+  section h2 { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); margin: 0 6px 6px; }
+  .group { background: color-mix(in srgb, var(--surface) 86%, transparent); border-radius: 9px; box-shadow: var(--shadow-sm); overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; position: relative; }
+  .row + .row::before { content: ""; position: absolute; top: 0; left: 14px; right: 0; height: .5px; background: var(--line); }
+  .row .t { flex: 1; min-width: 0; }
+  .row .t b { display: block; font-weight: 500; }
+  .row .t small { display: block; color: var(--ink-2); font-size: 11.5px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .ic.lead { color: var(--green); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink-3) 18%, transparent); }
+  .dot.on { background: var(--green-2); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .tag { font-size: 11px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  kbd { font: 600 11px/1 var(--font); padding: 4px 6px; border-radius: 5px; background: var(--surface-3); color: var(--ink-2); box-shadow: inset 0 -1px 0 var(--line-2); }
+  .switch { min-height: 0; }
+  .crafts { display: grid; grid-template-columns: 1fr 1fr; }
+  .crafts .row:nth-child(2)::before { display: none; }
+  .crafts .row:nth-child(odd)::after { content: ""; position: absolute; right: 0; top: 10px; bottom: 10px; width: .5px; background: var(--line); }
+  a { color: var(--accent-strong); text-decoration: none; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="drag"></div>
+<main id="app"></main>
+<script type="module" src="prefs.js"></script>
+</body>
+</html>
