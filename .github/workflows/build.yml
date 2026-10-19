@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths-ignore: ['**.md', 'LICENSES/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: Lime-mac-arm64
+            script: dist:mac
+            asset: dist/*.dmg
+          - os: windows-latest
+            name: Lime-windows-x64
+            script: dist:win
+            asset: dist/*.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: vendor
+          key: vendor-${{ runner.os }}-${{ hashFiles('scripts/engines.mjs', 'package-lock.json') }}
+      - run: npm ci
+      - if: runner.os == 'Windows'
+        run: choco install nsis -y --no-progress && echo "MAKENSIS=C:\\Program Files (x86)\\NSIS\\makensis.exe" >> "$GITHUB_ENV"
+      - run: npm run ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.asset }}
+          compression-level: 0
+          retention-days: 30
+      - if: github.ref_type == 'tag'
+        run: |
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --title "Lime $GITHUB_REF_NAME" --notes "Lime for Mac (Apple silicon) and Windows (64-bit). See the README for first-launch steps." || true
+          gh release upload "$GITHUB_REF_NAME" ${{ matrix.asset }} -R "$GITHUB_REPOSITORY" --clobber

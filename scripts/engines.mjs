@@ -32,6 +32,7 @@ const FONTS = {
 
 const mk = (d) => (fs.mkdirSync(d, { recursive: true }), d);
 const has = (f) => fs.existsSync(f) && fs.statSync(f).size > 0;
+const TAR = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 const sh = (c, a) => execFileSync(c, a, { stdio: ['ignore', 'ignore', 'inherit'] });
 const which = (...names) => names.find((n) => { try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [n], { stdio: 'ignore' }); return true; } catch { return false; } });
 
@@ -69,7 +70,7 @@ async function binaries() {
   }
   if (PLAT === 'darwin' && !has(path.join(BIN, '7zz'))) {
     const tmp = mk(path.join(CACHE, '7zmac'));
-    sh('tar', ['-xJf', await get(`${SEVEN}/7z2604-mac.tar.xz`), '-C', tmp, '7zz']);
+    sh(TAR, ['-xJf', await get(`${SEVEN}/7z2604-mac.tar.xz`), '-C', tmp, '7zz']);
     fs.writeFileSync(path.join(BIN, '7zz'), thin(fs.readFileSync(path.join(tmp, '7zz'))), { mode: 0o755 });
   }
   if (WIN && !has(path.join(BIN, '7z.dll'))) {
@@ -78,7 +79,7 @@ async function binaries() {
     sh(z, ['e', await get(`${SEVEN}/7z2604-x64.exe`), `-o${BIN}`, '7z.exe', '7z.dll', '-y']);
   }
   if (PLAT === 'linux' && !has(path.join(BIN, '7zz'))) {
-    sh('tar', ['-xJf', await get(`${SEVEN}/7z2604-linux-${ARCH === 'arm64' ? 'arm64' : 'x64'}.tar.xz`), '-C', BIN, '7zz']);
+    sh(TAR, ['-xJf', await get(`${SEVEN}/7z2604-linux-${ARCH === 'arm64' ? 'arm64' : 'x64'}.tar.xz`), '-C', BIN, '7zz']);
   }
 }
 
@@ -95,7 +96,7 @@ async function crafts() {
     else if (WIN) buf = Buffer.from(unzipOne(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`), new RegExp(`/${exe.replace('.', '\\.')}$`)));
     else {
       const a = ARCH === 'arm64' ? 'aarch64' : 'x86_64', tmp = mk(path.join(CACHE, `${id}-linux`));
-      sh('tar', ['-xzf', await get(`${rel}/${id === 'pdfcraft' ? 'pdfcraft-cli' : id}-${v}-linux-${a}.tar.gz`), '-C', tmp]);
+      sh(TAR, ['-xzf', await get(`${rel}/${id === 'pdfcraft' ? 'pdfcraft-cli' : id}-${v}-linux-${a}.tar.gz`), '-C', tmp]);
       const find = (d) => fs.readdirSync(d, { withFileTypes: true }).map((e) => path.join(d, e.name)).flatMap((p) => fs.statSync(p).isDirectory() ? find(p) : path.basename(p) === exe ? [p] : []);
       buf = fs.readFileSync(find(tmp)[0]);
     }
@@ -120,7 +121,7 @@ async function natives() {
     const r = await (await fetch(`https://registry.npmjs.org/${n}/${opt[n]}`)).json();
     const tgz = await get(r.dist.tarball, `${n.replace('/', '-')}-${opt[n]}.tgz`);
     mk(dest);
-    sh('tar', ['-xzf', tgz, '-C', dest, '--strip-components=1']);
+    sh(TAR, ['-xzf', tgz, '-C', dest, '--strip-components=1']);
   }
 }
 
