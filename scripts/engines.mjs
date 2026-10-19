@@ -39,12 +39,19 @@ const which = (...names) => names.find((n) => { try { execFileSync(process.platf
 async function get(url, name = decodeURIComponent(path.basename(new URL(url).pathname))) {
   const f = path.join(mk(CACHE), name);
   if (has(f)) return f;
-  console.log('↓', url);
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
-  await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(`${f}.part`));
-  fs.renameSync(`${f}.part`, f);
-  return f;
+  for (let i = 1; ; i++) {
+    console.log('↓', url);
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(600000) });
+      if (!r.ok) throw new Error(`${r.status} ${url}`);
+      await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(`${f}.part`));
+      fs.renameSync(`${f}.part`, f);
+      return f;
+    } catch (e) {
+      if (i === 3) throw e;
+      console.warn(`retrying ${url}: ${e.message}`);
+    }
+  }
 }
 const put = async (url, dest) => { if (has(dest)) return; mk(path.dirname(dest)); fs.copyFileSync(await get(url), dest); };
 const unzipOne = (zip, re) => Object.values(unzipSync(fs.readFileSync(zip), { filter: (f) => re.test(f.name) }))[0];
@@ -118,7 +125,7 @@ async function natives() {
   for (const n of want) {
     const dest = path.join(NPM, n);
     if (fs.existsSync(path.join(dest, 'package.json'))) continue;
-    const r = await (await fetch(`https://registry.npmjs.org/${n}/${opt[n]}`)).json();
+    const r = await (await fetch(`https://registry.npmjs.org/${n}/${opt[n]}`, { signal: AbortSignal.timeout(60000) })).json();
     const tgz = await get(r.dist.tarball, `${n.replace('/', '-')}-${opt[n]}.tgz`);
     mk(dest);
     sh(TAR, ['-xzf', tgz, '-C', dest, '--strip-components=1']);
