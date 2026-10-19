@@ -17,10 +17,12 @@ jobs:
       matrix:
         include:
           - os: macos-14
+            target: darwin-arm64
             name: Lime-mac-arm64
             script: dist:mac
             asset: dist/*.dmg
           - os: windows-latest
+            target: win32-x64
             name: Lime-windows-x64
             script: dist:win
             asset: dist/*.exe
@@ -36,13 +38,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: vendor
         with:
           path: vendor
           key: vendor-${{ runner.os }}-${{ hashFiles('scripts/engines.mjs', 'package-lock.json') }}
       - run: npm ci
-      - if: runner.os == 'Windows'
-        run: choco install nsis -y --no-progress && echo "MAKENSIS=C:\\Program Files (x86)\\NSIS\\makensis.exe" >> "$GITHUB_ENV"
+      - run: node scripts/engines.mjs ${{ matrix.target }}
+      - if: steps.vendor.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: vendor
+          key: ${{ steps.vendor.outputs.cache-primary-key }}
       - run: npm run ${{ matrix.script }}
       - uses: actions/upload-artifact@v4
         with:
