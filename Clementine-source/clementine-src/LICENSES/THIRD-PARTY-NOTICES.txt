@@ -1,0 +1,25 @@
+Clementine is licensed under the GNU Affero General Public License v3.0 or later (required by MuPDF).
+It is built on these open-source projects. Full licence texts ship alongside each component.
+
+Bundled engines
+  MuPDF / mupdf.js ......... AGPL-3.0        Artifex Software       https://mupdf.com
+  pdf-lib, @pdf-lib/fontkit  MIT             Andrew Dillon et al.   https://pdf-lib.js.org
+  sharp / libvips .......... Apache-2.0 / LGPL-3.0                  https://sharp.pixelplumbing.com
+  FFmpeg 8.1 (BtbN build) .. GPL-3.0         FFmpeg developers      https://ffmpeg.org  (resources/bin/FFmpeg-License.txt)
+  7-Zip 26.04 .............. LGPL-2.1 + unRAR restriction  Igor Pavlov  https://7-zip.org (resources/bin/7-Zip-License.txt)
+  Tesseract / tesseract.js . Apache-2.0                              https://github.com/naptha/tesseract.js
+  IMG.LY background removal  AGPL-3.0        IMG.LY                 https://github.com/imgly/background-removal-js
+  ONNX Runtime ............. MIT             Microsoft
+  heic-decode / libheif .... ISC / LGPL-3.0
+  ag-psd ................... MIT ; docx ... MIT ; pptxgenjs ... MIT ; mammoth ... BSD-2 ; marked ... MIT ; SheetJS CE ... Apache-2.0
+  Electron / Chromium ...... MIT / BSD
+  Fluent UI System Icons ... MIT             Microsoft
+  Noto Sans/Serif/Mono, Caveat, Dancing Script fonts ... SIL Open Font License 1.1
+
+Optional engines (downloaded on request from their official sources)
+  LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Real-ESRGAN ncnn-vulkan (BSD-3-Clause)
+
+Studio apps (downloaded unmodified from github.com/storytold on request)
+  PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, EffectCraft, DesignCraft
+  © ArtCraft Team and contributors, MIT OR Apache-2.0. ArtCraft names and logos are trademarks of their owners.
+  Clementine is not affiliated with ArtCraft.
