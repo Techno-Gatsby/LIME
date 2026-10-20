@@ -26,8 +26,27 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const zipHas = (p, name) => { const z = require('fflate').unzipSync(new Uint8Array(read(p))); ok(Object.keys(z).some((k) => k.includes(name)), `zip lacks ${name}: ${Object.keys(z).slice(0, 8)}`); return z; };
   const docxText = async (p) => (await require('mammoth').extractRawText({ path: p })).value;
   const files = (d) => (fs.existsSync(d) && fs.statSync(d).isDirectory() ? fs.readdirSync(d) : []);
+  const U = E('util'), M = E('media');
+  const ffp = async (p, extra = []) => JSON.parse((await U.run(U.binPath('ffprobe'), ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...extra, p])).stdout);
+  const of = (j, type) => j.streams.filter((s) => s.codec_type === type);
+  const md5 = async (p, sel) => (await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-i', p, '-map', sel, '-c', 'copy', '-f', 'md5', '-'])).stdout.trim();
+  const sound = async (p, ss = 0, t = 0) => {
+    const { stderr } = await U.run(U.binPath('ffmpeg'), ['-hide_banner', '-nostats', ...(ss ? ['-ss', String(ss)] : []), ...(t ? ['-t', String(t)] : []), '-i', p, '-af', 'volumedetect,astats=metadata=0', '-f', 'null', '-']);
+    const n = (re) => Number((re.exec(stderr) || [])[1]);
+    return { mean: n(/mean_volume: (-?[\d.]+) dB/), max: n(/max_volume: (-?[\d.]+) dB/), zcr: n(/Zero crossings rate: ([\d.]+)/) };
+  };
+  let stills = 0;
+  const still = async (p, at) => { const f = path.join(OUT, `still-${++stills}.png`); await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-y', ...(at < 0 ? ['-sseof', String(at)] : ['-ss', String(at)]), '-i', p, '-frames:v', '1', '-update', '1', f]); return f; };
+  const diff = async (a, b, region) => {
+    const [x, y] = await Promise.all([a, b].map((f) => { const img = typeof f === 'string' ? sharp(f) : f; return (region ? img.extract(region) : img).removeAlpha().raw().toBuffer(); }));
+    let s = 0;
+    for (let i = 0; i < x.length; i++) s += Math.abs(x[i] - y[i]);
+    return s / x.length;
+  };
+  const titled = (j) => [j.format.tags, ...j.streams.map((s) => s.tags)].some((t) => t && Object.entries(t).some(([k, v]) => k.toLowerCase() === 'title' && v === 'Lime 노래'));
   const C = [];
-  const T = (name, tool, inputs, opts, check) => C.push({ name, tool, inputs: inputs.map(fx), opts, check });
+  const T = (name, tool, inputs, opts, check, skip) => C.push({ name, tool, inputs: inputs.map(fx), opts, check, skip });
+  const noEncoder = (to) => (M.supports(to) ? null : `this FFmpeg cannot write ${to}`);
 
   for (const [src, to, f] of [['photo.heic', 'jpg', 'jpeg'], ['photo.jpg', 'png', 'png'], ['photo.jpg', 'webp', 'webp'], ['photo.jpg', 'avif', 'heif'], ['photo.jpg', 'tiff', 'tiff'], ['photo.jpg', 'gif', 'gif'], ['photo.webp', 'jpg', 'jpeg'], ['alpha.png', 'jpg', 'jpeg'], ['layers.psd', 'png', 'png'], ['raw.dng', 'jpg', 'jpeg'], ['photo.jxl', 'png', 'png']]) {
     T(`image ${src}→${to}`, 'convert-image', [src], { to, quality: 88 }, async ([o]) => { const m = await fmt(o, f); ok(m.width > 100, 'tiny'); });
@@ -157,6 +176,92 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('level loudness', 'normalize-audio', ['tone.wav'], {}, async ([o]) => dur(o, 3, 0.3));
   T('slideshow', 'images-to-video', ['photo.jpg', 'photo2.jpg'], { seconds: 2, size: '1920x1080' }, async ([o]) => { const i = await dur(o, 4, 0.6); ok(i.video.width === 1920, 'size'); });
   T('subtitles→vtt', 'convert-subtitles', ['sub.srt'], { to: 'vtt' }, ([o]) => ok(txt(o).startsWith('WEBVTT') && txt(o).includes('Hello Lime'), 'vtt'));
+
+  const VT = { mp4: 'h264 aac mov_text', hevc: 'hevc aac mov_text', av1: 'av1 aac mov_text', mov: 'h264 aac mov_text', m4v: 'h264 aac mov_text', '3gp': 'h264 aac mov_text', '3g2': 'h264 aac mov_text', mkv: 'h264 aac subrip', webm: 'vp9 opus webvtt',
+    avi: 'mpeg4 mp3', wmv: 'wmv2 wmav2', flv: 'h264 aac', mpg: 'mpeg2video mp2', ts: 'h264 aac', m2ts: 'h264 aac', vob: 'mpeg2video ac3', ogv: 'theora vorbis', dv: 'dvvideo pcm_s16le', mxf: 'mpeg2video pcm_s16le' };
+  for (const [to, want] of Object.entries(VT)) {
+    T(`video odd→${to}`, 'convert-video', ['odd.mp4'], { to, quality: 'balanced', height: '' }, async ([o]) => {
+      const j = await ffp(o), [v] = of(j, 'video'), [a] = of(j, 'audio'), got = [v?.codec_name, a?.codec_name, ...of(j, 'subtitle').map((s) => s.codec_name)].join(' ');
+      ok(got === want, `streams ${got} ≠ ${want}`);
+      const size = to === 'vob' || to === 'dv' ? '720x480' : '320x240';
+      ok(`${v.width}x${v.height}` === size && (to === 'dv' || v.pix_fmt === 'yuv420p'), `${v.width}x${v.height} ${v.pix_fmt}`);
+      ok(Math.abs(Number(j.format.duration) - 4) < 0.3, `duration ${j.format.duration}`);
+      if (['wmv', 'avi', 'mpg', 'dv'].includes(to)) ok(a.channels === 2, `${a.channels} channels`);
+    }, ['hevc', 'av1', 'ogv'].includes(to) ? noEncoder(to) : null);
+  }
+  T('video remux iPhone mov→mp4', 'convert-video', ['phone.mov'], { to: 'mp4', quality: 'balanced', height: '' }, async ([o], r) => {
+    const j = await ffp(o), [v] = of(j, 'video');
+    ok(v.codec_name === 'hevc' && v.codec_tag_string === 'hvc1', `${v.codec_name} ${v.codec_tag_string}`);
+    ok(Math.abs((v.side_data_list || []).find((d) => d.rotation != null)?.rotation) === 90, 'rotation lost');
+    ok((await md5(o, '0:v:0')) === (await md5(fx('phone.mov'), '0:v:0')), 'video was re-encoded');
+    ok(/Rewrapped/.test(r[0].note || ''), `note ${r[0].note}`);
+    const p = await probe(o);
+    ok(p.video.width === 240 && p.video.height === 320, `display ${p.video.width}x${p.video.height}`);
+  });
+  T('video small re-encodes', 'convert-video', ['phone.mov'], { to: 'mp4', quality: 'small', height: '' }, async ([o]) => { const [v] = of(await ffp(o), 'video'); ok(v.codec_name === 'h264' && v.width === 240 && v.height === 320, `${v.codec_name} ${v.width}x${v.height}`); });
+  T('video→apng', 'convert-video', ['clip2.mp4'], { to: 'apng', quality: 'balanced', height: '' }, async ([o]) => { const [v] = of(await ffp(o, ['-count_frames']), 'video'); ok(v.codec_name === 'apng' && v.width === 480 && Math.abs(v.nb_read_frames - 24) <= 2, `${v.codec_name} ${v.width} ${v.nb_read_frames} frames`); });
+  T('video→gif never upscales', 'video-to-gif', ['odd.mp4'], { start: '0:00', duration: 2, fps: 10, width: 480 }, async ([o]) => { const m = await fmt(o, 'gif'); ok(m.width === 321 && m.pages >= 18, `gif ${m.width} ${m.pages}`); });
+  T('gif→video', 'gif-to-video', ['anim.gif'], { to: 'mp4', quality: 'balanced' }, async ([o]) => { const [v] = of(await ffp(o, ['-count_frames']), 'video'); ok(v.codec_name === 'h264' && v.width === 160 && v.height === 120 && v.nb_read_frames >= 9, `${v.codec_name} ${v.width}x${v.height} ${v.nb_read_frames}`); });
+  T('compress odd video', 'compress-video', ['odd.mp4'], { mode: 'level', level: 'extreme', height: '' }, async ([o]) => { const v = (await probe(o)).video; ok(v.width === 320 && v.height === 240, `${v.width}x${v.height}`); });
+  T('rotate odd video', 'rotate-video', ['odd.mp4'], { angle: '90', flip: 'none' }, async ([o]) => { const j = await ffp(o), [v] = of(j, 'video'); ok(v.width === 240 && v.height === 320 && of(j, 'subtitle').length === 1, `${v.width}x${v.height}`); });
+  T('trim webm precise', 'trim-media', ['clip.webm'], { start: '0:01', end: '0:02', precise: true }, async ([o]) => { const j = await ffp(o); ok(o.endsWith('.webm') && of(j, 'video')[0].codec_name === 'vp9' && of(j, 'audio')[0].codec_name === 'opus', 'webm'); await dur(o, 1, 0.3); });
+  T('frames every frame', 'video-frames', ['100% clip.mp4'], { mode: 'all', format: 'png' }, async ([o]) => { ok(path.basename(o).startsWith('100% clip'), path.basename(o)); ok(Math.abs(files(o).length - 50) <= 1, `${files(o).length} frames`); await fmt(path.join(o, files(o).sort()[0]), 'png'); });
+  T('subtitles mkv→srt', 'extract-subtitles', ['subs.mkv'], { to: 'srt' }, ([o]) => ok(/00:00:00,5\d\d --> 00:00:02,0\d\d\r?\nHello Lime/.test(txt(o)) && txt(o).includes('Second line'), txt(o).slice(0, 80)));
+  T('subtitles mkv→ass', 'extract-subtitles', ['subs.mkv'], { to: 'ass' }, ([o]) => ok(txt(o).includes('[Script Info]') && txt(o).includes('Hello Lime'), txt(o).slice(0, 80)));
+  T('subtitles mp4→vtt', 'extract-subtitles', ['odd.mp4'], { to: 'vtt' }, ([o]) => ok(txt(o).startsWith('WEBVTT') && txt(o).includes('00:00.500 --> 00:02.000') && txt(o).includes('Hello Lime'), txt(o).slice(0, 80)));
+  T('audio copied from video', 'extract-audio', ['clip.mp4'], { to: 'm4a', bitrate: '' }, async ([o]) => ok((await md5(o, '0:a:0')) === (await md5(fx('clip.mp4'), '0:a:0')), 'audio was re-encoded'));
+  T('audio 5.1→eac3', 'extract-audio', ['odd.mp4'], { to: 'eac3', bitrate: '' }, async ([o]) => { const j = await ffp(o), [a] = of(j, 'audio'); ok(a.codec_name === 'eac3' && a.channels === 6 && Math.abs(Number(j.format.bit_rate) - 576000) < 30000, `${a.codec_name} ${a.channels}ch ${j.format.bit_rate}`); });
+  T('audio 5.1→wma', 'extract-audio', ['odd.mp4'], { to: 'wma', bitrate: '' }, async ([o]) => { const [a] = of(await ffp(o), 'audio'); ok(a.codec_name === 'wmav2' && a.channels === 2, `${a.codec_name} ${a.channels}ch`); });
+  const AT = { alac: 'alac', aac: 'aac', wav: 'pcm_s16le', wma: 'wmav2', ac3: 'ac3', eac3: 'eac3', m4b: 'aac', wv: 'wavpack', tta: 'tta', caf: 'pcm_s16be', au: 'pcm_s16be', w64: 'pcm_s16le', mp2: 'mp2', mka: 'opus', weba: 'opus', voc: 'pcm_s16le', amr: 'amr_nb' };
+  for (const [to, codec] of Object.entries(AT)) {
+    T(`audio→${to}`, 'convert-audio', ['tone.wav'], { to, bitrate: '' }, async ([o]) => { const i = await dur(o, 3, 0.15); ok(i.audio.codec === codec, `${i.audio.codec}`); if (to === 'amr') ok(i.audio.rate === 8000 && i.audio.channels === 1, `${i.audio.rate} Hz`); }, to === 'amr' ? noEncoder(to) : null);
+  }
+  T('audio→wav 24-bit 16 kHz mono', 'convert-audio', ['tone.wav'], { to: 'wav', depth: '24', rate: '16000', mono: true }, async ([o]) => { const a = (await probe(o)).audio; ok(a.codec === 'pcm_s24le' && a.rate === 16000 && a.channels === 1, `${a.codec} ${a.rate} ${a.channels}`); });
+  T('crop video square', 'crop-video', ['odd.mp4'], { aspect: '1:1' }, async ([o]) => { const v = (await probe(o)).video; ok(v.width === 240 && v.height === 240, `${v.width}x${v.height}`); });
+  T('crop video story', 'crop-video', ['clip2.mp4'], { aspect: '9:16' }, async ([o]) => { const v = (await probe(o)).video; ok(v.width === 202 && v.height === 360, `${v.width}x${v.height}`); });
+  T('crop video pixels', 'crop-video', ['clip2.mp4'], { aspect: 'custom', left: 10, top: 20, width: 101, height: 51 }, async ([o]) => { const v = (await probe(o)).video; ok(v.width === 100 && v.height === 50, `${v.width}x${v.height}`); });
+  T('replace audio', 'add-audio', ['clip2.mp4', 'tone.wav'], { mode: 'replace', shortest: false }, async ([o]) => {
+    const j = await ffp(o), s = await sound(o);
+    ok(of(j, 'audio').length === 1 && of(j, 'audio')[0].codec_name === 'aac' && Math.abs(Number(j.format.duration) - 2) < 0.15, `${of(j, 'audio').length} tracks, ${j.format.duration} s`);
+    ok(Math.abs(s.zcr / (await sound(fx('tone.wav'))).zcr - 1) < 0.1, `zero crossings ${s.zcr}: not the new sound`);
+    ok((await md5(o, '0:v:0')) === (await md5(fx('clip2.mp4'), '0:v:0')), 'video was re-encoded');
+  });
+  T('mix in audio', 'add-audio', ['tone.wav', 'clip2.mp4'], { mode: 'mix', shortest: true }, async ([o]) => { const j = await ffp(o), s = await sound(o); ok(of(j, 'video').length === 1 && of(j, 'audio').length === 1 && Math.abs(Number(j.format.duration) - 2) < 0.2 && s.mean > -40, `${j.format.duration} s, ${s.mean} dB`); });
+  T('loop video', 'loop-media', ['clip2.mp4'], { times: '3' }, async ([o]) => dur(o, 6, 0.3));
+  T('loop audio', 'loop-media', ['song.mp3'], { times: '2' }, async ([o]) => dur(o, 6, 0.2));
+  T('volume +6 dB', 'volume-media', ['tone.wav'], { unit: 'db', db: 6 }, async ([o]) => { const a = await sound(fx('tone.wav')), b = await sound(o); ok(Math.abs(b.mean - a.mean - 6) < 0.5, `${a.mean} → ${b.mean} dB`); });
+  T('volume +30 dB never clips', 'volume-media', ['tone.wav'], { unit: 'db', db: 30 }, async ([o]) => { const a = await sound(fx('tone.wav')), b = await sound(o); ok(b.max <= -0.2 && b.mean - a.mean > 10, `max ${b.max} dB, mean ${a.mean} → ${b.mean} dB`); });
+  T('volume video 50%', 'volume-media', ['clip2.mp4'], { unit: 'percent', percent: 50 }, async ([o]) => {
+    const a = await sound(fx('clip2.mp4')), b = await sound(o);
+    ok(Math.abs(a.mean - b.mean - 6) < 1, `${a.mean} → ${b.mean} dB`);
+    ok((await md5(o, '0:v:0')) === (await md5(fx('clip2.mp4'), '0:v:0')), 'video was re-encoded');
+  });
+  T('reverse video', 'reverse-media', ['clip2.mp4'], {}, async ([o]) => { await dur(o, 2, 0.2); const first = await still(o, 0); const d1 = await diff(first, await still(fx('clip2.mp4'), -0.04)), d0 = await diff(first, await still(fx('clip2.mp4'), 0)); ok(d1 < d0 / 2, `first frame vs last ${d1.toFixed(1)}, vs first ${d0.toFixed(1)}`); });
+  T('reverse audio', 'reverse-media', ['ramp.wav'], {}, async ([o]) => { const a = await sound(o, 0, 1), b = await sound(o, 2, 1); ok(a.mean > b.mean + 6, `start ${a.mean} dB, end ${b.mean} dB`); });
+  T('fade in and out', 'fade-audio', ['tone.wav'], { fadeIn: 1, fadeOut: 1 }, async ([o]) => { await dur(o, 3, 0.1); const [a, m, z] = await Promise.all([sound(o, 0, 0.25), sound(o, 1.2, 0.6), sound(o, 2.75, 0.25)]); ok(a.mean < m.mean - 10 && z.mean < m.mean - 10, `${a.mean} / ${m.mean} / ${z.mean} dB`); });
+  T('pitch up an octave', 'pitch-audio', ['tone.wav'], { semitones: 12 }, async ([o]) => { await dur(o, 3, 0.1); const r = (await sound(o)).zcr / (await sound(fx('tone.wav'))).zcr; ok(Math.abs(r - 2) < 0.1, `frequency ×${r.toFixed(2)}`); });
+  const edges = async (f, region) => { const { data, info } = await sharp(f).extract(region).greyscale().raw().toBuffer({ resolveWithObject: true }); let e = 0; for (let i = 1; i < data.length; i++) if (i % info.width) e += Math.abs(data[i] - data[i - 1]); return e / data.length; };
+  for (const mode of ['blur', 'pixelate']) {
+    T(`${mode} area`, 'blur-video', ['clip2.mp4'], { mode, left: 0, top: 0, width: 320, height: 180, strength: 80 }, async ([o]) => {
+      const [a, b] = await Promise.all([still(fx('clip2.mp4'), 1), still(o, 1)]), box = { left: 0, top: 0, width: 320, height: 180 };
+      if (mode === 'blur') { const [ea, eb] = await Promise.all([edges(a, box), edges(b, box)]); ok(eb < ea * 0.6, `detail ${ea.toFixed(2)} → ${eb.toFixed(2)}`); }
+      else { const d = await diff(a, b, box); ok(d > 8, `area changed by only ${d.toFixed(1)}`); }
+      ok((await diff(a, b, { left: 400, top: 200, width: 240, height: 160 })) < 4, 'outside the area changed');
+    });
+  }
+  T('gif speed', 'gif-speed', ['anim.gif'], { speed: '2' }, async ([o]) => { const m = await fmt(o, 'gif'); ok(m.pages === 10 && m.delay.every((d) => d === 50), `${m.pages} frames, ${m.delay}`); });
+  T('webp speed', 'gif-speed', ['anim.webp'], { speed: '0.5' }, async ([o]) => { const m = await fmt(o, 'webp'); ok(m.pages === 10 && m.delay.every((d) => d === 200), `${m.pages} frames, ${m.delay}`); });
+  for (const f of ['anim.gif', 'anim.webp']) {
+    T(`reverse ${f}`, 'gif-reverse', [f], {}, async ([o]) => {
+      const m = await fmt(o, f.endsWith('gif') ? 'gif' : 'webp');
+      ok(m.pages === 10, `${m.pages} frames`);
+      const first = sharp(o, { page: 0 }), d1 = await diff(first, sharp(fx(f), { page: 9 })), d0 = await diff(sharp(o, { page: 0 }), sharp(fx(f), { page: 0 }));
+      ok(d1 < d0 / 2, `first frame vs last ${d1.toFixed(1)}, vs first ${d0.toFixed(1)}`);
+    });
+  }
+  for (const to of ['flac', 'm4a', 'alac', 'mp3', 'ogg', 'opus', 'mka']) {
+    T(`audio cover mp3→${to}`, 'convert-audio', ['song.mp3'], { to, bitrate: '' }, async ([o]) => { const j = await ffp(o); ok(of(j, 'video').some((s) => s.disposition?.attached_pic === 1), 'cover lost'); ok(titled(j), 'title lost'); });
+  }
   T('lottie→gif', 'render-motion', ['anim.json'], { to: 'gif', resolution: 'quarter' }, async ([o]) => fmt(o, 'gif'));
   T('timeline→fcpxml', 'convert-timeline', ['timeline.otio'], { to: 'fcpxml' }, ([o]) => ok(txt(o).includes('fcpxml'), 'fcpxml'));
   T('timeline→edl', 'convert-timeline', ['timeline.otio'], { to: 'edl' }, ([o]) => ok(/TITLE|001/.test(txt(o)), 'edl'));
@@ -242,6 +347,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     if (only && !only.test(c.name)) continue;
     const missing = c.inputs.filter((f) => !fs.existsSync(f)).map((f) => path.basename(f));
     if (missing.length) { console.log(`SKIP ${c.name.padEnd(34)} no ${missing.join(', ')} sample`); results.push({ name: c.name, status: 'SKIP', detail: missing.join(', ') }); continue; }
+    if (c.skip) { console.log(`SKIP ${c.name.padEnd(34)} ${c.skip}`); results.push({ name: c.name, status: 'SKIP', detail: c.skip }); continue; }
     n++;
     const dest = { kind: 'dir', path: path.join(OUT, String(n).padStart(3, '0')) };
     fs.mkdirSync(dest.path, { recursive: true });
@@ -279,6 +385,33 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     console.log(`${status} ${'failed extract keeps folder'.padEnd(34)}        ${detail}`);
     results.push({ name: 'failed extract keeps folder', status, detail });
   }
+  const check = async (name, fn) => {
+    if (only && !only.test(name)) return;
+    let status = 'PASS', detail = '';
+    try { detail = (await fn()) || ''; } catch (e) { status = 'FAIL'; detail = e.message; }
+    console.log(`${status} ${name.padEnd(34)}        ${detail}`.slice(0, 220));
+    results.push({ name, status, detail });
+  };
+  await check('subtitles fail cleanly without a track', async () => {
+    const d = path.join(OUT, 'no-subs');
+    fs.mkdirSync(d, { recursive: true });
+    const id = submit({ tool: 'extract-subtitles', files: [fx('clip.mp4')], opts: { to: 'srt' }, dest: { kind: 'dir', path: d } });
+    let j;
+    for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); }
+    ok(j.status !== 'done' && /no subtitle track/.test(j.error), `${j.status}: ${j.error}`);
+    ok(!files(d).length, `left ${files(d)}`);
+    return j.error;
+  });
+  await check('media targets follow the encoders', () => {
+    const cat = tools.catalog(), to = (id) => cat.find((t) => t.id === id).options.find((o) => o.key === 'to').choices.map(([v]) => v);
+    for (const t of ['amr', 'av1', 'hevc', 'ogv']) ok(to(t === 'amr' ? 'convert-audio' : 'convert-video').includes(t) === M.supports(t), `${t} offered without an encoder or hidden with one`);
+    const enc = M.encoders();
+    ok(enc?.has('libx264') && enc.has('aac'), 'no encoder list');
+    ok(M.supports('av1') === (enc.has('libsvtav1') || enc.has('libaom-av1')) && M.supports('amr') === enc.has('libopencore_amrnb'), 'supports() disagrees with the encoder list');
+    const v = tools.wheelsFor([fx('clip.mp4')]), a = tools.wheelsFor([fx('tone.wav')]);
+    ok(v.convert.length <= 10 && a.convert.length <= 10, `rings of ${v.convert.length} and ${a.convert.length}`);
+    return `AV1 ${M.supports('av1') ? (enc.has('libsvtav1') ? 'SVT-AV1' : 'libaom') : 'none'}, AMR ${M.supports('amr') ? 'yes' : 'no'}; ${v.convert.map((w) => w.label)} | ${a.convert.map((w) => w.label)}`;
+  });
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));
