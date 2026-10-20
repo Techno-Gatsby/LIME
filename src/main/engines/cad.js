@@ -487,11 +487,12 @@ async function readMesh(p) {
   const e = U.ext(p);
   const buf = await fsp.readFile(p);
   if (e === 'stl') return readStl(buf);
-  if (e === 'obj') return readObj(buf.toString('utf8'));
+  if (e === 'obj') return readObj(buf.toString('utf8'), p);
   if (e === 'ply') return readPly(buf);
   if (e === 'off') return readOff(buf.toString('utf8'));
   if (e === 'glb' || e === 'gltf') return readGltf(buf, p);
   if (e === '3mf') return read3mf(buf);
+  if (e === 'fbx') return require('./fbx').readFbx(buf, p);
   if (['step', 'stp', 'iges', 'igs', 'brep'].includes(e)) return readOcct(buf, e);
   throw new Error(`Lime can’t read ${e.toUpperCase()} models.`);
 }
@@ -500,6 +501,46 @@ const toYUp = (pos, k = 1) => { const p = new Float32Array(pos.length); for (let
 const MF_UNITS = { micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 };
 const num = (n) => String(Math.round(n * 1e6) / 1e6);
 function mesh(pos, idx, parts) { return { pos: pos instanceof Float32Array ? pos : Float32Array.from(pos), idx: idx instanceof Uint32Array ? idx : Uint32Array.from(idx), parts: parts || null }; }
+const rgb = (r, g, b) => [r, g, b].reduce((a, x) => (a << 8) | Math.round(Math.min(1, Math.max(0, x || 0)) * 255), 0);
+const ck = (p) => (p.color == null ? '' : `${p.color}/${p.alpha ?? 1}`);
+const palette = (parts) => [...new Map(parts.map((p) => [ck(p), p])).values()];
+const spans = (m) => { const ps = m.parts?.length ? m.parts : [{ start: 0, color: null }]; return ps.map((p, k) => ({ ...p, end: k + 1 < ps.length ? ps[k + 1].start : m.idx.length })); };
+function meshOf(pos, groups) {
+  const idx = [], parts = [];
+  for (const g of groups) if (g.idx.length) { parts.push({ start: idx.length, color: g.color ?? null, ...(g.alpha < 1 ? { alpha: g.alpha } : {}) }); for (const i of g.idx) idx.push(i); }
+  return mesh(pos, idx, parts.some((p) => p.color != null) ? parts : null);
+}
+function triangulate(pos, f, out) {
+  const n = f.length;
+  if (n < 3) return;
+  if (n === 3) { out.push(f[0], f[1], f[2]); return; }
+  if (n <= 64 && earClip(pos, f, out)) return;
+  for (let k = 1; k < n - 1; k++) out.push(f[0], f[k], f[k + 1]);
+}
+function earClip(pos, f, out) {
+  const n = f.length, P = (i, k) => pos[f[i] * 3 + k], N = [0, 0, 0];
+  for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) { const a = (k + 1) % 3, b = (k + 2) % 3, j = (i + 1) % n; N[k] += (P(i, a) - P(j, a)) * (P(i, b) + P(j, b)); }
+  const A = N.map(Math.abs);
+  if (!(A[0] + A[1] + A[2] > 0) || !Number.isFinite(A[0] + A[1] + A[2])) return false;
+  const d = A[0] >= A[1] && A[0] >= A[2] ? 0 : A[1] >= A[2] ? 1 : 2, [u, v] = N[d] >= 0 ? [(d + 1) % 3, (d + 2) % 3] : [(d + 2) % 3, (d + 1) % 3];
+  const X = f.map((_, i) => P(i, u)), Y = f.map((_, i) => P(i, v));
+  const cross = (a, b, c) => (X[b] - X[a]) * (Y[c] - Y[a]) - (Y[b] - Y[a]) * (X[c] - X[a]);
+  const r = f.map((_, i) => i), start = out.length;
+  for (let guard = n * n; r.length > 3 && guard > 0; guard--) {
+    let clipped = false;
+    for (let i = 0; i < r.length && !clipped; i++) {
+      const a = r[(i + r.length - 1) % r.length], b = r[i], c = r[(i + 1) % r.length];
+      if (cross(a, b, c) <= 0 || r.some((k) => k !== a && k !== b && k !== c && cross(a, b, k) >= 0 && cross(b, c, k) >= 0 && cross(c, a, k) >= 0)) continue;
+      out.push(f[a], f[b], f[c]);
+      r.splice(i, 1);
+      clipped = true;
+    }
+    if (!clipped) break;
+  }
+  if (r.length > 3) { out.length = start; return false; }
+  out.push(f[r[0]], f[r[1]], f[r[2]]);
+  return true;
+}
 function readStl(buf) {
   const head = buf.subarray(0, 512).toString('latin1');
   const n = buf.length >= 84 ? buf.readUInt32LE(80) : 0;
@@ -522,15 +563,41 @@ function weld(soup) {
   }
   return mesh(pos, idx);
 }
-function readObj(text) {
-  const v = [], idx = [];
-  for (const line of text.split(/\r?\n/)) {
-    if (line.startsWith('v ')) { const [, x, y, z] = line.trim().split(/\s+/); v.push(+x, +y, +z); } else if (line.startsWith('f ')) {
-      const f = line.trim().split(/\s+/).slice(1).map((t) => { const i = parseInt(t.split('/')[0], 10); return i < 0 ? v.length / 3 + i : i - 1; });
-      for (let k = 1; k < f.length - 1; k++) idx.push(f[0], f[k], f[k + 1]);
+function readObj(text, p) {
+  const v = [], vc = [], lib = {}, groups = new Map();
+  let name = '', grp = '', mat = null, cur = null;
+  for (const raw of text.replace(/\\\r?\n/g, ' ').split(/\r?\n/)) {
+    const line = raw.trim(), sp = line.search(/\s/), kw = sp < 0 ? line : line.slice(0, sp), rest = sp < 0 ? '' : line.slice(sp + 1).trim();
+    if (kw === 'v') {
+      const n = rest.split(/\s+/).map(Number);
+      v.push(n[0], n[1], n[2]);
+      if (n.length >= 6) { const s = n[3] > 1 || n[4] > 1 || n[5] > 1 ? 1 / 255 : 1; vc[v.length / 3 - 1] = [n[3] * s, n[4] * s, n[5] * s]; }
+    } else if (kw === 'f' || kw === 'fo') {
+      const key = `${grp || name}\0${mat}`, nv = v.length / 3;
+      if (!cur && !(cur = groups.get(key))) groups.set(key, (cur = { idx: [], mat }));
+      triangulate(v, rest.split(/\s+/).filter(Boolean).map((t) => { const i = parseInt(t, 10), j = i < 0 ? nv + i : i - 1; if (!(j >= 0 && j < nv)) throw new Error(`This OBJ file refers to vertex ${t.split('/')[0]}, but it has only ${nv}.`); return j; }), cur.idx);
+    } else if (kw === 'o') { name = rest; grp = ''; cur = null; } else if (kw === 'g') { grp = rest; cur = null; } else if (kw === 'usemtl') { mat = rest; cur = null; } else if (kw === 'mtllib' && p) readMtl(rest, path.dirname(p), lib);
+  }
+  for (const g of groups.values()) {
+    const s = [0, 0, 0];
+    let n = 0;
+    for (const i of g.idx) if (vc[i]) { n++; for (let k = 0; k < 3; k++) s[k] += vc[i][k]; }
+    g.color = n ? rgb(s[0] / n, s[1] / n, s[2] / n) : lib[g.mat]?.color ?? null;
+    g.alpha = lib[g.mat]?.alpha ?? 1;
+  }
+  return toZUp(meshOf(v, groups.values()));
+}
+function readMtl(names, dir, lib) {
+  const find = (n) => { n = n.trim().replace(/^"|"$/g, '').replace(/\\/g, '/'); return n ? [path.resolve(dir, n), path.join(dir, path.basename(n))].find((f) => fs.existsSync(f) && fs.statSync(f).isFile()) : null; };
+  for (const f of find(names) ? [find(names)] : names.split(/\s+/).map(find).filter(Boolean)) {
+    let cur = null;
+    for (const raw of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
+      const w = raw.trim().split(/\s+/), k = w[0].toLowerCase(), x = w.slice(1).map(Number);
+      if (k === 'newmtl') lib[raw.trim().slice(6).trim()] = cur = {};
+      else if (cur && k === 'kd' && x.length >= 3 && x.slice(0, 3).every(Number.isFinite)) cur.color = rgb(x[0], x[1], x[2]);
+      else if (cur && (k === 'd' || k === 'tr') && Number.isFinite(x.at(-1))) cur.alpha = Math.min(1, Math.max(0, k === 'd' ? x.at(-1) : 1 - x.at(-1)));
     }
   }
-  return toZUp(mesh(v, idx));
 }
 function readOff(text) {
   const t = text.replace(/#.*$/gm, '').trim().split(/\s+/);
@@ -538,7 +605,7 @@ function readOff(text) {
   const nv = +t[i++], nf = +t[i++]; i++;
   const v = [], idx = [];
   for (let k = 0; k < nv; k++) v.push(+t[i++], +t[i++], +t[i++]);
-  for (let k = 0; k < nf; k++) { const c = +t[i++]; const f = t.slice(i, i + c).map(Number); i += c; for (let j = 1; j < c - 1; j++) idx.push(f[0], f[j], f[j + 1]); }
+  for (let k = 0; k < nf; k++) { const c = +t[i++]; triangulate(v, t.slice(i, i + c).map(Number), idx); i += c; }
   return mesh(v, idx);
 }
 function readPly(buf) {
@@ -571,25 +638,41 @@ function readPly(buf) {
     off += s;
     return v;
   };
-  const v = [], idx = [];
+  const v = [], vc = [], faces = [];
+  const CH = { red: 0, green: 1, blue: 2, alpha: 3, diffuse_red: 0, diffuse_green: 1, diffuse_blue: 2, diffuse_alpha: 3 };
+  const cv = (x, t) => Math.min(1, Math.max(0, /char|int8/.test(t) ? x / 255 : /short|16/.test(t) ? x / 65535 : /int/.test(t) ? x / (x > 255 ? 4294967295 : 255) : x));
+  const take = (el, rec) => {
+    let c = null;
+    for (const pr of el.props) if (!pr.list && CH[pr.name] != null) (c = c || [1, 1, 1, 1])[CH[pr.name]] = cv(rec[pr.name], pr.type);
+    if (el.name === 'vertex') { v.push(rec.x, rec.y, rec.z); vc.push(c); }
+    if (el.name === 'face') faces.push([rec.vertex_indices || rec.vertex_index || [], c]);
+  };
   if (format === 'ascii') {
     const toks = buf.subarray(off).toString('latin1').trim().split(/\s+/);
     let t = 0;
     for (const el of elements) for (let i = 0; i < el.count; i++) {
       const rec = {};
       for (const pr of el.props) { if (pr.list) { const c = +toks[t++]; rec[pr.name] = toks.slice(t, t + c).map(Number); t += c; } else rec[pr.name] = +toks[t++]; }
-      if (el.name === 'vertex') v.push(rec.x, rec.y, rec.z);
-      if (el.name === 'face') { const f = rec.vertex_indices || rec.vertex_index || []; for (let j = 1; j < f.length - 1; j++) idx.push(f[0], f[j], f[j + 1]); }
+      take(el, rec);
     }
   } else {
     for (const el of elements) for (let i = 0; i < el.count; i++) {
       const rec = {};
       for (const pr of el.props) { if (pr.list) { const c = rd(pr.ct); const a = []; for (let k = 0; k < c; k++) a.push(rd(pr.it)); rec[pr.name] = a; } else rec[pr.name] = rd(pr.type); }
-      if (el.name === 'vertex') v.push(rec.x, rec.y, rec.z);
-      if (el.name === 'face') { const f = rec.vertex_indices || rec.vertex_index || []; for (let j = 1; j < f.length - 1; j++) idx.push(f[0], f[j], f[j + 1]); }
+      take(el, rec);
     }
   }
-  return mesh(v, idx);
+  const nv = v.length / 3, groups = new Map();
+  for (const [f, fc] of faces) {
+    if (f.some((i) => !(i >= 0 && i < nv))) throw new Error(`A face of this PLY file refers to a vertex it doesn’t have (there are ${nv}).`);
+    const c = fc || vc[f[0]], color = c ? rgb(c[0], c[1], c[2]) : null, key = c ? color + Math.round(c[3] * 255) * 0x1000000 : -1;
+    if (!groups.has(key)) groups.set(key, { idx: [], color, alpha: c ? c[3] : 1 });
+    triangulate(v, f, groups.get(key).idx);
+  }
+  if (groups.size <= 256) return meshOf(v, groups.values());
+  const s = [0, 0, 0], idx = [];
+  for (const g of groups.values()) { for (let k = 0; k < 3; k++) s[k] += ((g.color >> (16 - 8 * k)) & 255) * g.idx.length; for (const i of g.idx) idx.push(i); }
+  return meshOf(v, [{ idx, color: rgb(...s.map((x) => x / idx.length / 255)) }]);
 }
 function readGltf(buf, p) {
   let json, bin = null;
@@ -636,7 +719,7 @@ function readGltf(buf, p) {
       const I = prim.indices != null ? acc(prim.indices) : Array.from({ length: P3.length / 3 }, (_, k) => k);
       const mat = json.materials?.[prim.material];
       const c = mat?.pbrMetallicRoughness?.baseColorFactor;
-      parts.push({ start: idx.length, color: c ? (toSrgb(c[0]) << 16) | (toSrgb(c[1]) << 8) | toSrgb(c[2]) : null });
+      parts.push({ start: idx.length, color: c ? (toSrgb(c[0]) << 16) | (toSrgb(c[1]) << 8) | toSrgb(c[2]) : null, ...(c?.[3] < 1 ? { alpha: c[3] } : {}) });
       for (const k of I) idx.push(start + k);
     }
     for (const c of node.children || []) visit(c, m);
@@ -652,32 +735,37 @@ function read3mf(buf) {
   const root = files.find((f) => /^3D\/3dmodel\.model$/i.test(f)) || files[0];
   const unit = (root && /<model\b[^>]*\bunit="([^"]*)"/.exec(Buffer.from(z[root]).toString('utf8'))?.[1]) || 'millimeter';
   if (!MF_UNITS[unit]) throw new Error(`This 3MF file uses a unit Lime doesn’t know: “${unit}”.`);
-  const objects = {};
+  const A = (s) => { const o = {}; for (const m of s.matchAll(/([\w:]+)\s*=\s*"([^"]*)"/g)) o[m[1]] = m[2]; return o; };
+  const objects = {}, mats = {}, items = [];
   for (const f of files) {
     const xml = Buffer.from(z[f]).toString('utf8');
+    for (const [, , attrs, body] of xml.matchAll(/<((?:\w+:)?(?:basematerials|colorgroup))\b([^>]*)>([\s\S]*?)<\/\1>/g)) mats[A(attrs).id] = [...body.matchAll(/\b(?:displaycolor|color)="#([0-9a-f]{6})([0-9a-f]{2})?"/gi)].map((m) => ({ color: parseInt(m[1], 16), alpha: m[2] ? parseInt(m[2], 16) / 255 : 1 }));
     for (const [, attrs, body] of xml.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
-      const id = (/\bid="(\d+)"/.exec(attrs) || [])[1];
-      const v = [...body.matchAll(/<vertex\b[^>]*x="([^"]+)"[^>]*y="([^"]+)"[^>]*z="([^"]+)"/g)].flatMap((m) => [+m[1], +m[2], +m[3]]);
-      const t = [...body.matchAll(/<triangle\b[^>]*v1="(\d+)"[^>]*v2="(\d+)"[^>]*v3="(\d+)"/g)].flatMap((m) => [+m[1], +m[2], +m[3]]);
-      const comps = [...body.matchAll(/<component\b[^>]*objectid="(\d+)"(?:[^>]*transform="([^"]+)")?/g)].map((m) => ({ id: m[1], t: m[2] }));
-      objects[id] = { v, t, comps };
+      const a = A(attrs), v = [], t = [], keys = [];
+      for (const [, s] of body.matchAll(/<vertex\b([^>]*)/g)) { const b = A(s); v.push(+b.x, +b.y, +b.z); }
+      for (const [, s] of body.matchAll(/<triangle\b([^>]*)/g)) { const b = A(s); t.push(+b.v1, +b.v2, +b.v3); keys.push(`${b.pid ?? a.pid}/${b.p1 ?? a.pindex ?? 0}`); }
+      if (t.some((i) => !(i >= 0 && i < v.length / 3))) throw new Error('A triangle of this 3MF file refers to a vertex it doesn’t have.');
+      objects[a.id] = { v, t, keys, type: a.type || 'model', comps: [...body.matchAll(/<component\b([^>]*)/g)].map(([, s]) => A(s)) };
     }
+    for (const [, s] of xml.matchAll(/<item\b([^>]*)/g)) items.push(A(s));
   }
-  const items = [];
-  for (const f of files) for (const m of Buffer.from(z[f]).toString('utf8').matchAll(/<item\b[^>]*objectid="(\d+)"(?:[^>]*transform="([^"]+)")?/g)) items.push({ id: m[1], t: m[2] });
-  const pos = [], idx = [];
+  const pos = [], groups = new Map();
   const tm = (s) => (s ? s.trim().split(/\s+/).map(Number) : [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
   const cat = (a, b) => [a[0] * b[0] + a[1] * b[3] + a[2] * b[6], a[0] * b[1] + a[1] * b[4] + a[2] * b[7], a[0] * b[2] + a[1] * b[5] + a[2] * b[8], a[3] * b[0] + a[4] * b[3] + a[5] * b[6], a[3] * b[1] + a[4] * b[4] + a[5] * b[7], a[3] * b[2] + a[4] * b[5] + a[5] * b[8], a[6] * b[0] + a[7] * b[3] + a[8] * b[6], a[6] * b[1] + a[7] * b[4] + a[8] * b[7], a[6] * b[2] + a[7] * b[5] + a[8] * b[8], a[9] * b[0] + a[10] * b[3] + a[11] * b[6] + b[9], a[9] * b[1] + a[10] * b[4] + a[11] * b[7] + b[10], a[9] * b[2] + a[10] * b[5] + a[11] * b[8] + b[11]];
   const add = (id, m, depth = 0) => {
     const o = objects[id];
-    if (!o || depth > 8) return;
-    const start = pos.length / 3;
+    if (!o || depth > 8 || o.type === 'support' || o.type === 'other') return;
+    const start = pos.length / 3, flip = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]) < 0;
     for (let k = 0; k < o.v.length; k += 3) { const [x, y, z2] = [o.v[k], o.v[k + 1], o.v[k + 2]]; pos.push(x * m[0] + y * m[3] + z2 * m[6] + m[9], x * m[1] + y * m[4] + z2 * m[7] + m[10], x * m[2] + y * m[5] + z2 * m[8] + m[11]); }
-    for (const i of o.t) idx.push(start + i);
-    for (const c of o.comps) add(c.id, cat(tm(c.t), m), depth + 1);
+    for (let i = 0; i < o.t.length; i += 3) {
+      const [pid, p1] = o.keys[i / 3].split('/'), c = mats[pid]?.[p1], key = c ? o.keys[i / 3] : '';
+      if (!groups.has(key)) groups.set(key, { idx: [], color: c?.color ?? null, alpha: c?.alpha ?? 1 });
+      groups.get(key).idx.push(start + o.t[i], start + o.t[i + (flip ? 2 : 1)], start + o.t[i + (flip ? 1 : 2)]);
+    }
+    for (const c of o.comps) add(c.objectid, cat(tm(c.transform), m), depth + 1);
   };
-  (items.length ? items : Object.keys(objects).map((id) => ({ id }))).forEach((it) => add(it.id, tm(it.t)));
-  return mesh(pos.map((v) => v * MF_UNITS[unit]), idx);
+  (items.length ? items : Object.keys(objects).map((objectid) => ({ objectid }))).forEach((it) => add(it.objectid, tm(it.transform)));
+  return meshOf(pos.map((v) => v * MF_UNITS[unit]), groups.values());
 }
 let occt = null;
 async function readOcct(buf, e) {
@@ -729,19 +817,42 @@ function writeStl(m) {
   }
   return b;
 }
-function writeObj(m) {
-  const L = ['# Lime'], p = toYUp(m.pos);
+const alpha8 = (p) => Math.round((p.alpha ?? 1) * 255);
+function writeObj(m, mtl) {
+  const L = ['# Lime'], p = toYUp(m.pos), pal = mtl && m.parts?.some((q) => q.color != null) ? palette(m.parts) : null;
+  const name = (q) => (q.color == null ? 'default' : `color_${hex(q.color).slice(1)}${alpha8(q) < 255 ? `_${alpha8(q)}` : ''}`);
+  if (pal) L.push(`mtllib ${mtl}`);
   for (let i = 0; i < p.length; i += 3) L.push(`v ${num(p[i])} ${num(p[i + 1])} ${num(p[i + 2])}`);
-  for (let i = 0; i < m.idx.length; i += 3) L.push(`f ${m.idx[i] + 1} ${m.idx[i + 1] + 1} ${m.idx[i + 2] + 1}`);
-  return `${L.join('\n')}\n`;
+  for (const s of spans(m)) {
+    if (pal) L.push(`usemtl ${name(s)}`);
+    for (let i = s.start; i < s.end; i += 3) L.push(`f ${m.idx[i] + 1} ${m.idx[i + 1] + 1} ${m.idx[i + 2] + 1}`);
+  }
+  const kd = (c) => [16, 8, 0].map((k) => num(((c >> k) & 255) / 255)).join(' ');
+  return { obj: `${L.join('\n')}\n`, mtl: pal && `# Lime\n${pal.map((q) => `\nnewmtl ${name(q)}\nKd ${kd(q.color ?? 0xffffff)}\nKa 0 0 0\nKs 0 0 0\n${alpha8(q) < 255 ? `d ${num(q.alpha)}\n` : ''}illum 1\n`).join('')}` };
 }
 function writePly(m) {
-  const nv = m.pos.length / 3, nf = m.idx.length / 3;
-  const head = Buffer.from(`ply\nformat binary_little_endian 1.0\ncomment Lime\nelement vertex ${nv}\nproperty float x\nproperty float y\nproperty float z\nelement face ${nf}\nproperty list uchar uint vertex_indices\nend_header\n`, 'latin1');
-  const b = Buffer.alloc(nv * 12 + nf * 13);
-  for (let i = 0; i < m.pos.length; i++) b.writeFloatLE(m.pos[i], i * 4);
-  let o = nv * 12;
-  for (let i = 0; i < nf; i++) { b.writeUInt8(3, o); b.writeUInt32LE(m.idx[i * 3], o + 1); b.writeUInt32LE(m.idx[i * 3 + 1], o + 5); b.writeUInt32LE(m.idx[i * 3 + 2], o + 9); o += 13; }
+  let pos = m.pos, idx = m.idx, rgba = null;
+  if (m.parts?.some((q) => q.color != null && (q.color !== 0xffffff || alpha8(q) < 255))) {
+    const pal = palette(m.parts), at = new Map(pal.map((q, k) => [ck(q), k])), map = new Map(), src = [];
+    idx = new Uint32Array(m.idx.length);
+    rgba = [];
+    for (const s of spans(m)) {
+      const k = at.get(ck(s)), c = s.color ?? 0xffffff;
+      for (let i = s.start; i < s.end; i++) {
+        const key = m.idx[i] * pal.length + k;
+        if (!map.has(key)) { map.set(key, src.length); src.push(m.idx[i]); rgba.push([(c >> 16) & 255, (c >> 8) & 255, c & 255, alpha8(s)]); }
+        idx[i] = map.get(key);
+      }
+    }
+    pos = new Float32Array(src.length * 3);
+    src.forEach((v, j) => pos.set(m.pos.subarray(v * 3, v * 3 + 3), j * 3));
+  }
+  const nv = pos.length / 3, nf = idx.length / 3, vs = rgba ? 16 : 12;
+  const head = Buffer.from(`ply\nformat binary_little_endian 1.0\ncomment Lime\nelement vertex ${nv}\nproperty float x\nproperty float y\nproperty float z\n${rgba ? 'property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n' : ''}element face ${nf}\nproperty list uchar uint vertex_indices\nend_header\n`, 'latin1');
+  const b = Buffer.alloc(nv * vs + nf * 13);
+  for (let i = 0; i < nv; i++) { for (let k = 0; k < 3; k++) b.writeFloatLE(pos[i * 3 + k], i * vs + k * 4); if (rgba) b.set(rgba[i], i * vs + 12); }
+  let o = nv * vs;
+  for (let i = 0; i < nf; i++) { b.writeUInt8(3, o); b.writeUInt32LE(idx[i * 3], o + 1); b.writeUInt32LE(idx[i * 3 + 1], o + 5); b.writeUInt32LE(idx[i * 3 + 2], o + 9); o += 13; }
   return Buffer.concat([head, b]);
 }
 const toLinear = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
@@ -751,17 +862,17 @@ function writeGltf(src, embed) {
   const idx = small ? Uint16Array.from(m.idx) : m.idx;
   const pad = (b) => Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)]);
   const pos = pad(Buffer.from(m.pos.buffer, m.pos.byteOffset, m.pos.byteLength)), bin = Buffer.concat([pos, pad(Buffer.from(idx.buffer, idx.byteOffset, idx.byteLength))]);
-  const parts = m.parts?.length ? m.parts : [{ start: 0, color: null }], colors = [...new Set(parts.map((p) => p.color ?? -1))];
+  const parts = m.parts?.length ? m.parts : [{ start: 0, color: null }], pal = palette(parts), at = new Map(pal.map((p, k) => [ck(p), k]));
   const accessors = [{ bufferView: 0, componentType: 5126, count: nv, type: 'VEC3', min: info.min, max: info.max }], primitives = [];
   parts.forEach((p, k) => {
     const count = (k + 1 < parts.length ? parts[k + 1].start : m.idx.length) - p.start;
     if (count <= 0) return;
     accessors.push({ bufferView: 1, byteOffset: p.start * (small ? 2 : 4), componentType: small ? 5123 : 5125, count, type: 'SCALAR' });
-    primitives.push({ attributes: { POSITION: 0 }, indices: accessors.length - 1, material: colors.indexOf(p.color ?? -1) });
+    primitives.push({ attributes: { POSITION: 0 }, indices: accessors.length - 1, material: at.get(ck(p)) });
   });
   const json = {
     asset: { version: '2.0', generator: 'Lime' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }], meshes: [{ primitives }],
-    materials: colors.map((c) => ({ pbrMetallicRoughness: { baseColorFactor: c < 0 ? [0.62, 0.65, 0.6, 1] : [toLinear((c >> 16) & 255), toLinear((c >> 8) & 255), toLinear(c & 255), 1], metallicFactor: 0, roughnessFactor: 0.8 }, doubleSided: true })),
+    materials: pal.map(({ color: c, alpha: a = 1 }) => ({ pbrMetallicRoughness: { baseColorFactor: c == null ? [0.62, 0.65, 0.6, 1] : [toLinear((c >> 16) & 255), toLinear((c >> 8) & 255), toLinear(c & 255), a], metallicFactor: 0, roughnessFactor: 0.8 }, ...(c != null && a < 1 ? { alphaMode: 'BLEND' } : {}), doubleSided: true })),
     buffers: [{ byteLength: bin.length, ...(embed ? { uri: `data:application/octet-stream;base64,${bin.toString('base64')}` } : {}) }],
     bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: m.pos.byteLength, target: 34962 }, { buffer: 0, byteOffset: pos.length, byteLength: idx.byteLength, target: 34963 }],
     accessors,
@@ -777,13 +888,23 @@ function writeGltf(src, embed) {
 const writeGlb = (m) => writeGltf(m, false);
 function write3mf(m) {
   const { zipSync, strToU8 } = require('fflate');
-  const v = [], t = [];
-  for (let i = 0; i < m.pos.length; i += 3) v.push(`<vertex x="${fmt(m.pos[i])}" y="${fmt(m.pos[i + 1])}" z="${fmt(m.pos[i + 2])}"/>`);
-  for (let i = 0; i < m.idx.length; i += 3) t.push(`<triangle v1="${m.idx[i]}" v2="${m.idx[i + 1]}" v3="${m.idx[i + 2]}"/>`);
+  const v = [], t = [], weld = new Map(), pal = m.parts?.some((q) => q.color != null) ? palette(m.parts) : null, at = new Map(pal?.map((q, k) => [ck(q), k]));
+  const key = (i) => `x="${fmt(m.pos[i * 3])}" y="${fmt(m.pos[i * 3 + 1])}" z="${fmt(m.pos[i * 3 + 2])}"`;
+  const vert = (k) => { if (!weld.has(k)) { weld.set(k, weld.size); v.push(`<vertex ${k}/>`); } return weld.get(k); };
+  const def = pal ? at.get(ck(m.parts[0])) : null;
+  for (const s of spans(m)) {
+    const k = pal ? at.get(ck(s)) : null;
+    for (let i = s.start; i < s.end; i += 3) {
+      const [a, b, c] = [m.idx[i], m.idx[i + 1], m.idx[i + 2]].map(key);
+      if (a !== b && b !== c && a !== c) t.push(`<triangle v1="${vert(a)}" v2="${vert(b)}" v3="${vert(c)}"${k !== def ? ` pid="1" p1="${k}"` : ''}/>`);
+    }
+  }
+  const color = (q) => (q.color == null ? '#FFFFFF' : `${hex(q.color)}${alpha8(q) < 255 ? alpha8(q).toString(16).padStart(2, '0') : ''}`.toUpperCase());
+  const mats = pal ? `<basematerials id="1">${pal.map((q) => `<base name="${q.color == null ? 'Default' : color(q)}" displaycolor="${color(q)}"/>`).join('')}</basematerials>` : '';
   return Buffer.from(zipSync({
     '[Content_Types].xml': strToU8('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'),
     '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'),
-    '3D/3dmodel.model': strToU8(`<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">Lime</metadata><resources><object id="1" type="model"><mesh><vertices>${v.join('')}</vertices><triangles>${t.join('')}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`),
+    '3D/3dmodel.model': strToU8(`<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">Lime</metadata><resources>${mats}<object id="2" type="model"${pal ? ` pid="1" pindex="${def}"` : ''}><mesh><vertices>${v.join('')}</vertices><triangles>${t.join('')}</triangles></mesh></object></resources><build><item objectid="2"/></build></model>`),
   }));
 }
 
@@ -813,7 +934,8 @@ function render3d(m, opts = {}) {
   const L1 = [-0.45, 0.75, 0.5], L2 = [0.6, 0.2, 0.75];
   const nl = (v) => { const l = Math.hypot(...v); return v.map((x) => x / l); };
   const l1 = nl(L1), l2 = nl(L2);
-  const partColor = (ti) => { if (!m.parts) return base; let c = null; for (const pt of m.parts) if (ti * 3 >= pt.start) c = pt.color; return c == null ? base : [(c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255]; };
+  let pk = 0;
+  const partColor = (ti) => { if (!m.parts) return base; while (pk + 1 < m.parts.length && ti * 3 >= m.parts[pk + 1].start) pk++; const c = m.parts[pk].color; return c == null ? base : [(c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255]; };
   for (let t = 0; t < m.idx.length; t += 3) {
     const a = m.idx[t] * 3, b = m.idx[t + 1] * 3, c = m.idx[t + 2] * 3;
     const ax = ox + P2[a] * s, ay = oy - P2[a + 1] * s, az = P2[a + 2];
@@ -898,7 +1020,14 @@ async function convert(p, opts, ctx) {
   if (!m.idx.length) throw new Error('This model has no triangles.');
   ctx.progress?.(0.6, `Writing ${to.toUpperCase()}`);
   if (to === 'stl') await fsp.writeFile(out, writeStl(m));
-  else if (to === 'obj') await fsp.writeFile(out, writeObj(m));
+  else if (to === 'obj') {
+    const stem = path.join(path.dirname(out), U.base(out).replace(/\s+/g, '_'));
+    let mtl = m.parts?.some((q) => q.color != null) ? `${stem}.mtl` : null;
+    for (let i = 1; mtl && fs.existsSync(mtl); i++) mtl = `${stem}_${i}.mtl`;
+    const r = writeObj(m, mtl && path.basename(mtl));
+    await fsp.writeFile(out, r.obj);
+    if (mtl) { await fsp.writeFile(mtl, r.mtl); return { path: out, paths: [out, mtl] }; }
+  }
   else if (to === 'ply') await fsp.writeFile(out, writePly(m));
   else if (to === 'glb' || to === 'gltf') await fsp.writeFile(out, writeGltf(m, to === 'gltf'));
   else if (to === '3mf') await fsp.writeFile(out, write3mf(m));
@@ -947,4 +1076,4 @@ async function thumbnail(p, size = 240) {
   } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
 }
 
-module.exports = { KINDS, convert, render, info, report, thumbnail, readDrawing, readMesh, flatten, drawingSvg, meshInfo, writeStl, writeGlb };
+module.exports = { KINDS, convert, render, info, report, thumbnail, readDrawing, readMesh, flatten, drawingSvg, meshInfo, writeStl, writeGlb, triangulate, meshOf, rgb };

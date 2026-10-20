@@ -182,6 +182,64 @@ fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));
 fs.writeFileSync(P('box-inch.3mf'), require('fflate').zipSync({ '_rels/.rels': Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="r" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'), '3D/3dmodel.model': Buffer.from(`<?xml version="1.0"?><model unit="inch" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${Array.from({ length: 8 }, (_, i) => `<vertex x="${box.pos[i * 3] / 10}" y="${box.pos[i * 3 + 1] / 10}" z="${box.pos[i * 3 + 2] / 10}"/>`).join('')}</vertices><triangles>${Array.from({ length: 12 }, (_, i) => `<triangle v1="${cube.idx[i * 3]}" v2="${cube.idx[i * 3 + 1]}" v3="${cube.idx[i * 3 + 2]}"/>`).join('')}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`) }));
 fs.writeFileSync(P('mesh.obj'), `v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n`);
+fs.writeFileSync(P('lshape.obj'), '# concave L face with an MTL colour, and a vertex-coloured triangle\nmtllib lshape.mtl\no tri\nv 30 0 0 0 1 0\nv 40 0 0 0 1 0\nv 30 10 0 0 1 0\nf -3 -2 -1\no L\nv 20 0 0\nv 20 10 0\nv 10 10 0\nv 10 20 0\nv 0 20 0\nv 0 0 0\nusemtl orange\nf 4 5 6 \\\n  7 8 9\n');
+fs.writeFileSync(P('lshape.mtl'), 'newmtl orange\nKd 1 0.5 0\nTr 0.25\n');
+fs.writeFileSync(P('colors.ply'), `ply\nformat ascii 1.0\nelement vertex 8\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\nelement face 2\nproperty list uchar int vertex_indices\nend_header\n${['0 0', '10 0', '10 10', '0 10'].map((p) => `${p} 0 255 0 0 255`).concat(['30 0', '25 3', '20 10', '20 0'].map((p) => `${p} 0 0 0 255 128`)).join('\n')}\n4 0 1 2 3\n4 4 5 6 7\n`);
+fs.writeFileSync(P('colors.3mf'), require('fflate').zipSync({ '_rels/.rels': Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="r" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'), '3D/3dmodel.model': Buffer.from(`<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><basematerials id="1"><base name="Red" displaycolor="#FF0000"/><base name="Blue" displaycolor="#0000FF"/></basematerials><object id="2" type="model" pid="1" pindex="0"><mesh><vertices>${Array.from({ length: 8 }, (_, i) => `<vertex x="${cube.pos[i * 3]}" y="${cube.pos[i * 3 + 1]}" z="${cube.pos[i * 3 + 2]}"/>`).join('')}</vertices><triangles>${Array.from({ length: 12 }, (_, i) => (i === 2 || i === 3 ? `<triangle p1="1" pid="1" v1="${cube.idx[i * 3]}" v2="${cube.idx[i * 3 + 1]}" v3="${cube.idx[i * 3 + 2]}"/>` : `<triangle v1="${cube.idx[i * 3]}" v2="${cube.idx[i * 3 + 1]}" v3="${cube.idx[i * 3 + 2]}"/>`)).join('')}</triangles></mesh></object><object id="3" type="support"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="5" y="0" z="0"/><vertex x="0" y="5" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="2" transform="-1 0 0 0 1 0 0 0 1 0 0 0"/><item objectid="3"/></build></model>`) }));
+{
+  const head = (t, n) => { const b = Buffer.alloc(1 + n); b.write(t, 'latin1'); return b; };
+  const prop = (v) => {
+    if (typeof v === 'string') { const s = Buffer.from(v), b = head('S', 4); b.writeUInt32LE(s.length, 1); return Buffer.concat([b, s]); }
+    if (typeof v === 'bigint') { const b = head('L', 8); b.writeBigInt64LE(v, 1); return b; }
+    if (Number.isInteger(v)) { const b = head('I', 4); b.writeInt32LE(v, 1); return b; }
+    if (typeof v === 'number') { const b = head('D', 8); b.writeDoubleLE(v, 1); return b; }
+    const z = zlib.deflateSync(Buffer.from(v.buffer, v.byteOffset, v.byteLength)), b = head(v instanceof Float64Array ? 'd' : 'i', 12);
+    b.writeUInt32LE(v.length, 1); b.writeUInt32LE(1, 5); b.writeUInt32LE(z.length, 9);
+    return Buffer.concat([b, z]);
+  };
+  const rec = ([name, props = [], kids = []], at) => {
+    const nm = Buffer.from(name), ps = Buffer.concat(props.map(prop)), body = [];
+    let o = at + 13 + nm.length + ps.length;
+    for (const k of kids) { const b = rec(k, o); body.push(b); o += b.length; }
+    if (kids.length) { body.push(Buffer.alloc(13)); o += 13; }
+    const h = Buffer.alloc(13);
+    h.writeUInt32LE(o, 0); h.writeUInt32LE(props.length, 4); h.writeUInt32LE(ps.length, 8); h[12] = nm.length;
+    return Buffer.concat([h, nm, ps, ...body]);
+  };
+  const fbxBinary = (nodes) => {
+    const out = [Buffer.alloc(27)];
+    out[0].write('Kaydara FBX Binary  \0\x1a\0', 'latin1'); out[0].writeUInt32LE(7400, 23);
+    let o = 27;
+    for (const n of nodes) { const b = rec(n, o); out.push(b); o += b.length; }
+    return Buffer.concat([...out, Buffer.alloc(13)]);
+  };
+  const fbxAscii = (nodes) => {
+    const w = ([name, props = [], kids = []], ind) => `${ind}${name}: ${props.length === 1 && ArrayBuffer.isView(props[0]) ? `*${props[0].length} {\n${ind}\ta: ${Array.from(props[0]).join(',')}\n${ind}}` : props.map((v) => (typeof v === 'string' ? `"${v}"` : String(v))).join(', ')}${kids.length ? ` {\n${kids.map((k) => w(k, `${ind}\t`)).join('\n')}\n${ind}}` : ''}`;
+    return `; FBX 7.4.0 project file\n; Lime test fixture\n\n${nodes.map((n) => w(n, '')).join('\n')}\n`;
+  };
+  const Pr = (name, type, ...vals) => ['P', [name, type, '', 'A', ...vals]];
+  const box = (sx, sy, sz) => Float64Array.from({ length: 24 }, (_, k) => ((k / 3) >> (k % 3) & 1) * [sx, sy, sz][k % 3]);
+  const polys = Int32Array.from([[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]].flatMap((q) => [q[0], q[1], q[2], ~q[3]]));
+  const geom = (id, v, mats) => ['Geometry', [id, 'Geometry::Box', 'Mesh'], [['Vertices', [v]], ['PolygonVertexIndex', [polys]], ['GeometryVersion', [124]], ...(mats ? [['LayerElementMaterial', [0], [['Version', [101]], ['MappingInformationType', ['ByPolygon']], ['ReferenceInformationType', ['IndexToDirect']], ['Materials', [Int32Array.from(mats)]]]]] : [])]];
+  const model = (id, name, type, ...ps) => ['Model', [id, `Model::${name}`, type], [['Version', [232]], ['Properties70', [], ps]]];
+  const material = (id, name, ...ps) => ['Material', [id, `Material::${name}`, ''], [['Version', [102]], ['ShadingModel', ['phong']], ['Properties70', [], ps]]];
+  const doc = (up, unit, objects, links) => [
+    ['FBXHeaderExtension', [], [['FBXHeaderVersion', [1003]], ['FBXVersion', [7400]], ['Creator', ['Lime tests']]]],
+    ['GlobalSettings', [], [['Version', [1000]], ['Properties70', [], [Pr('UpAxis', 'int', up), Pr('UpAxisSign', 'int', 1), Pr('FrontAxis', 'int', up === 2 ? 1 : 2), Pr('FrontAxisSign', 'int', up === 2 ? -1 : 1), Pr('CoordAxis', 'int', 0), Pr('CoordAxisSign', 'int', 1), Pr('UnitScaleFactor', 'double', unit)]]]],
+    ['Definitions', [], [['Version', [100]], ['ObjectType', ['Material'], [['Count', [2]], ['PropertyTemplate', ['FbxSurfacePhong'], [['Properties70', [], [Pr('DiffuseColor', 'Color', 0.8, 0.8, 0.8)]]]]]]]],
+    ['Objects', [], objects],
+    ['Connections', [], links.map(([a, b]) => ['C', ['OO', a, b]])],
+    ['Takes', [], [['Current', ['']]]],
+  ];
+  fs.writeFileSync(P('cube.fbx'), fbxBinary(doc(1, 1, [
+    geom(10n, box(20, 20, 20), [0, 0, 0, 1, 0, 0]), model(20n, 'Cube', 'Mesh', Pr('Lcl Translation', 'Lcl Translation', 0, 10, 0)),
+    material(30n, 'Red', Pr('DiffuseColor', 'Color', 1, 0, 0)), material(31n, 'Blue', Pr('DiffuseColor', 'Color', 0, 0, 1)), ['AnimationStack', [40n, 'AnimStack::Take', ''], [['Properties70', [], []]]],
+  ], [[20n, 0n], [10n, 20n], [30n, 20n], [31n, 20n], [40n, 0n]])));
+  fs.writeFileSync(P('box-ascii.fbx'), fbxAscii(doc(2, 0.1, [
+    geom(11n, box(10, 20, 30)), model(21n, 'Child', 'Mesh', Pr('Lcl Translation', 'Lcl Translation', 0, 0, 5)),
+    model(22n, 'Parent', 'Null', Pr('Lcl Translation', 'Lcl Translation', 100, 0, 0), Pr('Lcl Rotation', 'Lcl Rotation', 0, 0, 90), Pr('Lcl Scaling', 'Lcl Scaling', 2, 2, 2)), material(32n, 'Grey'),
+  ], [[22n, 0n], [21n, 22n], [11n, 21n], [32n, 21n]])));
+}
 fs.writeFileSync(P('logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160"><rect x="10" y="10" width="220" height="140" rx="24" fill="#86c23a"/><circle cx="70" cy="80" r="40" fill="#2c6413"/><text x="125" y="92" font-size="30" fill="#fff">Lime</text></svg>');
 for (const [f, t] of [['logo.ai', 'ai'], ['logo.eps', 'eps']]) try { sh(cli('vectorcraft'), ['convert', P('logo.svg'), P(f)]); } catch (e) { console.log(t, e.message); }
 try { sh(cli('designcraft'), ['run', '--sample', '--export', P('layout.idml')]); } catch (e) { console.log('idml', e.message); }

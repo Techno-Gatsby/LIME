@@ -263,7 +263,7 @@ const TOOLS = [
   { id: 'convert-cad', cat: 'cad', name: 'Convert drawing', desc: 'DWG and DXF to PDF, SVG, PNG, DXF, AI or EPS.', accepts: ['cad2d'], ext: (o) => o.to,
     options: [select('to', 'Convert to', CAD2D_OUT), select('sheet', 'PDF sheet', [['a3', 'A3'], ['a4', 'A4'], ['tabloid', 'Tabloid'], ['letter', 'Letter']], 'a3', { when: { to: 'pdf' } }), toggle('mono', 'Black lines', false), num('size', 'Image width (px)', 3000, { when: { to: ['png', 'jpg'] } })],
     run: each((f, o, c) => cad().convert(f, o, c)) },
-  { id: 'convert-model', cat: 'cad', name: 'Convert 3D model', desc: 'STEP, IGES, STL, OBJ, GLB, 3MF and PLY.', accepts: ['cad3d'], ext: (o) => o.to,
+  { id: 'convert-model', cat: 'cad', name: 'Convert 3D model', desc: 'STEP, IGES, STL, OBJ, FBX, GLB, 3MF and PLY.', accepts: ['cad3d'], ext: (o) => o.to,
     options: [select('to', 'Convert to', CAD3D_OUT)], run: each((f, o, c) => cad().convert(f, o, c)) },
   { id: 'cad-info', cat: 'cad', name: 'Measure', desc: 'Size, area, volume, layers and entity counts.', accepts: ['cad2d', 'cad3d'], save: 'none',
     options: [toggle('save', 'Save a report', false)], run: each((f, o, c) => cad().report(f, o, c)) },

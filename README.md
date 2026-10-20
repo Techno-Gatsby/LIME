@@ -51,7 +51,7 @@ Lime asks where to save each result. To save next to the original instead, switc
 
 **Documents** — Word, ODT, RTF, Markdown, HTML, EPUB and text; spreadsheets (XLSX, XLS, ODS, CSV, JSON); slides (PowerPoint); page layouts (IDML) to PDF, EPUB or PowerPoint; merge documents into one PDF. On a Mac with Pages, Numbers or Keynote installed, their files convert too.
 
-**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ, PLY, GLB and 3MF. Drawings convert to PDF, SVG, PNG, DXF, AI, EPS or EMF; 3D models convert between formats and to rendered images; plus measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
+**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ, PLY, GLB, 3MF and FBX (read only). Drawings convert to PDF, SVG, PNG, DXF, AI, EPS or EMF; 3D models convert between formats and to rendered images; plus measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
 
 **Archives** — extract 40+ formats including RAR, 7Z and ISO; create ZIP, 7Z or TAR.GZ with passwords; convert and test archives.
 

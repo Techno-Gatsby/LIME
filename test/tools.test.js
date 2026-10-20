@@ -223,6 +223,66 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('step→gltf keeps part colours', 'convert-model', ['part.stp'], { to: 'gltf' }, async ([o]) => { const j = JSON.parse(txt(o)); ok(j.buffers[0].uri.startsWith('data:'), 'not self-contained'); ok(!j.meshes[0].primitives.some((p) => p.attributes.NORMAL != null), 'invented normals'); ok((await E('cad').info(o)).triangles === 4688, 'triangles'); });
   T('3mf inch→stl', 'convert-model', ['box-inch.3mf'], { to: 'stl' }, async ([o]) => near((await E('cad').info(o)).size, [25.4, 50.8, 76.2], 'stl size'));
   T('stl→obj→Y up', 'convert-model', ['box.stl'], { to: 'obj' }, async ([o]) => { const v = txt(o).split('\n').filter((l) => l.startsWith('v ')).map((l) => l.split(' ').slice(1).map(Number)); near([0, 1, 2].map((k) => Math.max(...v.map((x) => x[k])) - Math.min(...v.map((x) => x[k]))), [10, 30, 20], 'obj extents'); near((await E('cad').info(o)).size, [10, 20, 30], 'read back'); });
+  const attrs = (s) => Object.fromEntries([...s.matchAll(/(\w+)="([^"]*)"/g)].map((m) => [m[1], m[2]]));
+  const mf = (p) => { const x = Buffer.from(require('fflate').unzipSync(new Uint8Array(read(p)))['3D/3dmodel.model']).toString(), obj = attrs(/<object\b([^>]*)>/.exec(x)[1]), colors = [...x.matchAll(/displaycolor="([^"]+)"/g)].map((m) => m[1]); return { unit: attrs(/<model\b([^>]*)>/.exec(x)[1]).unit, colors, v: [...x.matchAll(/<vertex\b([^>]*)\/>/g)].map((m) => { const a = attrs(m[1]); return [+a.x, +a.y, +a.z]; }), t: [...x.matchAll(/<triangle\b([^>]*)\/>/g)].map((m) => { const a = attrs(m[1]); return { v: [+a.v1, +a.v2, +a.v3], color: colors[+(a.p1 ?? obj.pindex)] }; }) }; };
+  const plyOut = (p) => { const b = read(p), e = b.indexOf('end_header\n') + 11, h = b.subarray(0, e).toString(), nv = +/element vertex (\d+)/.exec(h)[1], nf = +/element face (\d+)/.exec(h)[1], vs = /uchar red/.test(h) ? 16 : 12; return { h, V: Array.from({ length: nv }, (_, i) => [...[0, 4, 8].map((k) => b.readFloatLE(e + i * vs + k)), ...(vs > 12 ? b.subarray(e + i * vs + 12, e + i * vs + 16) : [])]), F: Array.from({ length: nf }, (_, i) => [1, 5, 9].map((k) => b.readUInt32LE(e + nv * vs + i * 13 + k))) }; };
+  const vol = (V, F) => F.reduce((s, [a, b, c]) => s + V[a][0] * (V[b][1] * V[c][2] - V[b][2] * V[c][1]) - V[a][1] * (V[b][0] * V[c][2] - V[b][2] * V[c][0]) + V[a][2] * (V[b][0] * V[c][1] - V[b][1] * V[c][0]), 0) / 6;
+  const box3 = (v) => [0, 1, 2].map((k) => Math.min(...v.map((p) => p[k]))).concat([0, 1, 2].map((k) => Math.max(...v.map((p) => p[k]))));
+  T('fbx→stl binary, centimetres, Y up', 'convert-model', ['cube.fbx'], { to: 'stl' }, async ([o]) => {
+    const i = await E('cad').info(o);
+    ok(i.triangles === 12 && i.watertight, `${i.triangles} triangles`);
+    near([...i.min, ...i.max, i.volume], [0, -200, 100, 200, 0, 300, 8e6], 'cube min, max, volume');
+    let err = '';
+    try { E('fbx').readFbx(read(fx('cube.fbx')).subarray(0, 600), fx('cube.fbx')); } catch (e) { err = e.message; }
+    ok(err === 'The FBX file is cut short or damaged.', `cut-short file: ${err || 'read without error'}`);
+  });
+  T('fbx→3mf keeps material colours', 'convert-model', ['cube.fbx'], { to: '3mf' }, ([o]) => {
+    const m = mf(o), blue = m.t.filter((t) => t.color === '#0000FF');
+    ok(m.unit === 'millimeter' && m.v.length === 8 && m.t.length === 12, `${m.unit}, ${m.v.length} vertices, ${m.t.length} triangles`);
+    ok(m.colors.join() === '#FF0000,#0000FF' && blue.length === 2, `colours ${m.colors}, ${blue.length} blue triangles`);
+    ok(blue.every((t) => t.v.every((k) => m.v[k][2] === 300)), 'the blue (+Y) face is not on top');
+  });
+  T('fbx ascii→3mf Z up, nested transforms, mm', 'convert-model', ['box-ascii.fbx'], { to: '3mf' }, ([o]) => {
+    const m = mf(o);
+    ok(m.t.length === 12 && m.colors.join() === '#CCCCCC', `${m.t.length} triangles, colours ${m.colors}`);
+    near(box3(m.v), [60, 0, 10, 100, 20, 70], 'box min, max');
+  });
+  T('fbx→obj writes an mtl', 'convert-model', ['cube.fbx'], { to: 'obj' }, ([o, mtl]) => {
+    ok(/\.mtl$/.test(mtl || ''), `outputs ${o}, ${mtl}`);
+    const L = txt(o).split('\n'), v = L.filter((l) => l.startsWith('v ')).map((l) => l.split(' ').slice(1).map(Number)), kd = {}, faces = {};
+    ok(L.includes(`mtllib ${path.basename(mtl)}`), 'mtllib does not name the .mtl');
+    let cur = null;
+    for (const l of txt(mtl).split('\n')) if (l.startsWith('newmtl ')) cur = l.slice(7); else if (l.startsWith('Kd ')) kd[cur] = l.slice(3);
+    for (const l of L) if (l.startsWith('usemtl ')) cur = kd[l.slice(7)]; else if (l.startsWith('f ')) (faces[cur] = faces[cur] || []).push(l.split(' ').slice(1).map((k) => v[k - 1]));
+    ok(faces['1 0 0']?.length === 10 && faces['0 0 1']?.length === 2, `faces by Kd: ${Object.entries(faces).map(([k, f]) => `${k} ×${f.length}`)}`);
+    ok(faces['0 0 1'].flat().every((p) => p[1] === 300), 'blue faces are not on top (Y up, 300 mm)');
+  });
+  T('obj concave face ear-clipped', 'convert-model', ['lshape.obj'], { to: 'stl' }, async ([o]) => {
+    const i = await E('cad').info(o), b = read(o), n = Array.from({ length: 5 }, (_, k) => [0, 4, 8].map((j) => +b.readFloatLE(84 + k * 50 + j).toFixed(4)).join());
+    ok(i.triangles === 5 && Math.abs(i.area - 350) < 1e-6, `${i.triangles} triangles, area ${i.area} (a fan gives 450)`);
+    ok(n.every((x) => x === '0,-1,0'), `normals ${n.join(' ')}`);
+  });
+  T('obj mtl and vertex colours→3mf', 'convert-model', ['lshape.obj'], { to: '3mf' }, ([o]) => {
+    const m = mf(o);
+    ok(m.v.length === 9 && m.t.length === 5, `${m.v.length} vertices, ${m.t.length} triangles`);
+    ok(m.t.map((t) => t.color).join() === '#00FF00,#FF8000BF,#FF8000BF,#FF8000BF,#FF8000BF', `colours ${m.t.map((t) => t.color)}`);
+    near(box3(m.v), [0, 0, 0, 40, 0, 20], 'Y up to Z up');
+  });
+  T('ply vertex colours→glb materials', 'convert-model', ['colors.ply'], { to: 'glb' }, async ([o]) => {
+    const b = read(o), js = JSON.parse(b.subarray(20, 20 + b.readUInt32LE(12)).toString()), f = js.materials.map((x) => x.pbrMetallicRoughness.baseColorFactor.map((c) => +c.toFixed(3)));
+    ok(f.join(' ') === '1,0,0,1 0,0,1,0.502' && !js.materials[0].alphaMode && js.materials[1].alphaMode === 'BLEND', `materials ${f.join(' ')}`);
+    ok(js.meshes[0].primitives.map((p) => js.accessors[p.indices].count).join() === '6,6', 'triangles per colour');
+    const i = await E('cad').info(o);
+    ok(Math.abs(i.area - 140) < 1e-3, `area ${i.area} (a fan gives 160)`);
+  });
+  T('3mf colours, support, mirror→ply', 'convert-model', ['colors.3mf'], { to: 'ply' }, ([o]) => {
+    const { h, V, F } = plyOut(o), col = (c) => F.filter((f) => f.every((k) => V[k].slice(3).join() === c));
+    ok(/property uchar alpha/.test(h) && F.length === 12, `${F.length} faces`);
+    const blue = col('0,0,255,255');
+    ok(blue.length === 2 && col('255,0,0,255').length === 10 && blue.every((f) => f.every((k) => V[k][2] === 10)), `${blue.length} blue faces, ${col('255,0,0,255').length} red`);
+    near([...box3(V).slice(0, 1), vol(V, F)], [-10, 1000], 'mirrored x, outward volume');
+  });
+  T('stl→ply without colours', 'convert-model', ['box.stl'], { to: 'ply' }, ([o]) => { const { h, V, F } = plyOut(o); ok(!/red/.test(h) && F.length === 12 && Math.abs(vol(V, F) - 6000) < 1e-3, `${F.length} faces, volume ${vol(V, F)}`); });
   T('measure model', 'cad-info', ['cube.stl'], { save: false }, (o, r) => ok(/Volume: 1(\.0+)? cm³|Volume: 1 cm/.test(r[0].text), r[0].text));
   for (const [src, to, chk] of [['logo.svg', 'pdf', (o) => magic(o, '%PDF')], ['logo.svg', 'ai', (o) => magic(o, '%PDF')], ['logo.svg', 'eps', (o) => ok(/^%!PS/.test(txt(o)) || read(o).readUInt32BE(0) === 0xc5d0d3c6, 'eps')], ['logo.svg', 'png', async (o) => fmt(o, 'png')], ['logo.svg', 'dxf', (o) => ok(txt(o).includes('SECTION'), 'dxf')], ['logo.svg', 'emf', (o) => ok(read(o).readUInt32LE(0) === 1, 'emf')], ['logo.ai', 'svg', (o) => ok(txt(o).includes('<svg'), 'svg')], ['logo.eps', 'pdf', (o) => magic(o, '%PDF')]]) {
     T(`vector ${src}→${to}`, 'convert-vector', [src], { to, scale: 2 }, async ([o]) => chk(o));
