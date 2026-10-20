@@ -142,6 +142,152 @@ fs.writeFileSync(P('unicode.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVE
   page.drawImage(await d.embedPng(await sharp(chart, { raw: { width: 1200, height: 800, channels: 3 } }).png().toBuffer()), { x: 36, y: 36, width: 540, height: 360 });
   fs.writeFileSync(P('images.pdf'), await d.save());
 }
+{
+  // PDF → Word layout cases (after Filee's PdfReaderTests / PdfTableTests): y is points from the page's top, text y its baseline.
+  const L = require('pdf-lib'), { PDFDocument, StandardFonts, rgb, PDFString, degrees } = L;
+  const gradient = (w, h) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><defs><linearGradient id="g"><stop offset="0" stop-color="#f80"/><stop offset="1" stop-color="#04a"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/></svg>`));
+  const photo = await gradient(200, 120).jpeg({ quality: 80 }).toBuffer(), chart = await gradient(100, 100).png().toBuffer(), logo = await gradient(60, 30).png().toBuffer();
+  fs.writeFileSync(P('layout-photo.jpg'), photo);
+  const make = async (file, draw) => {
+    const d = await PDFDocument.create(), F = { r: await d.embedFont(StandardFonts.Helvetica), b: await d.embedFont(StandardFonts.HelveticaBold), i: await d.embedFont(StandardFonts.HelveticaOblique) };
+    const embedded = new Map();
+    let pg, H;
+    const b = {
+      page: (w = 595, h = 842) => { pg = d.addPage([w, h]); H = h; return pg; },
+      width: (t, size, f = 'r') => F[f].widthOfTextAtSize(t, size),
+      line: (t, size, x, y, f = 'r', c) => pg.drawText(t, { x, y: H - y, size, font: F[f], ...(c ? { color: rgb(c[0] / 255, c[1] / 255, c[2] / 255) } : {}) }),
+      para: (t, size, x, y, width, leading, f = 'r') => {
+        let cur = '';
+        for (const w of t.split(' ')) { const next = cur ? `${cur} ${w}` : w; if (cur && b.width(next, size, f) > width) { b.line(cur, size, x, y, f); y += leading; cur = w; } else cur = next; }
+        if (cur) { b.line(cur, size, x, y, f); y += leading; }
+        return y;
+      },
+      rule: (x1, y1, x2, y2, t = 0.5) => pg.drawLine({ start: { x: x1, y: H - y1 }, end: { x: x2, y: H - y2 }, thickness: t, color: rgb(0, 0, 0) }),
+      bar: (x, y, w, h, c = [0, 0, 0]) => pg.drawRectangle({ x, y: H - y - h, width: w, height: h, color: rgb(c[0] / 255, c[1] / 255, c[2] / 255) }),
+      picture: async (data, x, y, w, h) => {
+        if (!embedded.has(data)) embedded.set(data, data[0] === 0xff ? await d.embedJpg(data) : await d.embedPng(data));
+        pg.drawImage(embedded.get(data), { x, y: H - y - h, width: w, height: h });
+      },
+      link: (url, x, y, w, h) => pg.node.addAnnot(d.context.register(d.context.obj({ Type: 'Annot', Subtype: 'Link', Rect: [x, H - y - h, x + w, H - y], Border: [0, 0, 0], A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) } }))),
+      hidden: (t, size, x, y) => { pg.pushOperators(L.pushGraphicsState(), L.setTextRenderingMode(L.TextRenderingMode.Invisible)); b.line(t, size, x, y); pg.pushOperators(L.popGraphicsState()); },
+    };
+    await draw(b, d);
+    fs.writeFileSync(P(file), await d.save());
+  };
+  await make('layout-report.pdf', async (b, d) => {
+    d.setTitle('Lime Annual Report');
+    for (let p = 1; p <= 2; p++) {
+      b.page();
+      b.line('Lime Quarterly Report', 9, 50, 30);
+      b.line(`Page ${p}`, 9, 280, 815);
+      if (p === 1) {
+        b.line('Annual Report 2026', 24, 50, 90, 'b');
+        b.line('1. Introduction', 16, 50, 135, 'b');
+        const y = b.para('Lime converts files on your own computer. This paragraph is long enough to wrap over several lines, so the reader has to join the lines again into one paragraph without losing or doubling any of the words in it.', 11, 50, 165, 495, 14);
+        b.line('Warning', 11, 50, y + 12, 'b', [255, 0, 0]);
+        b.line(' this line is italic', 11, 50 + b.width('Warning', 11, 'b'), y + 12, 'i');
+        b.line('Visit https://example.com', 11, 50, y + 40);
+        b.link('https://example.com/', 50, y + 30, 150, 14);
+        await b.picture(photo, 50, y + 60, 200, 120);
+        await b.picture(chart, 300, y + 60, 100, 100);
+      } else {
+        b.line('2. Details', 16, 50, 90, 'b');
+        const y = b.para('The second page continues the report with more details. Headers and footers repeat on every page and are left out.', 11, 50, 120, 495, 14);
+        b.line('Every invoice of the second quarter was paid in full; the remaining ones are due by October', 11, 50, y + 14);
+        b.line('31.', 11, 50, y + 28);
+        const x = 50 + b.width('The formula E = mc', 11);
+        b.line('The formula E = mc', 11, 50, y + 56);
+        b.line('2', 7, x, y + 52);
+        b.line(' has a superscript.', 11, x + b.width('2', 7), y + 56);
+      }
+    }
+  });
+  await make('layout-columns.pdf', (b) => {
+    b.page();
+    b.line('Two Column Layout', 20, 50, 70, 'b');
+    const text = (label) => `${label} paragraph of the column: it has enough words to wrap over a few lines inside its narrow column of text.`;
+    b.para(text('Left second'), 10, 50, b.para(text('Left first'), 10, 50, 110, 230, 13) + 10, 230, 13);
+    const r = b.para(text('Right second'), 10, 315, b.para(text('Right first'), 10, 315, 110, 230, 13) + 10, 230, 13);
+    b.para('A closing paragraph spans both columns again at the end of the page, below everything else.', 10, 50, r + 40, 495, 13);
+  });
+  await make('layout-schedule.pdf', (b) => {
+    b.page(612, 792);
+    b.para('E. PROPOSED SCHEDULE OF ACTIVITIES: the dates below may change. This paragraph is long enough to wrap, so the page has a full text width.', 12, 54, 60, 500, 15);
+    [['1.', 'RFP Published', '08/14/2026'], ['2.', 'Proposal Submission', '10/16/2026'], ['3.', 'Proposal Selection', '10/19/2026']].forEach((row, r) => row.forEach((t, k) => b.line(t, 12, [76.5, 108, 432][k], 110 + r * 14.6)));
+    b.para('F. INQUIRIES: Send all inquiries (transmittal by E-Mail preferred) to the address below, which is the only one.', 12, 54, 170, 500, 15);
+    ['WESTAR', '1880 Willamette Falls Drive, Ste. 200E', 'West Linn, Oregon 97068', 'Attn: Jeffrey P. Gabler'].forEach((t, k) => b.line(t, 12, 144, 215 + k * 14.6));
+    [['Name:', 'JEFFREY P. GABLER'], ['Organization:', 'WESTAR COUNCIL'], ['Phone:', '503-657-4838']].forEach(([k, v], r) => { b.line(k, 11, 72, 300 + r * 14); b.line(v, 11, 176, 300 + r * 14); });
+  });
+  await make('layout-scan.pdf', async (b) => {
+    b.page();
+    await b.picture(await gradient(595, 842).jpeg().toBuffer(), 0, 0, 595, 842);
+    b.hidden('Hidden OCR words', 12, 50, 80);
+    b.page();
+    b.line('Text after the scan', 12, 50, 80);
+    b.page().setRotation(degrees(90));
+    b.line('Turned page text', 12, 50, 80);
+  });
+  await make('layout-book.pdf', async (b) => {
+    for (let p = 1; p <= 8; p++) {
+      b.page();
+      b.line(p <= 3 ? 'Chapter One: Beginnings' : 'Chapter Two: Results', 9, 50, 30);
+      await b.picture(logo, 485, 15, 60, 30);
+      b.line(['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii'][p - 1], 9, 295, 815);
+      if (p <= 3) b.line('Overview', 16, 50, 75, 'b');
+      b.para(`Body text of page ${p} goes on long enough to be a real paragraph of the book.`, 11, 50, 120, 495, 14);
+      if (p === 2) await b.picture(photo, 50, 200, 200, 120);
+    }
+  });
+  const cell = (b, t, x, y, bold) => b.line(t, 10, x + 4, y + 14, bold ? 'b' : 'r');
+  await make('layout-table.pdf', (b) => {
+    b.page();
+    b.para('The files converted this week are listed in the table below, with their format and size.', 11, 50, 80, 495, 14);
+    const xs = [50, 200, 350, 545], ys = [110, 130, 150, 170];
+    ys.forEach((y) => b.rule(xs[0], y, xs[3], y));
+    xs.forEach((x) => b.rule(x, ys[0], x, ys[3]));
+    [['Name', 'Format', 'Size'], ['Report', 'PDF', '120 KB'], ['Photo', 'JPEG', '2.4 MB']].forEach((row, r) => row.forEach((t, c) => cell(b, t, xs[c], ys[r], r === 0)));
+    b.para('Everything was converted on this computer; nothing was uploaded anywhere.', 11, 50, 200, 495, 14);
+  });
+  await make('layout-merged.pdf', (b) => {
+    b.page();
+    [[50, 100, 440, 100], [50, 160, 440, 160], [50, 100, 50, 160], [440, 100, 440, 160], [50, 120, 440, 120], [180, 140, 440, 140], [180, 120, 180, 160], [310, 100, 310, 160]].forEach((r) => b.rule(...r));
+    [['Region and city', 50, 100, 1], ['Total', 310, 100, 1], ['North', 50, 120], ['Seoul', 180, 120], ['10', 310, 120], ['Busan', 180, 140], ['20', 310, 140]].forEach(([t, x, y, bold]) => cell(b, t, x, y, bold));
+  });
+  await make('layout-bars.pdf', (b) => {
+    b.page();
+    b.line('Results', 14, 60, 80, 'b');
+    b.bar(60, 100, 400, 22, [217, 217, 217]);
+    [[60, 99, 400, 2], [60, 165, 400, 2], [59, 100, 2, 66], [459, 100, 2, 66], [60, 121.75, 400, 0.5], [60, 143.75, 400, 0.5], [199.75, 100, 0.5, 66], [329.75, 100, 0.5, 66]].forEach((r) => b.bar(...r));
+    [['Test', 'Before', 'After'], ['Speed', '12 s', '4 s'], ['Memory', '800 MB', '300 MB']].forEach((row, r) => row.forEach((t, c) => cell(b, t, [60, 200, 330][c], 100 + 22 * r, r === 0)));
+  });
+  await make('layout-boxes.pdf', (b) => {
+    b.page();
+    [[50, 70, 545, 70], [50, 140, 545, 140], [50, 70, 50, 140], [545, 70, 545, 140], [50, 95, 545, 95]].forEach((r) => b.rule(...r));
+    b.line('Note', 11, 60, 88, 'b');
+    b.para('A box drawn around a note is no table, even with a rule under its title line.', 11, 60, 112, 470, 14);
+    b.line('Important words', 11, 50, 170);
+    b.rule(50, 172, 50 + b.width('Important words', 11), 172);
+    b.rule(50, 190, 545, 190, 1);
+    [220, 260, 300].forEach((y) => b.rule(100, y, 400, y));
+    [100, 250, 400].forEach((x) => b.rule(x, 220, x, 300));
+    b.line('Chart axis label', 9, 200, 315);
+  });
+  const mu = await import('mupdf');
+  {
+    // Korean keeps its spaces when lines join, Chinese has none; Droid Sans Fallback (built into MuPDF) sets every character 1 em wide.
+    const d = new mu.PDFDocument(), hex = (t) => [...t].map((c) => c.codePointAt(0).toString(16).padStart(4, '0')).join('');
+    const wrap = (t, n) => t.includes(' ') ? t.split(' ').reduce((ls, w) => { const last = ls[ls.length - 1]; if (last && `${last} ${w}`.length <= n) ls[ls.length - 1] = `${last} ${w}`; else ls.push(w); return ls; }, []) : t.match(new RegExp(`.{1,${n}}`, 'gu'));
+    const text = (font, t, y) => wrap(t, 18).map((l, k) => `BT /${font} 11 Tf 50 ${842 - y - k * 16} Td <${hex(l)}> Tj ET`).join('\n');
+    const res = d.addObject({ Font: { K: d.addCJKFont(new mu.Font('ko'), 'ko', 0, false), Z: d.addCJKFont(new mu.Font('zh-Hans'), 'zh-Hans', 0, false) } });
+    const content = `${text('K', '한글 문단도 읽을 수 있어야 합니다. 줄이 바뀌어도 한 문단으로 이어지고 단어 사이의 빈칸도 그대로 남습니다.', 110)}\n${text('Z', '中文段落也应该能够正确读取。换行之后仍然是同一个段落，字与字之间不应该出现多余的空格。', 260)}`;
+    d.insertPage(-1, d.addPage([0, 0, 595, 842], 0, res, content));
+    fs.writeFileSync(P('layout-cjk.pdf'), d.saveToBuffer('compress').asUint8Array());
+  }
+  {
+    const d = mu.Document.openDocument(fs.readFileSync(P('layout-columns.pdf')), 'application/pdf');
+    fs.writeFileSync(P('layout-locked.pdf'), d.saveToBuffer('encrypt=aes-256,user-password=1234,owner-password=1234').asUint8Array());
+  }
+}
 for (const [src, dst, main, mainDir] of [['doc.docx', 'macro.docm', 'application/vnd.ms-word.document.macroEnabled.main+xml', 'word'], ['sheet.xlsx', 'macro.xlsm', 'application/vnd.ms-excel.sheet.macroEnabled.main+xml', 'xl']]) {
   const { unzipSync, zipSync, strToU8, strFromU8 } = require('fflate');
   const z = unzipSync(new Uint8Array(fs.readFileSync(P(src))));

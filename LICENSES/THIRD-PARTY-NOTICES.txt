@@ -26,3 +26,5 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
 
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil
+
+Portions of the format conversion logic are adapted from Filee by KnifeLemon (https://github.com/KnifeLemon/Filee), MIT License.
