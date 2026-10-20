@@ -32,7 +32,7 @@ const GROUPS = {
   slides: ['pptx', 'ppt', 'pptm', 'potx', 'potm', 'ppsx', 'ppsm', 'pps', 'odp', 'key', 'fodp'],
   vector: ['ai', 'ait', 'eps', 'epsf', 'ps', 'emf', 'wmf', 'svgz', 'af', 'afdesign', 'afpub', 'vectorcraft', 'cdr', 'vsd', 'vsdx', 'odg'],
   cad2d: ['dxf', 'dwg'],
-  cad3d: ['stl', 'obj', 'ply', 'off', 'glb', 'gltf', '3mf', 'step', 'stp', 'iges', 'igs', 'brep'],
+  cad3d: ['stl', 'obj', 'ply', 'off', 'glb', 'gltf', '3mf', 'fbx', 'step', 'stp', 'iges', 'igs', 'brep'],
   layout: ['idml', 'indd', 'designcraft'],
   motion: ['lottie', 'ecproj'],
   timeline: ['otio', 'fcpxml', 'edl', 'aaf', 'omf', 'fcproj'],

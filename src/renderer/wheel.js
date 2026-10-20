@@ -177,7 +177,7 @@ const thumbUrl = (p) => {
 };
 function groupOfFile(p) {
   const e = extOf(p);
-  const m = { pdf: 'pdf', mp4: 'video', mov: 'video', mkv: 'video', webm: 'video', mp3: 'audio', wav: 'audio', m4a: 'audio', flac: 'audio', docx: 'doc', doc: 'doc', txt: 'doc', md: 'doc', html: 'doc', xlsx: 'sheet', csv: 'sheet', pptx: 'slides', key: 'slides', zip: 'archive', rar: 'archive', '7z': 'archive', dwg: 'cad2d', dxf: 'cad2d', stl: 'cad3d', step: 'cad3d', stp: 'cad3d', obj: 'cad3d', glb: 'cad3d', ai: 'vector', eps: 'vector', svg: 'image', idml: 'layout' };
+  const m = { pdf: 'pdf', mp4: 'video', mov: 'video', mkv: 'video', webm: 'video', mp3: 'audio', wav: 'audio', m4a: 'audio', flac: 'audio', docx: 'doc', doc: 'doc', txt: 'doc', md: 'doc', html: 'doc', xlsx: 'sheet', csv: 'sheet', pptx: 'slides', key: 'slides', zip: 'archive', rar: 'archive', '7z': 'archive', dwg: 'cad2d', dxf: 'cad2d', stl: 'cad3d', step: 'cad3d', stp: 'cad3d', obj: 'cad3d', glb: 'cad3d', fbx: 'cad3d', ai: 'vector', eps: 'vector', svg: 'image', idml: 'layout' };
   return m[e] || (/^(jpe?g|png|heic|heif|webp|gif|tiff?|avif|bmp|psd)$/.test(e) ? 'image' : e ? 'any' : 'folder');
 }
 async function fileVisual(p) {
