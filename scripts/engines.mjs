@@ -14,7 +14,7 @@ const [PLAT, ARCH] = TARGET.split('-');
 const WIN = PLAT === 'win32';
 const V = path.join(ROOT, 'vendor');
 const CACHE = path.join(V, '.cache');
-const BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
+const BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
 const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0' };
 const FF = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1';
 const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
@@ -55,7 +55,7 @@ async function get(url, name = decodeURIComponent(path.basename(new URL(url).pat
 }
 const put = async (url, dest) => { if (has(dest)) return; mk(path.dirname(dest)); fs.copyFileSync(await get(url), dest); };
 const unzipOne = (zip, re) => Object.values(unzipSync(fs.readFileSync(zip), { filter: (f) => re.test(f.name) }))[0];
-const brotli = (buf, dest) => new Promise((ok, no) => zlib.brotliCompress(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_LGWIN]: 24, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length } }, (e, out) => e ? no(e) : ok(fs.writeFileSync(dest, out))));
+const brotli = (buf, dest, q = 11) => new Promise((ok, no) => zlib.brotliCompress(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: q, [zlib.constants.BROTLI_PARAM_LGWIN]: 24, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length } }, (e, out) => e ? no(e) : ok(fs.writeFileSync(dest, out))));
 
 function thin(buf) {
   if (PLAT !== 'darwin' || buf.readUInt32BE(0) !== 0xcafebabe) return buf;
@@ -113,6 +113,56 @@ async function crafts() {
   fs.writeFileSync(path.join(CRAFTS, 'manifest.json'), JSON.stringify(manifest));
 }
 
+const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : e.isFile() ? [path.join(d, e.name)] : []));
+function appFromDmg(dmg, tmp) {
+  if (process.platform === 'darwin') {
+    const mnt = mk(path.join(tmp, 'mnt'));
+    execFileSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-noverify', '-noautoopen', '-mountpoint', mnt, dmg], { input: 'Y\n', stdio: ['pipe', 'ignore', 'inherit'] });
+    try {
+      const name = fs.readdirSync(mnt).find((n) => n.endsWith('.app'));
+      if (!name) throw new Error(`no app in ${path.basename(dmg)}`);
+      sh('ditto', ['--arch', ARCH === 'x64' ? 'x86_64' : 'arm64', path.join(mnt, name), path.join(tmp, name)]);
+      return path.join(tmp, name);
+    } finally { try { execFileSync('hdiutil', ['detach', mnt, '-force'], { stdio: 'ignore' }); } catch (_) {} }
+  }
+  const z = which('7zz', '7z');
+  if (!z) throw new Error('Install 7-Zip to unpack the Mac apps on this machine.');
+  sh(z, ['x', '-y', `-o${path.join(tmp, 'x')}`, dmg]);
+  const plist = walk(path.join(tmp, 'x')).find((f) => /\.app[\\/]Contents[\\/]Info\.plist$/.test(f));
+  if (!plist) throw new Error(`no app in ${path.basename(dmg)}`);
+  const app = path.dirname(path.dirname(plist));
+  for (const f of walk(app)) {
+    const buf = fs.readFileSync(f);
+    if (buf.length > 4 && buf.readUInt32BE(0) === 0xcafebabe) fs.writeFileSync(f, thin(buf));
+    if (/[\\/]Contents[\\/]MacOS[\\/]/.test(f)) fs.chmodSync(f, 0o755);
+  }
+  return app;
+}
+async function apps() {
+  if (PLAT !== 'darwin' && !WIN) return;
+  mk(APPS);
+  const file = path.join(APPS, 'manifest.json');
+  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  for (const [id, v] of Object.entries(CRAFT)) {
+    const dest = path.join(APPS, WIN ? `${id}.exe.br` : `${id}.app.tar.br`);
+    if (has(dest) && manifest[id]?.version === v) continue;
+    const rel = `https://github.com/storytold/${id}/releases/download/v${v}`;
+    if (WIN) {
+      await brotli(Buffer.from(unzipOne(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`), new RegExp(`/${id}\\.exe$`))), dest, 9);
+      manifest[id] = { version: v, file: `${id}.exe` };
+    } else {
+      const tmp = path.join(CACHE, `${id}-app`);
+      fs.rmSync(tmp, { recursive: true, force: true });
+      const app = appFromDmg(await get(`${rel}/${id}-${v}-macos-universal.dmg`), mk(tmp));
+      await brotli(execFileSync(TAR, ['-cf', '-', '-C', path.dirname(app), path.basename(app)], { maxBuffer: 2 ** 31 }), dest, 9);
+      fs.rmSync(tmp, { recursive: true, force: true });
+      manifest[id] = { version: v, file: path.basename(app) };
+    }
+    console.log('▣', manifest[id].file, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
+    fs.writeFileSync(file, JSON.stringify(manifest));
+  }
+}
+
 async function data() {
   for (const [n, u] of Object.entries(FONTS)) await put(u, path.join(DATA, 'fonts', n));
   await put(`${TESS}/tessdata_best/main/eng.traineddata`, path.join(DATA, 'tessdata', 'eng.traineddata'));
@@ -134,5 +184,6 @@ async function natives() {
 
 await Promise.all([binaries(), data(), natives()]);
 await crafts();
+await apps();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);
