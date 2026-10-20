@@ -24,6 +24,8 @@
     "dxf-parser": "1.1.2",
     "fflate": "0.8.3",
     "heic-decode": "2.1.0",
+    "iconv-lite": "0.7.3",
+    "jsonc-parser": "3.3.1",
     "koffi": "3.3.2",
     "mammoth": "1.13.0",
     "marked": "18.1.1",
@@ -31,9 +33,12 @@
     "occt-import-js": "0.0.23",
     "pdf-lib": "1.17.1",
     "pptxgenjs": "4.0.1",
+    "saxes": "6.0.0",
     "sharp": "0.35.5",
+    "smol-toml": "1.9.0",
     "tesseract.js": "7.0.0",
-    "xlsx": "0.18.5"
+    "xlsx": "0.18.5",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",

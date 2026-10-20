@@ -126,4 +126,74 @@ try { sh(cli('designcraft'), ['run', '--sample', '--export', P('layout.idml')]);
 try { sh(cli('effectcraft'), ['--demo', 'exec', 'file.exportLottie', '--params', JSON.stringify({ path: P('anim.json') })]); } catch (e) { console.log('lottie', e.message); }
 try { sh(cli('filmcraft'), ['--demo', 'exec', 'file.exportOtio', `path=${P('timeline.otio')}`]); } catch (e) { console.log('otio', e.message); }
 fs.rmSync(unpacked, { recursive: true, force: true });
+
+// Data, contacts, subtitles and archives, all built here (CP949 through iconv-lite, archives through fflate, zlib or a
+// tiny TAR writer, so no symlink has to exist on disk).
+const iconv = require('iconv-lite');
+const cp949 = (s) => iconv.encode(s, 'cp949');
+const SAMPLE = '{\n  "name": "Filee 변환기",\n  "version": 3,\n  "ratio": 3.0,\n  "big": 12345678901234567890,\n  "enabled": true,\n  "missing": null,\n  "notes": "first line\\nsecond line",\n  "looksLikeABoolean": "true",\n  "looksLikeANumber": "007",\n  "empty": "",\n  "tags": ["a", "b"],\n  "nothing": [],\n  "owner": { "id": 1, "email": "me@example.com" },\n  "rows": [ { "x": 1 }, { "x": 2 } ]\n}\n';
+const texts = {
+  'sample.json': SAMPLE,
+  'bom.json': `\ufeff${JSON.stringify([{ name: 'Lime', count: 12, zip: '01234' }, { name: 'Lemon', count: 7, zip: '00501' }]).replace('12,', '12, "big": 12345678901234567890,')}`,
+  'users.json': '{"users": [{"id": 1, "address": {"city": "Seoul"}}, {"id": 2, "vip": true}]}',
+  'nested.json': '[{"id": 1, "tags": ["a", "b"]}]',
+  'list.json': '[{"a": 1, "b": null}, {"a": 2}]',
+  'order.jsonc': '// settings\n{"2": 1, "1": 2, "f": 1e15, "g": 1.5e-5, "h": 1e300, "i": 3.0, /* big */ "j": 12345678901234567890,}\n',
+  'rows.xml': '<rows><row><a>1</a><b>x</b></row><row><a>2</a><b>y</b></row></rows>',
+  'columns.yaml': 'name: [a, b]\nage: [1]\n',
+  'names.json': '{"first name": "Ada", "1st": 1, "list": [[1, 2]]}',
+  'config.yml': "# comments are dropped\ndefaults: &defaults\n  adapter: postgres\n  port: 5432\ndevelopment:\n  <<: *defaults\n  port: 5433\n  database: dev\nflags: [yes, no, on, ~, 0x1F, 0o17, .inf, -1.5e3, '42']\nwhen: 2026-10-16\n",
+  'bomb.yaml': `l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n${[1, 2, 3, 4, 5, 6, 7, 8].map((i) => `l${i}: &l${i} [${Array(10).fill(`*l${i - 1}`).join(', ')}]\n`).join('')}`,
+  'config.toml': 'title = "TOML 예제"\nreleased = 1979-05-27T07:32:00-08:00\nday = 2026-10-16\n\n[server]\nports = [8000, 8001]\nlimits = { cpu = 2.5, memory = "1G" }\n\n[[products]]\nname = "Hammer"\nsku = 738594937\n\n[[products]]\nname = "Nail"\n',
+  'catalog.xml': '<?xml version="1.0" encoding="utf-8"?>\n<!-- dropped -->\n<catalog xmlns:dc="http://purl.org/dc/elements/1.1/" version="2">\n  <book id="b1" lang="ko">\n    <dc:title>한국어 책</dc:title>\n    <price currency="KRW">15000</price>\n    <note/>\n    <summary></summary>\n    <body><![CDATA[a < b]]></body>\n  </book>\n  <book id="b2">\n    <dc:title>Second</dc:title>\n  </book>\n</catalog>\n',
+  'feed.xml': '<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="ko"><title>소식</title><entry><id>1</id></entry></feed>',
+  'events.jsonl': '{"a":1}\n\n{"a":2,"b":"한"}\n',
+  'broken.jsonl': '{"a":1}\n{oops}\n',
+  'people.csv': 'name,zip,age,member,score\r\n홍길동,01234,42,TRUE,3.5\r\n"Kim, Ada",,7,false,\r\n',
+  'korean.csv': '이름,나이,메모\n홍길동,42,"안녕, 세상"\n',
+  'zeros.csv': 'id,zip,part,when\r\n1,01234,1/2,2026-10-16\r\n2,007,3.50,1/2/2026\r\n',
+  'semicolon.csv': 'Name;Price;Qty\r\nApple;1,5;3\r\nPear;2,25;10\r\n',
+  'people.tsv': '이름\t금액\t메모\r\n김민지\t1,200\t"줄\n바꿈"\r\nLee, J\t3.5\t"""인용"""\r\n',
+  '주소록.csv': '\ufeff이름,전화번호,이메일,회사,메모,관계\r\n홍길동,010-1111-2222 (mobile); 02-333-4444 (work),hong@example.com,"필이, 주식회사",아주 긴 메모입니다. 한 줄이 75바이트를 넘으면 vCard는 줄을 접어요. 접힌 줄은 공백으로 시작해요.,친구\r\n,,,,,\r\n',
+  'numbers.csv': 'x,y\r\n1,2\r\n',
+  'lenient.srt': '\ufeff1\r\n00:00:01,000 --> 00:00:02,000\r\n<i>First</i> line\r\n\r\nstill the first\r\n\r\n2\r\n00:00:03.5 --> 00:00:04,250\r\n{\\an8}<b>Second</b> <span>cue</span>\r\n3\r\n00:00:05,000 --> 00:00:06,000\r\nThird 2024\r\n',
+  'song.lrc': '[ti:Song]\n[ar:Singer]\n[offset:+500]\n[00:10.00]First <00:10.50>line\n[00:12.30][00:20.00]Chorus\n[00:15.00]\n[00:25.5]Last\n',
+  'show.ass': '[Script Info]\nTitle: Test show\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1\nStyle: Thoughts,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,2,2,2,10,10,10,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:02.00,0:00:03.50,Default,,0,0,0,,{\\an8\\pos(10,10)}Hello, {\\i1}world{\\i0}!\\NSecond {\\c&H00FFFF&}yellow{\\c} line\nComment: 0,0:00:02.00,0:00:03.50,Default,,0,0,0,,Not shown\nDialogue: 0,0:00:01.00,0:00:01.50,Thoughts,,0,0,0,,I think\\h so\nDialogue: 1,0:00:01.00,0:00:01.50,Thoughts,,0,0,0,,I think\\h so\nDialogue: 0,0:00:04.00,0:00:05.00,Default,,0,0,0,,{\\p1}m 0 0 l 100 0 100 100 0 100{\\p0}\n',
+  'talk.vtt': 'WEBVTT\nLanguage: ko\n\nNOTE This is a comment\nwith two lines\n\nSTYLE\n::cue { color: yellow }\n\nintro\n00:01.000 --> 00:02.500 align:start position:10%\n<v Mary>Hi &amp; <i>welcome</i></v>\n<c.yellow>&lt;3</c>\n\n01:00:00.000 --> 01:00:01.000\n<00:00:01.500>Karaoke\n',
+  'captions.ttml': '<?xml version="1.0" encoding="UTF-8"?>\n<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xml:lang="en" ttp:frameRate="25" ttp:tickRate="10000000">\n  <head><styling><style xml:id="it" tts:fontStyle="italic"/></styling></head>\n  <body>\n    <div begin="10s">\n      <p begin="00:00:01.000" end="00:00:02.000">Line one<br/>line <span tts:fontWeight="bold">two</span></p>\n      <p begin="00:00:03:05" dur="25f" style="it">Frames</p>\n      <p begin="50000000t" end="60000000t"><span tts:color="#ff0000">Red</span> ticks</p>\n    </div>\n  </body>\n</tt>\n',
+  'burn.ttml': '<?xml version="1.0" encoding="UTF-8"?>\n<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="0s" end="4s">BURNED IN CAPTION TEXT</p></div></body></tt>\n',
+  'captions.scc': 'Scenarist_SCC V1.0\n\n00:00:01:00\t9420 9420 94ae 94ae 9452 9452 c8e5 ecec ef80 9470 9470 4361 665c 942f 942f\n\n00:00:03:00\t942c 942c\n\n00:00:05:00\t9425 9425 9470 9470 4f6e 6521 94ad 94ad 5477 6f21\n\n00:00:07:00\t942c 942c\n',
+  'movie.sub': '{1}{1}25\n{25}{50}{y:i}Hello|world\n{75}{100}{c:$0000FF}Red\n',
+};
+for (const [f, t] of Object.entries(texts)) fs.writeFileSync(P(f), t);
+fs.writeFileSync(P('memo-euckr.xml'), cp949('<?xml version="1.0" encoding="EUC-KR"?><memo><to>홍길동</to></memo>'));
+fs.writeFileSync(P('korean-cp949.csv'), cp949(texts['korean.csv']));
+fs.writeFileSync(P('cp949.srt'), cp949('1\r\n00:00:01,000 --> 00:00:02,500\r\n안녕하세요, 똠방각하\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,000\r\n두 번째 줄\r\n'));
+fs.writeFileSync(P('영화.smi'), cp949('<SAMI>\n<HEAD>\n<TITLE>영화 자막</TITLE>\n<STYLE TYPE="text/css">\n<!--\nP { margin-left:8pt; margin-right:8pt; text-align:center; }\n.KRCC { Name:한국어; lang:ko-KR; SAMIType:CC; }\n.ENCC { Name:English; lang:en-US; SAMIType:CC; }\n-->\n</STYLE>\n</HEAD>\n<BODY>\n<SYNC Start=1000><P Class=KRCC>안녕하세요,<br><font color="#ffff00">반가워요</font>\n<SYNC Start=1000><P Class=ENCC>Hello\n<SYNC Start=2500><P Class=KRCC>&nbsp;\n<SYNC Start=3000><P Class=KRCC><i>두 번째\n줄입니다</i>\n<SYNC Start=4200><P Class=KRCC>&nbsp\n<SYNC Start=5000><P Class=KRCC>세 번째 &amp; 마지막\n</BODY>\n</SAMI>\n'));
+fs.writeFileSync(P('vobsub.sub'), Buffer.from([0x00, 0x00, 0x01, 0xba, 0x44, 0x00, 0x04, 0x00]));
+fs.writeFileSync(P('phone-utf16.vcf'), iconv.encode('\ufeffBEGIN:VCARD\r\nVERSION:3.0\r\nFN:김철수\r\nTEL:010-0000-0000\r\nEND:VCARD\r\n', 'utf-16le'));
+const qp = (t) => { let out = '', col = 0; for (const b of cp949(t)) { const piece = b >= 33 && b <= 126 && b !== 61 ? String.fromCharCode(b) : `=${b.toString(16).toUpperCase().padStart(2, '0')}`; if (col + piece.length > 60) { out += '=\r\n'; col = 0; } out += piece; col += piece.length; } return out; };
+fs.writeFileSync(P('contacts.vcf'), Buffer.concat([
+  Buffer.from(`BEGIN:VCARD\r\nVERSION:2.1\r\nN;CHARSET=KS_C_5601-1987;ENCODING=QUOTED-PRINTABLE:${qp('홍')};${qp('길동')};;;\r\nTEL;CELL:010-1234-5678\r\nTEL;WORK;VOICE:02-123-4567\r\nEMAIL;PREF;INTERNET:hong@example.com\r\nADR;HOME;ENCODING=QUOTED-PRINTABLE:;;${qp('서울특별시 종로구 세종대로 209 정부서울청사 별관 3층')};;;03171;\r\nNOTE:`, 'latin1'),
+  cp949('전화 주세요'),
+  Buffer.from('\r\nPHOTO;ENCODING=BASE64;TYPE=JPEG:\r\n /9j/4AAQSkZJRgABAQAAAQABAAD\r\n 2wBDAAgGBgcGBQgHBwcJ\r\n\r\nAGENT:\r\nBEGIN:VCARD\r\nVERSION:2.1\r\nFN:Assistant\r\nTEL:000\r\nEND:VCARD\r\nBDAY:19800102\r\nEND:VCARD\r\n', 'latin1'),
+  Buffer.from(['BEGIN:VCARD', 'VERSION:3.0', 'FN:Ada Lovelace', 'N:Lovelace;Ada;;;', 'ORG:Analytical Engines\\, Ltd.;Research', 'TITLE:Engineer', 'item1.EMAIL;TYPE=INTERNET,WORK:ada@example.com', 'EMAIL;TYPE=HOME:ada@home.example', 'TEL;TYPE=CELL,VOICE:+44 20 7946 0000', 'NOTE:First line\\nSecond line\\; folded over two li', ' nes here', 'END:VCARD', ''].join('\r\n')),
+  Buffer.from(['BEGIN:VCARD', 'VERSION:4.0', 'FN:王小明', 'N:王;小明;;;', 'TEL;VALUE=uri;TYPE="cell,voice":tel:+86-10-1234-5678', 'BDAY:--0412', 'END:VCARD', ''].join('\r\n')),
+]));
+const tar = (entries) => Buffer.concat([...entries.flatMap((e) => {
+  const h = Buffer.alloc(512), data = Buffer.from(e.data || '');
+  h.write(e.name, 0, 100, 'utf8');
+  h.write(e.type === '5' ? '0000755\0' : '0000644\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
+  h.write(`${data.length.toString(8).padStart(11, '0')}\0`, 124); h.write(`${Math.floor(Date.now() / 1000).toString(8).padStart(11, '0')}\0`, 136);
+  h.write('        ', 148); h.write(e.type || '0', 156); if (e.link) h.write(e.link, 157, 100, 'utf8'); h.write('ustar\0', 257); h.write('00', 263);
+  h.write(`${h.reduce((s, b) => s + b, 0).toString(8).padStart(6, '0')}\0 `, 148);
+  return [h, data, Buffer.alloc((512 - (data.length % 512)) % 512)];
+}), Buffer.alloc(1024)]);
+fs.writeFileSync(P('links.tar'), tar([{ name: 'docs/', type: '5' }, { name: 'docs/a.txt', data: 'alpha' }, { name: 'docs/escape', type: '2', link: '../../../../../etc/passwd' }, { name: 'docs/inside', type: '2', link: 'a.txt' }, { name: 'docs/b.txt', data: 'beta' }]));
+fs.writeFileSync(P('slip.zip'), zipSync({ 'ok.txt': strToU8('fine'), '../../evil.txt': strToU8('evil') }));
+fs.writeFileSync(P('사진.zip'), zipSync({ 'photos/a.txt': strToU8('A'), 'photos/sub/b.txt': strToU8('B') }));
+fs.writeFileSync(P('notes.txt.gz'), zlib.gzipSync('hello from a gzip file\n'));
+for (const [d, t] of [['dupA', 'from A'], ['dupB', 'from B']]) { fs.mkdirSync(P(d), { recursive: true }); fs.writeFileSync(P(`${d}/report.txt`), t); }
+fs.rmSync(P('secret.zip'), { force: true });
+sh(sevenZ, ['a', '-tzip', '-plime', P('secret.zip'), 'a.txt'], { cwd: P('folder') });
 console.log('fixtures in', dir, fs.readdirSync(dir).length, 'files');

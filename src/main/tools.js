@@ -3,7 +3,7 @@ const U = require('./engines/util');
 const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
-const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts');
+const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles');
 
 const choice = (key, label, choices, def, extra = {}) => ({ key, type: 'choice', label, choices, default: def ?? choices[0][0], ...extra });
 const select = (key, label, choices, def, extra = {}) => ({ key, type: 'select', label, choices, default: def ?? choices[0][0], ...extra });
@@ -30,6 +30,9 @@ const outFile = (suffix, e) => (f, ctx) => ctx.out.file(f, `${U.base(f)}${suffix
 const IMAGE_IN = ['image', 'raw'];
 const LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
 const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF (R12)'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
+const SUB_IN = ['srt', 'vtt', 'ass', 'ssa', 'smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc', 'sub'];
+const SINGLE_IN = ['gz', 'bz2', 'xz', 'lzma', 'z', 'zst', 'tgz', 'tbz', 'tbz2', 'txz', 'tzst'];
+const ARCHIVE_OUT = [['zip', 'ZIP'], ['7z', '7Z'], ['tar.gz', 'TAR.GZ'], ['tar.xz', 'TAR.XZ'], ['tar.bz2', 'TAR.BZ2'], ['tar', 'TAR'], ['gz', 'GZ (one file)'], ['bz2', 'BZ2 (one file)'], ['xz', 'XZ (one file)']];
 const CAD3D_OUT = [['stl', 'STL'], ['obj', 'OBJ'], ['glb', 'GLB'], ['3mf', '3MF'], ['ply', 'PLY'], ['png', 'PNG render'], ['pdf', 'PDF render']];
 
 const TOOLS = [
@@ -195,14 +198,19 @@ const TOOLS = [
   { id: 'video-frames', cat: 'media', name: 'Video to images', desc: 'Frames at an interval or a fixed count.', accepts: ['video'], save: 'folder', suffix: ' - frames',
     options: [choice('mode', 'Save', [['every', 'Every N seconds'], ['count', 'Fixed number']]), num('every', 'Seconds between', 1, { when: { mode: 'every' } }), num('count', 'Frames', 12, { when: { mode: 'count' } }), choice('format', 'Format', [['jpg', 'JPG'], ['png', 'PNG']])],
     run: each((f, o, c) => media().frames(f, o, c)) },
-  { id: 'burn-subtitles', cat: 'media', name: 'Add subtitles', desc: 'Burn SRT, VTT or ASS captions into video.', accepts: ['video'], suffix: '-subtitled',
-    options: [file('subtitles', 'Subtitle file', [{ name: 'Subtitles', extensions: ['srt', 'vtt', 'ass', 'ssa'] }], { required: true }), range('size', 'Text size', 22, 12, 48)], run: each((f, o, c) => media().burnSubtitles(f, o, c)) },
+  { id: 'burn-subtitles', cat: 'media', name: 'Add subtitles', desc: 'Burn SRT, VTT, ASS, SAMI or other captions into video.', accepts: ['video'], suffix: '-subtitled',
+    options: [file('subtitles', 'Subtitle file', [{ name: 'Subtitles', extensions: SUB_IN }], { required: true }), range('size', 'Text size', 22, 12, 48)],
+    run: each(async (f, o, c) => {
+      if (!o.subtitles) return media().burnSubtitles(f, o, c);
+      const tmp = await U.tmpDir('subs');
+      try { return await media().burnSubtitles(f, { ...o, subtitles: await subs().forFfmpeg(o.subtitles, tmp) }, c); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+    }) },
   { id: 'normalize-audio', cat: 'media', name: 'Level loudness', desc: 'Even out volume to −16 LUFS.', accepts: ['audio', 'video'], suffix: '-normalized', run: each((f, o, c) => media().normalize(f, o, c)) },
   { id: 'images-to-video', cat: 'media', name: 'Slideshow', desc: 'MP4 from photos, with optional music.', accepts: IMAGE_IN, min: 1, ordered: true, ext: 'mp4', stem: 'Slideshow',
     options: [range('seconds', 'Seconds each', 3, 1, 15, { unit: 's' }), select('size', 'Size', [['1920x1080', '1080p landscape'], ['1080x1920', '1080p portrait'], ['1080x1080', 'Square']]), file('audio', 'Music (optional)', [{ name: 'Audio', extensions: ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac'] }])],
     run: async (files, o, c) => [await media().imagesToVideo(files, o, c)] },
-  { id: 'convert-subtitles', cat: 'media', name: 'Convert subtitles', desc: 'SRT, VTT and ASS.', accepts: ['subtitle'], ext: (o) => o.to,
-    options: [choice('to', 'Convert to', [['srt', 'SRT'], ['vtt', 'VTT'], ['ass', 'ASS']])], run: each((f, o, c) => media().convertSubtitles(f, o, c)) },
+  { id: 'convert-subtitles', cat: 'media', name: 'Convert subtitles', desc: 'SRT, VTT, ASS, SAMI, LRC, TTML, MicroDVD and SCC, in any encoding, to UTF-8.', accepts: ['subtitle'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', [['srt', 'SRT'], ['vtt', 'WebVTT'], ['ass', 'ASS'], ['smi', 'SAMI'], ['lrc', 'LRC'], ['ttml', 'TTML'], ['sub', 'MicroDVD']])], run: each((f, o, c) => subs().convert(f, o, c)) },
   { id: 'render-motion', cat: 'media', name: 'Render animation', desc: 'EffectCraft renders Lottie and EffectCraft projects to video.', accepts: ['motion'], craft: 'effectcraft', ext: (o) => o.to,
     options: [select('to', 'Render as', [['mp4', 'MP4'], ['gif', 'GIF'], ['webm', 'WebM'], ['mov', 'MOV (ProRes)']]), select('resolution', 'Resolution', [['full', 'Full'], ['half', 'Half'], ['quarter', 'Quarter']])],
     run: each((f, o, c) => craft().motion(f, o, c)) },
@@ -219,6 +227,10 @@ const TOOLS = [
   { id: 'convert-slides', cat: 'docs', name: 'Convert slides', desc: 'PowerPoint and Keynote to PDF, images, HTML and text.', accepts: ['slides'], ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
     options: [select('to', 'Convert to', [['pdf', 'PDF'], ['png', 'Images (PNG)'], ['html', 'Web page'], ['txt', 'Text'], ['md', 'Markdown'], ['pptx', 'PowerPoint']])],
     run: each((f, o, c) => office().convertSlides(f, o.to, c)) },
+  { id: 'convert-data', cat: 'docs', name: 'Convert data', desc: 'JSON, YAML, TOML, XML, JSON Lines and CSV into each other.', accepts: ['data'], extAccept: ['csv', 'tsv'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', [['json', 'JSON'], ['yaml', 'YAML'], ['toml', 'TOML'], ['xml', 'XML'], ['jsonl', 'JSON Lines'], ['csv', 'CSV'], ['xlsx', 'Excel (XLSX)']])], run: each((f, o, c) => data().convert(f, o, c)) },
+  { id: 'convert-contacts', cat: 'docs', name: 'Convert contacts', desc: 'vCard to CSV, Excel or JSON, and contact lists to vCard.', accepts: ['contacts'], extAccept: ['csv', 'tsv', 'xlsx', 'xls', 'ods'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', [['csv', 'CSV'], ['xlsx', 'Excel (XLSX)'], ['json', 'JSON'], ['vcf', 'vCard']])], run: each((f, o, c) => data().convert(f, o, c)) },
   { id: 'json-to-sheet', cat: 'docs', name: 'JSON to spreadsheet', desc: 'Turn JSON arrays into a table.', accepts: [], extAccept: ['json'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['xlsx', 'Excel'], ['csv', 'CSV'], ['html', 'HTML'], ['md', 'Markdown']])], run: each((f, o, c) => office().convertSheet(f, o.to, c, o)) },
   { id: 'merge-documents', cat: 'docs', name: 'Merge into one PDF', desc: 'Documents, sheets, slides, drawings, PDFs and images.', accepts: ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout'], min: 2, ordered: true, ext: 'pdf', suffix: ' - combined',
@@ -250,11 +262,13 @@ const TOOLS = [
 
   { id: 'extract-archive', cat: 'archive', name: 'Extract', desc: 'ZIP, RAR, 7Z, TAR, GZ, ISO and 40 more.', accepts: ['archive'], save: 'folder', suffix: '',
     options: [password('password', 'Password, if any')], run: each((f, o, c) => arc().extract(f, o, c)) },
-  { id: 'create-archive', cat: 'archive', name: 'Compress', desc: 'ZIP, 7Z or TAR with an optional password.', accepts: ['any'], ext: (o) => o.format || 'zip', suffix: '',
-    options: [choice('format', 'Format', [['zip', 'ZIP'], ['7z', '7Z'], ['tar.gz', 'TAR.GZ'], ['tar.xz', 'TAR.XZ']]), range('level', 'Level', 5, 0, 9), password('password', 'Password (optional)', { when: { format: ['zip', '7z'] } })],
+  { id: 'create-archive', cat: 'archive', name: 'Compress', desc: 'ZIP, 7Z, TAR, TAR.GZ, TAR.XZ, TAR.BZ2, or GZ for one file.', accepts: ['any'], ext: (o) => o.format || 'zip', suffix: '',
+    options: [select('format', 'Format', ARCHIVE_OUT), range('level', 'Level', 5, 0, 9), password('password', 'Password (optional)', { when: { format: ['zip', '7z'] } })],
     run: async (files, o, c) => [await arc().compress(files, o, c)] },
-  { id: 'convert-archive', cat: 'archive', name: 'Convert archive', desc: 'Repack as ZIP, 7Z or TAR.GZ.', accepts: ['archive'], ext: (o) => o.format,
-    options: [choice('format', 'Convert to', [['zip', 'ZIP'], ['7z', '7Z'], ['tar.gz', 'TAR.GZ']]), password('password', 'Password, if any', { advanced: true })], run: each((f, o, c) => arc().convert(f, o, c)) },
+  { id: 'convert-archive', cat: 'archive', name: 'Convert archive', desc: 'Repack as ZIP, 7Z, TAR, TAR.GZ, TAR.XZ or TAR.BZ2.', accepts: ['archive'], ext: (o) => o.format,
+    options: [select('format', 'Convert to', ARCHIVE_OUT), password('password', 'Password, if any', { advanced: true })], run: each((f, o, c) => arc().convert(f, o, c)) },
+  { id: 'decompress-file', cat: 'archive', name: 'Decompress', desc: 'Unpack the one file inside a .gz, .bz2, .xz, .lzma, .z or .zst.', accepts: [], extAccept: SINGLE_IN, outName: (files) => path.basename(files[0]).replace(/\.[^.]+$/, (e) => (/^\.t(gz|bz2?|xz|zst)$/i.test(e) ? '.tar' : '')),
+    options: [password('password', 'Password, if any', { advanced: true })], run: each((f, o, c) => arc().decompress(f, o, c)) },
   { id: 'test-archive', cat: 'archive', name: 'Test archive', desc: 'Check for damage without extracting.', accepts: ['archive'], save: 'none', options: [password('password', 'Password, if any')], run: each((f, o) => arc().test(f, o)) },
 
   { id: 'file-hash', cat: 'utility', name: 'Checksums', desc: 'MD5, SHA-1, SHA-256 and SHA-512.', accepts: ['any'], save: 'none',
@@ -289,6 +303,7 @@ const TOOLS = [
 function keepExt(f) { const e = U.ext(f || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'png'; }
 
 const W = (tool, label, hint, opts = {}, extra = {}) => ({ tool, label, hint, opts, ...extra });
+const CSV_EXT = ['csv', 'tsv'];
 const ZIP = W('create-archive', 'ZIP', 'Archive', { format: 'zip' });
 const HASH = W('file-hash', 'SHA-256', 'Checksum');
 const WHEELS = {
@@ -317,7 +332,8 @@ const WHEELS = {
     tools: [ZIP, HASH],
   },
   sheet: {
-    convert: [W('convert-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-sheet', 'CSV', 'Plain', { to: 'csv' }), W('convert-sheet', 'PDF', 'Document', { to: 'pdf' }), W('convert-sheet', 'JSON', 'Data', { to: 'json' }), W('convert-sheet', 'HTML', 'Table', { to: 'html' }), W('convert-sheet', 'ODS', 'Open', { to: 'ods' }), W('convert-sheet', 'MD', 'Markdown', { to: 'md' })],
+    convert: [W('convert-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-sheet', 'CSV', 'Plain', { to: 'csv' }), W('convert-sheet', 'PDF', 'Document', { to: 'pdf' }), W('convert-sheet', 'JSON', 'Data', { to: 'json' }), W('convert-sheet', 'HTML', 'Table', { to: 'html' }), W('convert-sheet', 'ODS', 'Open', { to: 'ods' }), W('convert-sheet', 'MD', 'Markdown', { to: 'md' }),
+      W('convert-data', 'YAML', 'Data', { to: 'yaml' }, { only: CSV_EXT }), W('convert-data', 'XML', 'Data', { to: 'xml' }, { only: CSV_EXT }), W('convert-contacts', 'vCard', 'Contacts', { to: 'vcf' }, { only: CSV_EXT })],
     tools: [ZIP, HASH],
   },
   slides: {
@@ -349,12 +365,19 @@ const WHEELS = {
     tools: [ZIP],
   },
   archive: {
-    convert: [W('extract-archive', 'Extract', 'Unpack'), W('convert-archive', 'ZIP', 'Repack', { format: 'zip' }), W('convert-archive', '7Z', 'Repack', { format: '7z' }), W('convert-archive', 'TAR.GZ', 'Repack', { format: 'tar.gz' })],
+    convert: [W('extract-archive', 'Extract', 'Unpack'), W('decompress-file', 'Decompress', 'One file'), W('convert-archive', 'ZIP', 'Repack', { format: 'zip' }), W('convert-archive', '7Z', 'Repack', { format: '7z' }), W('convert-archive', 'TAR.GZ', 'Repack', { format: 'tar.gz' }), W('convert-archive', 'TAR.XZ', 'Repack', { format: 'tar.xz' }), W('convert-archive', 'TAR.BZ2', 'Repack', { format: 'tar.bz2' })],
     tools: [W('test-archive', 'Test', 'Check'), HASH],
   },
-  subtitle: { convert: [W('convert-subtitles', 'SRT', 'SubRip', { to: 'srt' }), W('convert-subtitles', 'VTT', 'WebVTT', { to: 'vtt' }), W('convert-subtitles', 'ASS', 'Styled', { to: 'ass' })], tools: [ZIP] },
-  data: { convert: [W('json-to-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('json-to-sheet', 'CSV', 'Table', { to: 'csv' }), W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'TXT', 'Text', { to: 'txt' })], tools: [ZIP, HASH] },
-  folder: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' }), W('create-archive', 'TAR.GZ', 'Archive', { format: 'tar.gz' })], tools: [] },
+  subtitle: {
+    convert: [W('convert-subtitles', 'SRT', 'SubRip', { to: 'srt' }), W('convert-subtitles', 'VTT', 'WebVTT', { to: 'vtt' }), W('convert-subtitles', 'ASS', 'Styled', { to: 'ass' }), W('convert-subtitles', 'SAMI', 'SMI', { to: 'smi' }), W('convert-subtitles', 'LRC', 'Lyrics', { to: 'lrc' }), W('convert-subtitles', 'TTML', 'Timed text', { to: 'ttml' }), W('convert-subtitles', 'SUB', 'MicroDVD', { to: 'sub' })],
+    tools: [ZIP],
+  },
+  data: {
+    convert: [W('convert-data', 'JSON', 'Data', { to: 'json' }, { not: ['json'] }), W('convert-data', 'YAML', 'Config', { to: 'yaml' }, { not: ['yaml', 'yml'] }), W('convert-data', 'TOML', 'Config', { to: 'toml' }, { not: ['toml'] }), W('convert-data', 'XML', 'Markup', { to: 'xml' }, { not: ['xml'] }), W('convert-data', 'CSV', 'Table', { to: 'csv' }), W('convert-data', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-data', 'JSONL', 'Lines', { to: 'jsonl' }, { not: ['jsonl', 'ndjson'] }), W('convert-document', 'PDF', 'Document', { to: 'pdf' }, { not: ['toml', 'jsonl', 'ndjson'] })],
+    tools: [ZIP, HASH],
+  },
+  contacts: { convert: [W('convert-contacts', 'CSV', 'Table', { to: 'csv' }), W('convert-contacts', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-contacts', 'JSON', 'Data', { to: 'json' })], tools: [ZIP, HASH] },
+  folder: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' }), W('create-archive', 'TAR.GZ', 'Archive', { format: 'tar.gz' }), W('create-archive', 'TAR.XZ', 'Archive', { format: 'tar.xz' })], tools: [] },
   any: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' })], tools: [HASH] },
 };
 const MULTI = {
@@ -368,7 +391,14 @@ const MULTI = {
 };
 const SINGLE_OUTPUT = new Set(['create-archive', 'merge-media', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
-const groupsOf = (files) => [...new Set(files.map(U.groupOf))];
+// Formats util's groups don't know yet; plain .xml is data (converting it as a document stays possible).
+const MORE_GROUPS = { smi: 'subtitle', sami: 'subtitle', lrc: 'subtitle', ttml: 'subtitle', dfxp: 'subtitle', scc: 'subtitle', jsonl: 'data', ndjson: 'data', jsonc: 'data', toml: 'data', vcf: 'contacts', vcard: 'contacts' };
+function groupOf(f) {
+  const g = U.groupOf(f), e = U.ext(f);
+  if (g === 'doc' && e === 'xml') return 'data';
+  return g === 'any' ? MORE_GROUPS[e] || g : g;
+}
+const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);
 function accepts(t, files) {
   if (!t || t.noFiles) return false;
@@ -384,7 +414,7 @@ function wheelsFor(files) {
   const gs = groupsOf(files);
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
   const base = WHEELS[g] || WHEELS.any;
-  const ok = (w) => accepts(get(w.tool), files);
+  const ok = (w) => accepts(get(w.tool), files) && (!w.only || files.every((f) => w.only.includes(U.ext(f)))) && !(w.not && files.some((f) => w.not.includes(U.ext(f))));
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
   if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
   const multi = [...(MULTI[g] || [])];
@@ -394,8 +424,7 @@ function wheelsFor(files) {
   const tools = [...multi, ...(g === 'mixed' ? [] : base.tools.filter((w) => !get(w.tool)?.editor).slice(0, 5)), all];
   return { convert: dedupe(convert.filter(ok)).slice(0, 10), tools: dedupe(tools.filter(ok)).slice(0, 10) };
 }
-const catalog = () => TOOLS.map(({ run, ext, single, ...meta }) => meta);
-function archiveStem(f) { return path.basename(f).replace(/\.(tar\.(gz|bz2|xz|zst)|t[gbx]z|tbz2|[^.]+)$/i, '') || 'Extracted'; }
+const catalog = () => TOOLS.map(({ run, ext, single, outName, ...meta }) => meta);
 function suggest(id, files, opts = {}) {
   const t = get(id);
   if (!t || t.save === 'none' || t.save === 'inplace' || t.editor) return { kind: 'none' };
@@ -403,14 +432,17 @@ function suggest(id, files, opts = {}) {
   const stem = t.stem || (first ? U.base(first) : 'Lime');
   if (files.length > 1 && !SINGLE_OUTPUT.has(t.id) && !(t.id === 'jpg-to-pdf' && opts.combine !== 'each')) return { kind: 'dir' };
   if ((t.save === 'folder' && !t.single?.(opts)) || (t.folderWhen && Object.entries(t.folderWhen).every(([k, v]) => opts[k] === v))) {
-    return { kind: 'folder', name: t.id === 'extract-archive' ? archiveStem(first) : `${stem}${t.suffix ?? ''}${t.folderWhen ? ' - pages' : ''}` };
+    return { kind: 'folder', name: t.id === 'extract-archive' ? arc().stem(first) : `${stem}${t.suffix ?? ''}${t.folderWhen ? ' - pages' : ''}` };
   }
+  if (t.outName) { const name = t.outName(files, opts); return { kind: 'file', name, ext: U.ext(name) }; }
   let e = typeof t.ext === 'function' ? t.ext(opts, files) : t.ext;
   if (!e) e = U.ext(first) === 'jpeg' ? 'jpg' : U.ext(first);
   if (e === 'tif') e = 'tiff';
+  if (t.id === 'create-archive') return { kind: 'file', name: arc().archiveName(files, e), ext: e };
+  if (t.id === 'convert-archive') return { kind: 'file', name: `${['gz', 'bz2', 'xz'].includes(e) ? path.basename(first).replace(/\.[^.]+$/, '') : arc().stem(first)}.${e}`, ext: e };
   const name = t.id === 'create-archive' && files.length > 1 ? path.basename(path.dirname(first)) || 'Archive' : stem;
   const suffix = t.single?.(opts) ? ' - extract' : t.suffix ?? (U.ext(first) === e ? '-converted' : '');
   return { kind: 'file', name: `${name}${suffix}.${e}`, ext: e };
 }
 
-module.exports = { TOOLS, catalog, get, toolsFor, wheelsFor, groupsOf, suggest, accepts };
+module.exports = { TOOLS, catalog, get, toolsFor, wheelsFor, groupOf, groupsOf, suggest, accepts };

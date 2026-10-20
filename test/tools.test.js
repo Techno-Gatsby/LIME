@@ -28,6 +28,21 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const files = (d) => (fs.existsSync(d) && fs.statSync(d).isDirectory() ? fs.readdirSync(d) : []);
   const C = [];
   const T = (name, tool, inputs, opts, check) => C.push({ name, tool, inputs: inputs.map(fx), opts, check });
+  const F = (name, tool, inputs, opts, fail) => C.push({ name, tool, inputs: inputs.map(fx), opts, fail });
+  const XLSX = require('xlsx');
+  const sheet0 = (o) => { const wb = XLSX.readFile(o); return wb.Sheets[wb.SheetNames[0]]; };
+  const cell = (ws, a) => (ws[a] ? `${ws[a].t}:${ws[a].v}` : '');
+  const bom = (p) => read(p).subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]));
+  const utf = (p) => txt(p).replace(/^\ufeff/, '');
+  const same = (a, b, m) => ok(a === b, `${m || 'output'} differs: ${JSON.stringify(a).slice(0, 400)}`);
+  const has = (t, ...parts) => { for (const s of parts) ok(t.includes(s), `lacks ${JSON.stringify(s).slice(0, 120)} in ${JSON.stringify(t).slice(0, 300)}`); };
+  const ms = (h, m, s, f) => ((+h * 60 + +m) * 60 + +s) * 1000 + +f;
+  const srtCues = (t) => [...t.replace(/^\ufeff/, '').matchAll(/(\d+):(\d\d):(\d\d)[,.](\d{3}) --> (\d+):(\d\d):(\d\d)[,.](\d{3})\r?\n([\s\S]*?)(?:\r?\n\r?\n|$)/g)].map((m) => [ms(m[1], m[2], m[3], m[4]), ms(m[5], m[6], m[7], m[8]), m[9].replace(/\r\n/g, '\n')]);
+  const sevenZip = (args) => require('child_process').execFileSync(E('util').binPath('7z'), args, { maxBuffer: 1 << 28 });
+  const tarNames = (b) => { const n = []; for (let i = 0; i + 512 <= b.length;) { const name = b.toString('utf8', i, i + 100).replace(/\0[\s\S]*$/, ''); if (!name) break; n.push(name.replace(/^\.\//, '')); i += 512 + Math.ceil((parseInt(b.toString('latin1', i + 124, i + 136), 8) || 0) / 512) * 512; } return n; };
+  const entries = async (o) => (await E('archive').list(o)).map((e) => e.path.split(path.sep).join('/')).sort();
+  const isLink = (p) => fs.lstatSync(p).isSymbolicLink();
+  const walk = (d) => fs.readdirSync(d, { recursive: true }).map((x) => x.split(path.sep).join('/')).sort();
 
   for (const [src, to, f] of [['photo.heic', 'jpg', 'jpeg'], ['photo.jpg', 'png', 'png'], ['photo.jpg', 'webp', 'webp'], ['photo.jpg', 'avif', 'heif'], ['photo.jpg', 'tiff', 'tiff'], ['photo.jpg', 'gif', 'gif'], ['photo.webp', 'jpg', 'jpeg'], ['alpha.png', 'jpg', 'jpeg'], ['layers.psd', 'png', 'png'], ['raw.dng', 'jpg', 'jpeg'], ['photo.jxl', 'png', 'png']]) {
     T(`image ${src}→${to}`, 'convert-image', [src], { to, quality: 88 }, async ([o]) => { const m = await fmt(o, f); ok(m.width > 100, 'tiny'); });
@@ -129,7 +144,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const [to, chk] of [['json', (o) => ok(JSON.parse(txt(o).replace(/^﻿/, '')).length >= 1 || true, 'json')], ['html', (o) => ok(txt(o).includes('Lime'), 'html')], ['pdf', async (o) => ok((await pdfText(o)).includes('Lime'), 'pdf')], ['ods', (o) => zipHas(o, 'content.xml')], ['md', (o) => ok(txt(o).includes('| Fruit |'), 'md')], ['xls', (o) => ok(require('xlsx').readFile(o).SheetNames.length === 2, 'xls')], ['docx', async (o) => ok((await docxText(o)).includes('Lime'), 'docx')]]) {
     T(`sheet→${to}`, 'convert-sheet', ['sheet.xlsx'], { to, allSheets: false }, async ([o]) => chk(o));
   }
-  T('csv→xlsx', 'convert-sheet', ['sheet.csv'], { to: 'xlsx' }, ([o]) => ok(require('xlsx').readFile(o).Sheets.Sheet1.A2.v === 'Lime', 'xlsx'));
+  T('csv→xlsx', 'convert-sheet', ['sheet.csv'], { to: 'xlsx' }, ([o]) => { const wb = XLSX.readFile(o); ok(wb.SheetNames[0] === 'sheet' && cell(wb.Sheets.sheet, 'A2') === 's:Lime' && cell(wb.Sheets.sheet, 'B2') === 'n:12', 'xlsx'); });
   T('json→xlsx', 'json-to-sheet', ['data.json'], { to: 'xlsx' }, ([o]) => ok(require('xlsx').readFile(o).SheetNames.length === 1, 'xlsx'));
   T('slides→pdf', 'convert-slides', ['deck.pptx'], { to: 'pdf' }, async ([o]) => { await pages(o, 2); ok((await pdfText(o)).includes('Lime Deck'), 'slide text'); });
   T('slides→png', 'convert-slides', ['deck.pptx'], { to: 'png' }, ([o]) => ok(files(o).length === 2, `${files(o).length} slides`));
@@ -161,6 +176,113 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('test archive', 'test-archive', ['archive.zip'], {}, (o, r) => ok(/intact/.test(r[0].note), r[0].note));
   T('checksum', 'file-hash', ['doc.txt'], { algos: ['sha256'], expected: '' }, (o, r) => ok(r[0].text.includes(require('crypto').createHash('sha256').update(read(fx('doc.txt'))).digest('hex')), 'hash'));
 
+  // Data formats (JSON, JSONC, JSON Lines, YAML, TOML, XML, CSV) through one tree; vectors from Filee's tests.
+  T('data json→yaml', 'convert-data', ['sample.json'], { to: 'yaml' }, ([o]) => { ok(!bom(o), 'BOM'); same(txt(o), 'name: Filee 변환기\nversion: 3\nratio: 3.0\nbig: 12345678901234567890\nenabled: true\nmissing: null\nnotes: |-\n  first line\n  second line\nlooksLikeABoolean: "true"\nlooksLikeANumber: "007"\nempty: ""\ntags:\n  - a\n  - b\nnothing: []\nowner:\n  id: 1\n  email: me@example.com\nrows:\n  - x: 1\n  - x: 2\n'); });
+  T('data json→toml', 'convert-data', ['sample.json'], { to: 'toml' }, ([o]) => {
+    const t = txt(o);
+    ok(!t.includes('missing'), 'null kept');
+    has(t, 'big = "12345678901234567890"\n', 'ratio = 3.0\n', '\n[owner]\nid = 1\n', '\n[[rows]]\nx = 1\n\n[[rows]]\nx = 2\n');
+    const back = require('smol-toml').parse(t, { integersAsBigInt: true });
+    ok(back.name === 'Filee 변환기' && back.version === 3n && back.rows.length === 2, 'TOML reads back');
+  });
+  T('data json→xml', 'convert-data', ['sample.json'], { to: 'xml' }, ([o]) => { const t = txt(o); ok(t.startsWith('<?xml version="1.0" encoding="utf-8"?>\n<root>\n  <name>Filee 변환기</name>\n'), t.slice(0, 80)); has(t, '  <missing />\n', '  <empty></empty>\n', '  <tags>a</tags>\n  <tags>b</tags>\n', '  <ratio>3.0</ratio>\n'); });
+  T('data yaml→json merge keys', 'convert-data', ['config.yml'], { to: 'json' }, ([o]) => {
+    const t = txt(o);
+    has(t, '  "development": {\n    "adapter": "postgres",\n    "port": 5433,\n    "database": "dev"\n  },', '  "flags": [\n    "yes",\n    "no",\n    "on",\n    null,\n    31,\n    15,\n    "Infinity",\n    -1500.0,\n    "42"\n  ],', '"when": "2026-10-16"');
+    ok(!t.includes('comments'), 'comment kept');
+  });
+  F('data yaml alias bomb refused', 'convert-data', ['bomb.yaml'], { to: 'json' }, /too many values/);
+  T('data toml→json dates', 'convert-data', ['config.toml'], { to: 'json' }, ([o]) => has(txt(o), '"title": "TOML 예제"', '"released": "1979-05-27T07:32:00-08:00"', '"day": "2026-10-16"', '"limits": {\n      "cpu": 2.5,\n      "memory": "1G"\n    }', '"products": [\n    {\n      "name": "Hammer",\n      "sku": 738594937\n    },'));
+  T('data toml→yaml', 'convert-data', ['config.toml'], { to: 'yaml' }, ([o]) => has(txt(o), 'released: 1979-05-27T07:32:00-08:00\n', 'products:\n  - name: Hammer\n    sku: 738594937\n  - name: Nail\n'));
+  T('data xml→json attributes', 'convert-data', ['catalog.xml'], { to: 'json' }, ([o]) => same(txt(o), '{\n  "catalog": {\n    "@xmlns:dc": "http://purl.org/dc/elements/1.1/",\n    "@version": "2",\n    "book": [\n      {\n        "@id": "b1",\n        "@lang": "ko",\n        "dc:title": "한국어 책",\n        "price": {\n          "@currency": "KRW",\n          "#text": "15000"\n        },\n        "note": null,\n        "summary": "",\n        "body": "a < b"\n      },\n      {\n        "@id": "b2",\n        "dc:title": "Second"\n      }\n    ]\n  }\n}\n'));
+  T('data xml→yaml namespaces', 'convert-data', ['feed.xml'], { to: 'yaml' }, ([o]) => same(txt(o), "feed:\n  '@xmlns': http://www.w3.org/2005/Atom\n  '@xml:lang': ko\n  title: 소식\n  entry:\n    id: \"1\"\n"));
+  T('data euc-kr xml→json', 'convert-data', ['memo-euckr.xml'], { to: 'json' }, ([o]) => same(txt(o), '{\n  "memo": {\n    "to": "홍길동"\n  }\n}\n'));
+  T('data json→xml names', 'convert-data', ['names.json'], { to: 'xml' }, ([o]) => has(txt(o), '<first_x0020_name>Ada</first_x0020_name>', '<_x0031_st>1</_x0031_st>', '<list>\n    <item>1</item>\n    <item>2</item>\n  </list>'));
+  T('data csv→json typed', 'convert-data', ['people.csv'], { to: 'json' }, ([o]) => same(txt(o), '[\n  {\n    "name": "홍길동",\n    "zip": "01234",\n    "age": 42,\n    "member": true,\n    "score": 3.5\n  },\n  {\n    "name": "Kim, Ada",\n    "zip": "",\n    "age": 7,\n    "member": false,\n    "score": ""\n  }\n]\n'));
+  T('data json→csv records', 'convert-data', ['users.json'], { to: 'csv' }, ([o]) => { ok(bom(o), 'CSV needs a BOM'); same(utf(o), 'id,address.city,vip\r\n1,Seoul,\r\n2,,true\r\n'); });
+  F('data csv refuses lists', 'convert-data', ['nested.json'], { to: 'csv' }, /“tags” holds a list: CSV holds a table/);
+  T('data jsonl→json', 'convert-data', ['events.jsonl'], { to: 'json' }, ([o]) => same(txt(o), '[\n  {\n    "a": 1\n  },\n  {\n    "a": 2,\n    "b": "한"\n  }\n]\n'));
+  T('data csv→jsonl', 'convert-data', ['people.csv'], { to: 'jsonl' }, ([o]) => same(txt(o), '{"name":"홍길동","zip":"01234","age":42,"member":true,"score":3.5}\n{"name":"Kim, Ada","zip":"","age":7,"member":false,"score":""}\n'));
+  F('data broken jsonl refused', 'convert-data', ['broken.jsonl'], { to: 'json' }, /Line 2 is not valid JSON/);
+  T('data json with BOM→xlsx', 'json-to-sheet', ['bom.json'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'A2'), cell(ws, 'B2'), cell(ws, 'C2'), cell(ws, 'D2'), cell(ws, 'D3')].join('|'), 's:name|s:Lime|n:12|s:12345678901234567890|s:01234|s:00501'); });
+  T('data jsonl→xlsx', 'convert-data', ['events.jsonl'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'B1'), cell(ws, 'A3'), cell(ws, 'B3')].join('|'), 's:a|s:b|n:2|s:한'); });
+
+  // CSV / TSV: encoding and delimiter detected, text stays text.
+  const korean = ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'A2'), cell(ws, 'B2'), cell(ws, 'C2')].join('|'), 's:이름|s:홍길동|n:42|s:안녕, 세상'); };
+  T('csv utf-8 without BOM→xlsx', 'convert-sheet', ['korean.csv'], { to: 'xlsx' }, korean);
+  T('csv cp949→xlsx', 'convert-sheet', ['korean-cp949.csv'], { to: 'xlsx' }, korean);
+  T('csv cp949→html', 'convert-sheet', ['korean-cp949.csv'], { to: 'html' }, ([o]) => has(txt(o), '홍길동', '안녕, 세상'));
+  T('csv keeps zeros and fractions', 'convert-sheet', ['zeros.csv'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([cell(ws, 'B2'), cell(ws, 'C2'), cell(ws, 'D2'), cell(ws, 'B3'), cell(ws, 'C3'), cell(ws, 'D3')].join('|'), 's:01234|s:1/2|s:2026-10-16|s:007|n:3.5|s:1/2/2026'); });
+  T('csv semicolons and decimal commas', 'convert-sheet', ['semicolon.csv'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([ws['!ref'], cell(ws, 'B2'), cell(ws, 'C2'), cell(ws, 'B3'), cell(ws, 'C3')].join('|'), 'A1:C3|s:1,5|n:3|s:2,25|n:10'); });
+  T('tsv→xlsx→tsv round trip', 'convert-sheet', ['people.tsv'], { to: 'xlsx' }, async ([o]) => {
+    const back = path.join(path.dirname(o), 'back.tsv');
+    await E('office').convertSheet(o, 'tsv', { out: { file: () => back, folder: () => path.dirname(o) }, progress: () => {} }, { allSheets: false });
+    ok(bom(back), 'TSV needs a BOM');
+    same(utf(back), txt(fx('people.tsv')), 'TSV round trip');
+  });
+  T('tsv→csv', 'convert-sheet', ['people.tsv'], { to: 'csv' }, ([o]) => ok(utf(o).startsWith('이름,금액,메모\r\n김민지,"1,200","줄\n바꿈"\r\n"Lee, J",3.5'), utf(o).slice(0, 60)));
+  T('csv→yaml', 'convert-sheet', ['people.csv'], { to: 'yaml' }, ([o]) => same(txt(o), '- name: 홍길동\n  zip: "01234"\n  age: 42\n  member: true\n  score: 3.5\n- name: Kim, Ada\n  zip: ""\n  age: 7\n  member: false\n  score: ""\n'));
+
+  // Contacts
+  T('vcard→csv', 'convert-contacts', ['contacts.vcf'], { to: 'csv' }, ([o]) => { ok(bom(o), 'CSV needs a BOM'); same(utf(o), ['Full name,Given name,Family name,Organization,Title,Email,Phone,Address,Birthday,Note', '홍길동,길동,홍,,,hong@example.com,010-1234-5678 (mobile); 02-123-4567 (work),"서울특별시 종로구 세종대로 209 정부서울청사 별관 3층, 03171 (home)",1980-01-02,전화 주세요', 'Ada Lovelace,Ada,Lovelace,"Analytical Engines, Ltd., Research",Engineer,ada@example.com (work); ada@home.example (home),+44 20 7946 0000 (mobile),,,"First line\nSecond line; folded over two lines here"', '王小明,小明,王,,,,+86-10-1234-5678 (mobile),,--0412,', ''].join('\r\n')); });
+  T('vcard utf-16→json', 'convert-contacts', ['phone-utf16.vcf'], { to: 'json' }, ([o]) => has(txt(o), '"Full name": "김철수"', '"Phone": "010-0000-0000"'));
+  T('csv→vcard', 'convert-contacts', ['주소록.csv'], { to: 'vcf' }, ([o]) => {
+    const t = txt(o);
+    ok(t.startsWith('BEGIN:VCARD\r\nVERSION:3.0\r\nFN:홍길동\r\nN:;;;;\r\nORG:필이\\, 주식회사\r\n'), t.slice(0, 90));
+    has(t, '\r\nEMAIL;TYPE=INTERNET:hong@example.com\r\nTEL;TYPE=CELL:010-1111-2222\r\nTEL;TYPE=WORK:02-333-4444\r\n');
+    ok(t.split('BEGIN:VCARD').length === 2, 'the empty row became a contact');
+    ok(t.split('\r\n').every((l) => Buffer.byteLength(l) <= 75), 'a line is over 75 bytes');
+    const note = E('data').readVcard(read(o))[0].notes[0];
+    same(note, '아주 긴 메모입니다. 한 줄이 75바이트를 넘으면 vCard는 줄을 접어요. 접힌 줄은 공백으로 시작해요.', 'folded note');
+  });
+  F('csv without contact columns', 'convert-contacts', ['numbers.csv'], { to: 'vcf' }, /No contact columns found/);
+
+  // Subtitles: built-in readers and writers, any encoding in, UTF-8 out.
+  T('subtitles cp949 sami→srt', 'convert-subtitles', ['영화.smi'], { to: 'srt' }, ([o]) => { ok(bom(o), 'SRT needs a BOM'); same(utf(o), '1\r\n00:00:01,000 --> 00:00:02,500\r\n안녕하세요,\r\n<font color="#FFFF00">반가워요</font>\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,200\r\n<i>두 번째 줄입니다</i>\r\n\r\n3\r\n00:00:05,000 --> 00:00:09,000\r\n세 번째 & 마지막\r\n\r\n'); });
+  T('subtitles cp949 srt→vtt', 'convert-subtitles', ['cp949.srt'], { to: 'vtt' }, ([o]) => same(txt(o), 'WEBVTT\n\n00:00:01.000 --> 00:00:02.500\n안녕하세요, 똠방각하\n\n00:00:03.000 --> 00:00:04.000\n두 번째 줄\n\n'));
+  T('subtitles lrc→srt last line', 'convert-subtitles', ['song.lrc'], { to: 'srt' }, ([o]) => same(JSON.stringify(srtCues(txt(o))), JSON.stringify([[9500, 11800, 'First line'], [11800, 14500, 'Chorus'], [19500, 25000, 'Chorus'], [25000, 29000, 'Last']])));
+  T('subtitles srt→sami', 'convert-subtitles', ['sub.srt'], { to: 'smi' }, ([o]) => { ok(bom(o), 'SAMI needs a BOM'); has(utf(o), '.ENCC { Name: English; lang: en-US; SAMIType: CC; }', '<SYNC Start=500><P Class=ENCC>Hello Lime\r\n<SYNC Start=2000><P Class=ENCC>&nbsp;\r\n<SYNC Start=2500><P Class=ENCC>Second line\r\n<SYNC Start=3800><P Class=ENCC>&nbsp;\r\n'); });
+  T('subtitles lenient srt→vtt', 'convert-subtitles', ['lenient.srt'], { to: 'vtt' }, ([o]) => same(txt(o), 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<i>First</i> line\nstill the first\n\n00:00:03.500 --> 00:00:04.250\n<b>Second</b> cue\n\n00:00:05.000 --> 00:00:06.000\nThird 2024\n\n'));
+  T('subtitles ass→vtt', 'convert-subtitles', ['show.ass'], { to: 'vtt' }, ([o]) => same(txt(o), 'WEBVTT\n\n00:00:01.000 --> 00:00:01.500\n<i>I think so</i>\n\n00:00:02.000 --> 00:00:03.500\nHello, <i>world</i>!\nSecond <c.yellow>yellow</c> line\n\n'));
+  T('subtitles vtt→ttml', 'convert-subtitles', ['talk.vtt'], { to: 'ttml' }, ([o]) => has(txt(o), 'xml:lang="ko"', '<p begin="00:00:01.000" end="00:00:02.500">Hi &amp; <span tts:fontStyle="italic">welcome</span><br /><span tts:color="#FFFF00">&lt;3</span></p>', '<p begin="01:00:00.000" end="01:00:01.000">Karaoke</p>'));
+  T('subtitles ttml→srt', 'convert-subtitles', ['captions.ttml'], { to: 'srt' }, ([o]) => same(JSON.stringify(srtCues(txt(o))), JSON.stringify([[11000, 12000, 'Line one\nline <b>two</b>'], [13200, 14200, '<i>Frames</i>'], [15000, 16000, '<font color="#FF0000">Red</font> ticks']])));
+  T('subtitles scc→srt', 'convert-subtitles', ['captions.scc'], { to: 'srt' }, ([o]) => same(JSON.stringify(srtCues(txt(o))), JSON.stringify([[1435, 3003, 'Hello\nCafé'], [5138, 5205, 'One!'], [5272, 7007, 'One!\nTwo!']])));
+  T('subtitles microdvd→srt', 'convert-subtitles', ['movie.sub'], { to: 'srt' }, ([o]) => same(JSON.stringify(srtCues(txt(o))), JSON.stringify([[1000, 2000, '<i>Hello</i>\nworld'], [3000, 4000, '<font color="#FF0000">Red</font>']])));
+  F('subtitles vobsub refused', 'convert-subtitles', ['vobsub.sub'], { to: 'srt' }, /VobSub picture subtitles/);
+  T('subtitles srt→ass', 'convert-subtitles', ['sub.srt'], { to: 'ass' }, ([o]) => has(utf(o), '[Script Info]\r\nScriptType: v4.00+', 'Dialogue: 0,0:00:00.50,0:00:02.00,Default,,0,0,0,,Hello Lime\r\n', 'Dialogue: 0,0:00:02.50,0:00:03.80,Default,,0,0,0,,Second line\r\n'));
+  T('subtitles srt→lrc', 'convert-subtitles', ['sub.srt'], { to: 'lrc' }, ([o]) => same(txt(o), '[00:00.50]Hello Lime\r\n[00:02.00]\r\n[00:02.50]Second line\r\n[00:03.80]\r\n'));
+  T('subtitles srt→microdvd', 'convert-subtitles', ['sub.srt'], { to: 'sub' }, ([o]) => same(utf(o), '{1}{1}23.976\r\n{12}{48}Hello Lime\r\n{60}{91}Second line\r\n'));
+  T('burn ttml subtitles', 'burn-subtitles', ['clip.mp4'], { subtitles: fx('burn.ttml'), size: 30 }, async ([o]) => {
+    await dur(o, 4, 0.3);
+    const ff = E('util').binPath('ffmpeg');
+    const frame = (f) => require('child_process').execFileSync(ff, ['-v', 'error', '-ss', '2', '-i', f, '-frames:v', '1', '-vf', 'crop=iw:ih/3:0:2*ih/3,scale=320:-2', '-f', 'rawvideo', '-pix_fmt', 'gray', '-']);
+    const a = frame(fx('clip.mp4')), b = frame(o);
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff += Math.abs(a[i] - b[i]);
+    ok(diff / a.length > 2, `no caption burned in (mean difference ${(diff / a.length).toFixed(2)})`);
+  });
+
+  // Archives: links, zip slip, flattening, duplicate names, single-file streams.
+  T('extract tar with escaping link', 'extract-archive', ['links.tar'], {}, ([o]) => { same(walk(o).join(','), 'a.txt,b.txt'); ok(!walk(o).some((f) => isLink(path.join(o, f))), 'a link was unpacked'); ok(txt(path.join(o, 'a.txt')) === 'alpha', 'content'); });
+  F('extract refuses zip slip', 'extract-archive', ['slip.zip'], {}, /slip\.zip was not unpacked: the entry "\.\.[\\/]\.\.[\\/]evil\.txt" points outside the target folder/);
+  T('extract flattens one top folder', 'extract-archive', ['사진.zip'], {}, ([o]) => { ok(path.basename(o) === '사진', path.basename(o)); same(walk(o).join(','), 'a.txt,sub,sub/b.txt'); });
+  T('convert archive keeps top folder', 'convert-archive', ['사진.zip'], { format: '7z', level: 5 }, async ([o]) => { ok(path.basename(o) === '사진.7z', path.basename(o)); same((await entries(o)).join(','), 'photos,photos/a.txt,photos/sub,photos/sub/b.txt'); });
+  T('convert tar.gz→tar.xz', 'convert-archive', ['archive.tar.gz'], { format: 'tar.xz', level: 5 }, ([o]) => { ok(path.basename(o) === 'archive.tar.xz', path.basename(o)); magic(o, '7zXZ'); const n = tarNames(sevenZip(['x', '-so', o])); ok(n.includes('a.txt') && n.includes('inner/b.txt'), n.join(',')); });
+  T('compress same names', 'create-archive', ['dupA/report.txt', 'dupB/report.txt'], { format: 'zip', level: 5 }, ([o]) => { ok(path.basename(o) === 'report_files.zip', path.basename(o)); const z = zipHas(o, 'report'); same(Object.keys(z).sort().join(','), 'report (2).txt,report.txt'); ok(Buffer.from(z['report (2).txt']).toString() === 'from B', 'second file'); });
+  for (const [fmt, sig] of [['tar.bz2', 'BZh'], ['tar.xz', '7zXZ'], ['tar', 'folder/']]) T(`compress folder→${fmt}`, 'create-archive', ['folder'], { format: fmt, level: 5 }, ([o]) => { ok(path.basename(o) === `folder.${fmt}`, path.basename(o)); if (fmt !== 'tar') magic(o, sig); const n = tarNames(fmt === 'tar' ? read(o) : sevenZip(['x', '-so', o])); ok(n.includes('folder/a.txt') && n.includes('folder/inner/b.txt'), n.join(',')); });
+  T('compress one file→gz', 'create-archive', ['doc.txt'], { format: 'gz', level: 5 }, ([o]) => { ok(path.basename(o) === 'doc.txt.gz', path.basename(o)); ok(require('zlib').gunzipSync(read(o)).equals(read(fx('doc.txt'))), 'gz content'); });
+  F('gz refuses a folder', 'create-archive', ['folder'], { format: 'gz', level: 5 }, /A \.gz file holds a single file/);
+  T('decompress gz', 'decompress-file', ['notes.txt.gz'], {}, ([o]) => { ok(path.basename(o) === 'notes.txt', path.basename(o)); same(txt(o), 'hello from a gzip file\n'); });
+  F('password zip needs its password', 'extract-archive', ['secret.zip'], {}, /secret\.zip is password-protected/);
+  T('password zip with password', 'extract-archive', ['secret.zip'], { password: 'lime' }, ([o]) => same(txt(path.join(o, 'a.txt')), 'alpha'));
+  T('data jsonc→json order and floats', 'convert-data', ['order.jsonc'], { to: 'json' }, ([o]) => { ok(path.basename(o) === 'order.json', path.basename(o)); same(txt(o), '{\n  "2": 1,\n  "1": 2,\n  "f": 1000000000000000.0,\n  "g": 0.000015,\n  "h": 1E+300,\n  "i": 3.0,\n  "j": 12345678901234567890\n}\n'); });
+  T('data list→toml items', 'convert-data', ['list.json'], { to: 'toml' }, ([o]) => same(txt(o), '[[items]]\na = 1\n\n[[items]]\na = 2\n'));
+  T('data xml rows→csv', 'convert-data', ['rows.xml'], { to: 'csv' }, ([o]) => same(utf(o), 'a,b\r\n1,x\r\n2,y\r\n'));
+  T('data yaml columns→csv', 'convert-data', ['columns.yaml'], { to: 'csv' }, ([o]) => same(utf(o), 'name,age\r\na,1\r\nb,\r\n'));
+  T('vcard→xlsx', 'convert-contacts', ['contacts.vcf'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'A2'), cell(ws, 'G2'), cell(ws, 'A4'), cell(ws, 'I4')].join('|'), 's:Full name|s:홍길동|s:010-1234-5678 (mobile); 02-123-4567 (work)|s:王小明|s:--0412'); });
+  for (const fmt of ['bz2', 'xz']) T(`compress one file→${fmt}`, 'create-archive', ['doc.txt'], { format: fmt, level: 5 }, ([o]) => { ok(path.basename(o) === `doc.txt.${fmt}`, path.basename(o)); magic(o, fmt === 'xz' ? '7zXZ' : 'BZh'); ok(sevenZip(['x', '-so', o]).equals(read(fx('doc.txt'))), `${fmt} content`); });
+  T('convert gz→xz', 'convert-archive', ['notes.txt.gz'], { format: 'xz', level: 5 }, ([o]) => { ok(path.basename(o) === 'notes.txt.xz', path.basename(o)); same(sevenZip(['x', '-so', o]).toString(), 'hello from a gzip file\n'); });
+
   const only = process.env.LIME_ONLY ? new RegExp(process.env.LIME_ONLY, 'i') : null;
   const results = [];
   let n = 0;
@@ -177,13 +299,20 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       const id = submit({ tool: c.tool, files: c.inputs, opts: c.opts, dest });
       let j;
       for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); if (Date.now() - t0 > 240000) throw new Error('timeout'); }
+      if (c.fail) {
+        ok(j.status === 'error', `${j.status} instead of an error`);
+        ok(c.fail.test(j.error || ''), `error was: ${j.error}`);
+        ok(!files(dest.path).length, `left ${files(dest.path).join(', ')} behind`);
+        detail = String(j.error).slice(0, 100);
+        throw Object.assign(new Error(detail), { expected: true });
+      }
       if (j.status !== 'done') throw new Error(`${j.status}: ${j.error}`);
       const outs = j.results.flatMap((r) => r.paths || (r.path ? [r.path] : []));
       ok(!outs.some((o) => / x(\.[^.]+)?$/.test(path.basename(o))), `duplicate name ${outs.map((o) => path.basename(o))}`);
       for (const o of outs) if (/\.pdf$/i.test(o) && fs.statSync(o).isFile()) magic(o, '%PDF-');
       await c.check(outs, j.results);
       detail = outs.map((o) => path.relative(OUT, o)).join(', ') || (j.results[0]?.note || '').split('\n')[0];
-    } catch (e) { status = 'FAIL'; detail = e.message; }
+    } catch (e) { if (!e.expected) { status = 'FAIL'; detail = e.message; } }
     const line = `${status} ${c.name.padEnd(34)} ${String(Date.now() - t0).padStart(6)}ms  ${detail}`.slice(0, 220);
     console.log(line);
     results.push({ name: c.name, status, detail });
@@ -204,6 +333,25 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     } catch (e) { status = 'FAIL'; detail = e.message; }
     console.log(`${status} ${'failed extract keeps folder'.padEnd(34)}        ${detail}`);
     results.push({ name: 'failed extract keeps folder', status, detail });
+  }
+  if (!only || only.test('extract merges into a folder')) {
+    const into = path.join(OUT, 'merge into');
+    fs.mkdirSync(into, { recursive: true });
+    fs.writeFileSync(path.join(into, 'keep.txt'), 'mine');
+    fs.writeFileSync(path.join(into, 'a.txt'), 'old');
+    let status = 'PASS', detail = '';
+    try {
+      const id = submit({ tool: 'extract-archive', files: [fx('archive.zip')], opts: {}, dest: { kind: 'folder', path: into } });
+      let j;
+      for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); }
+      ok(j.status === 'done', `${j.status}: ${j.error}`);
+      same(walk(into).join(','), 'a.txt,inner,inner/b.txt,keep.txt', 'merged folder');
+      ok(txt(path.join(into, 'keep.txt')) === 'mine' && txt(path.join(into, 'a.txt')) === 'alpha', 'files not merged');
+      ok(!files(OUT).some((f) => f.startsWith('.')), `staging left: ${files(OUT)}`);
+      detail = walk(into).join(', ');
+    } catch (e) { status = 'FAIL'; detail = e.message; }
+    console.log(`${status} ${'extract merges into a folder'.padEnd(34)}        ${detail}`);
+    results.push({ name: 'extract merges into a folder', status, detail });
   }
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);

@@ -15,6 +15,11 @@ Bundled engines
   Open CASCADE (occt-import-js) LGPL-2.1     Open Cascade SAS, kovacsv
   dxf-parser ............... MIT ; fflate ... MIT
   ag-psd ................... MIT ; docx ... MIT ; pptxgenjs ... MIT ; mammoth ... BSD-2 ; marked ... MIT ; SheetJS CE ... Apache-2.0
+  iconv-lite ............... MIT             Alexander Shtuchkin    https://github.com/pillarjs/iconv-lite  (with safer-buffer, MIT, Nikita Skovoroda)
+  jsonc-parser ............. MIT             Microsoft Corporation  https://github.com/microsoft/node-jsonc-parser
+  yaml ..................... ISC             Eemeli Aro             https://github.com/eemeli/yaml
+  smol-toml ................ BSD-3-Clause    Cynthia Rey            https://github.com/squirrelchat/smol-toml
+  saxes .................... ISC             Louis-Dominique Dubeau https://github.com/lddubeau/saxes  (with xmlchars, MIT)
   Electron / Chromium ...... MIT / BSD
   Noto Sans/Serif/Mono, Caveat, Dancing Script fonts ... SIL Open Font License 1.1
   Tesseract trained data (tessdata_best, tessdata_fast) ... Apache-2.0
@@ -26,3 +31,5 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
 
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil
+
+Portions of the format conversion logic are adapted from Filee by KnifeLemon (https://github.com/KnifeLemon/Filee), MIT License.
