@@ -31,6 +31,15 @@ const IMAGE_IN = ['image', 'raw'];
 const LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
 const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF (R12)'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
 const CAD3D_OUT = [['stl', 'STL'], ['obj', 'OBJ'], ['glb', 'GLB'], ['3mf', '3MF'], ['ply', 'PLY'], ['png', 'PNG render'], ['pdf', 'PDF render']];
+const VIDEO_OUT = [['mp4', 'MP4 (H.264)'], ['hevc', 'MP4 (HEVC)'], ['av1', 'MP4 (AV1)'], ['mov', 'MOV'], ['webm', 'WebM'], ['mkv', 'MKV'], ['avi', 'AVI'], ['wmv', 'WMV'], ['flv', 'FLV'], ['mpg', 'MPG (MPEG-2)'], ['ts', 'TS'], ['m2ts', 'M2TS (Blu-ray)'], ['vob', 'VOB (DVD)'], ['ogv', 'OGV (Theora)'], ['3gp', '3GP'], ['3g2', '3G2'], ['m4v', 'M4V'], ['dv', 'DV'], ['mxf', 'MXF'], ['gif', 'GIF'], ['apng', 'APNG (animated PNG)']];
+const AUDIO_OUT = [['mp3', 'MP3'], ['m4a', 'M4A (AAC)'], ['wav', 'WAV'], ['flac', 'FLAC'], ['alac', 'ALAC (Apple Lossless)'], ['aiff', 'AIFF'], ['ogg', 'OGG'], ['opus', 'Opus'], ['aac', 'AAC'], ['wma', 'WMA'], ['ac3', 'AC3'], ['eac3', 'E-AC-3'], ['m4b', 'M4B (audiobook)'], ['wv', 'WavPack'], ['tta', 'TTA'], ['caf', 'CAF'], ['au', 'AU'], ['w64', 'Wave64'], ['mp2', 'MP2'], ['mka', 'MKA'], ['weba', 'WEBA'], ['voc', 'VOC'], ['amr', 'AMR (voice)']];
+const LOSSY = ['mp3', 'm4a', 'aac', 'ogg', 'opus', 'wma', 'ac3', 'eac3', 'm4b', 'mp2', 'mka', 'weba'];
+const AUDIO_OPTS = (label) => [select('to', label, AUDIO_OUT), select('bitrate', 'Quality', [['', 'Auto'], ['320k', '320 kbps'], ['256k', '256 kbps'], ['192k', '192 kbps'], ['128k', '128 kbps'], ['96k', '96 kbps'], ['64k', '64 kbps']], '', { when: { to: LOSSY } }),
+  toggle('mono', 'Mono', false, { advanced: true }), select('rate', 'Sample rate', [['', 'Original'], ['48000', '48 kHz'], ['44100', '44.1 kHz'], ['22050', '22.05 kHz'], ['16000', '16 kHz'], ['8000', '8 kHz']], '', { advanced: true, when: { to: ['wav', 'w64'] } }),
+  select('depth', 'Bit depth', [['16', '16-bit'], ['24', '24-bit'], ['32', '32-bit'], ['float', '32-bit float'], ['8', '8-bit']], '16', { advanced: true, when: { to: ['wav', 'w64'] } })];
+const MEDIA_EXT = { hevc: 'mp4', av1: 'mp4', apng: 'png', alac: 'm4a' };
+const mediaExt = (o) => MEDIA_EXT[o.to] || o.to;
+const FFMPEG_TARGETS = new Set(['convert-video', 'extract-audio', 'convert-audio', 'gif-to-video']);
 
 const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
@@ -164,8 +173,8 @@ const TOOLS = [
   { id: 'screenshot-url', cat: 'image', name: 'Web page to image', desc: 'Full-length screenshot of a web page.', accepts: [], noFiles: true, ext: 'png',
     options: [text('url', 'Web address', '', { placeholder: 'https://example.com', required: true })], run: async (files, o, c) => [await office().urlToPdf(o.url, { format: 'png' }, c)] },
 
-  { id: 'convert-video', cat: 'media', name: 'Convert video', desc: 'MP4, MOV, WebM, MKV, HEVC, GIF and audio.', accepts: ['video'], ext: (o) => (o.to === 'hevc' ? 'mp4' : o.to),
-    options: [select('to', 'Convert to', [['mp4', 'MP4 (H.264)'], ['hevc', 'MP4 (HEVC)'], ['mov', 'MOV'], ['webm', 'WebM'], ['mkv', 'MKV'], ['avi', 'AVI'], ['gif', 'GIF'], ['mp3', 'MP3 audio'], ['m4a', 'M4A audio'], ['wav', 'WAV audio']]), choice('quality', 'Quality', [['high', 'High'], ['balanced', 'Balanced'], ['small', 'Small']], 'balanced'), select('height', 'Resolution', [['', 'Original'], ['2160', '4K'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']])],
+  { id: 'convert-video', cat: 'media', name: 'Convert video', desc: 'MP4, HEVC, MOV, WebM, MKV, AVI, WMV, MPG, GIF, APNG and audio.', accepts: ['video'], ext: mediaExt,
+    options: [select('to', 'Convert to', [...VIDEO_OUT, ['mp3', 'MP3 audio'], ['m4a', 'M4A audio'], ['wav', 'WAV audio']]), choice('quality', 'Quality', [['high', 'High'], ['balanced', 'Balanced'], ['small', 'Small']], 'balanced'), select('height', 'Resolution', [['', 'Original'], ['2160', '4K'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']], '', { when: { to: VIDEO_OUT.map(([v]) => v).filter((v) => !['vob', 'dv'].includes(v)) } })],
     run: each((f, o, c) => media().convertVideo(f, o, c)) },
   { id: 'compress-video', cat: 'media', name: 'Compress video', desc: 'Shrink for email, chat and uploads.', accepts: ['video'], ext: 'mp4', suffix: '-compressed',
     options: [choice('mode', 'Target', [['level', 'Quality'], ['size', 'File size']]), level(), num('targetMB', 'Target size (MB)', 25, { when: { mode: 'size' } }), select('height', 'Resolution', [['', 'Original'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']])],
@@ -175,16 +184,19 @@ const TOOLS = [
     run: each((f, o, c) => media().trim(f, o, c)) },
   { id: 'merge-media', cat: 'media', name: 'Merge clips', desc: 'Join clips end to end.', accepts: ['video', 'audio'], min: 2, ordered: true, ext: (o, files) => (files.some((f) => U.groupOf(f) === 'video') ? 'mp4' : o.to || 'mp3'), suffix: ' - merged',
     options: [select('to', 'Audio format', [['mp3', 'MP3'], ['m4a', 'M4A'], ['wav', 'WAV'], ['flac', 'FLAC']])], run: async (files, o, c) => [await media().merge(files, o, c)] },
-  { id: 'extract-audio', cat: 'media', name: 'Extract audio', desc: 'Save a video’s soundtrack.', accepts: ['video'], ext: (o) => o.to,
-    options: [select('to', 'Format', [['mp3', 'MP3'], ['m4a', 'M4A'], ['wav', 'WAV'], ['flac', 'FLAC'], ['ogg', 'OGG'], ['opus', 'Opus']]), select('bitrate', 'Quality', [['320k', '320 kbps'], ['192k', '192 kbps'], ['128k', '128 kbps']], '192k')],
-    run: each((f, o, c) => media().extractAudio(f, o, c)) },
-  { id: 'convert-audio', cat: 'media', name: 'Convert audio', desc: 'MP3, M4A, WAV, FLAC, OGG, Opus, AIFF and more.', accepts: ['audio'], ext: (o) => o.to,
-    options: [select('to', 'Convert to', [['mp3', 'MP3'], ['m4a', 'M4A'], ['wav', 'WAV'], ['flac', 'FLAC'], ['ogg', 'OGG'], ['opus', 'Opus'], ['aiff', 'AIFF'], ['wma', 'WMA'], ['ac3', 'AC3']]), select('bitrate', 'Quality', [['320k', '320 kbps'], ['256k', '256 kbps'], ['192k', '192 kbps'], ['128k', '128 kbps']], '192k'), toggle('mono', 'Mono', false, { advanced: true })],
-    run: each((f, o, c) => media().convertAudio(f, o, c)) },
+  { id: 'extract-audio', cat: 'media', name: 'Extract audio', desc: 'Save a video’s soundtrack.', accepts: ['video'], ext: mediaExt,
+    options: AUDIO_OPTS('Format'), run: each((f, o, c) => media().extractAudio(f, o, c)) },
+  { id: 'extract-subtitles', cat: 'media', name: 'Extract subtitles', desc: 'Save a video’s subtitle track as SRT, VTT or ASS.', accepts: ['video'], ext: (o) => o.to,
+    options: [choice('to', 'Format', [['srt', 'SRT'], ['vtt', 'VTT'], ['ass', 'ASS']])], run: each((f, o, c) => media().extractSubtitles(f, o, c)) },
+  { id: 'convert-audio', cat: 'media', name: 'Convert audio', desc: 'MP3, M4A, WAV, FLAC, ALAC, OGG, Opus, AIFF, WMA and more.', accepts: ['audio'], ext: mediaExt,
+    options: AUDIO_OPTS('Convert to'), run: each((f, o, c) => media().convertAudio(f, o, c)) },
   { id: 'compress-audio', cat: 'media', name: 'Compress audio', desc: 'Lower bitrate, smaller file.', accepts: ['audio'], suffix: '-compressed', ext: (o, files) => (['mp3', 'm4a', 'ogg', 'opus', 'aac'].includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'mp3'), options: [level()], run: each((f, o, c) => media().compressAudio(f, o, c)) },
   { id: 'video-to-gif', cat: 'media', name: 'Video to GIF', desc: 'A moment as a crisp GIF.', accepts: ['video'], ext: 'gif',
     options: [{ key: 'start', type: 'time', label: 'Start', default: '0:00' }, num('duration', 'Seconds', 5), range('fps', 'Frames per second', 12, 5, 30), num('width', 'Width (px)', 480)],
     run: each((f, o, c) => media().toGif(f, o, c)) },
+  { id: 'gif-to-video', cat: 'media', name: 'GIF to video', desc: 'Turn an animated GIF into a much smaller MP4, WebM or MOV.', accepts: [], extAccept: ['gif'], ext: (o) => o.to,
+    options: [choice('to', 'Convert to', [['mp4', 'MP4'], ['webm', 'WebM'], ['mov', 'MOV']]), choice('quality', 'Quality', [['high', 'High'], ['balanced', 'Balanced'], ['small', 'Small']], 'balanced')],
+    run: each((f, o, c) => media().convertVideo(f, o, c)) },
   { id: 'mute-video', cat: 'media', name: 'Mute video', desc: 'Remove the sound, no re-encode.', accepts: ['video'], suffix: '-muted', run: each((f, o, c) => media().mute(f, o, c)) },
   { id: 'resize-video', cat: 'media', name: 'Resize video', desc: '4K, 1080p, 720p and more.', accepts: ['video'], suffix: '-resized',
     options: [select('height', 'Resolution', [['2160', '4K'], ['1080', '1080p'], ['720', '720p'], ['480', '480p'], ['360', '360p']], '720')], run: each((f, o, c) => media().resizeVideo(f, o, c)) },
@@ -192,12 +204,34 @@ const TOOLS = [
     options: [choice('angle', 'Rotate', [['90', '90° right'], ['180', '180°'], ['270', '90° left']], '90'), choice('flip', 'Flip', [['none', 'None'], ['horizontal', 'Mirror'], ['vertical', 'Upside down']])], run: each((f, o, c) => media().rotateVideo(f, o, c)) },
   { id: 'speed-media', cat: 'media', name: 'Change speed', desc: 'Faster or slower, pitch kept.', accepts: ['video', 'audio'], suffix: '-speed',
     options: [select('factor', 'Speed', [['0.5', '0.5×'], ['0.75', '0.75×'], ['1.25', '1.25×'], ['1.5', '1.5×'], ['2', '2×'], ['3', '3×']], '1.5')], run: each((f, o, c) => media().speed(f, o, c)) },
-  { id: 'video-frames', cat: 'media', name: 'Video to images', desc: 'Frames at an interval or a fixed count.', accepts: ['video'], save: 'folder', suffix: ' - frames',
-    options: [choice('mode', 'Save', [['every', 'Every N seconds'], ['count', 'Fixed number']]), num('every', 'Seconds between', 1, { when: { mode: 'every' } }), num('count', 'Frames', 12, { when: { mode: 'count' } }), choice('format', 'Format', [['jpg', 'JPG'], ['png', 'PNG']])],
+  { id: 'video-frames', cat: 'media', name: 'Video to images', desc: 'Frames at an interval, a fixed count or every frame.', accepts: ['video'], save: 'folder', suffix: ' - frames',
+    options: [choice('mode', 'Save', [['every', 'Every N seconds'], ['count', 'Fixed number'], ['all', 'Every frame']]), num('every', 'Seconds between', 1, { when: { mode: 'every' } }), num('count', 'Frames', 12, { when: { mode: 'count' } }), choice('format', 'Format', [['jpg', 'JPG'], ['png', 'PNG']])],
     run: each((f, o, c) => media().frames(f, o, c)) },
   { id: 'burn-subtitles', cat: 'media', name: 'Add subtitles', desc: 'Burn SRT, VTT or ASS captions into video.', accepts: ['video'], suffix: '-subtitled',
     options: [file('subtitles', 'Subtitle file', [{ name: 'Subtitles', extensions: ['srt', 'vtt', 'ass', 'ssa'] }], { required: true }), range('size', 'Text size', 22, 12, 48)], run: each((f, o, c) => media().burnSubtitles(f, o, c)) },
   { id: 'normalize-audio', cat: 'media', name: 'Level loudness', desc: 'Even out volume to −16 LUFS.', accepts: ['audio', 'video'], suffix: '-normalized', run: each((f, o, c) => media().normalize(f, o, c)) },
+  { id: 'volume-media', cat: 'media', name: 'Change volume', desc: 'Louder or quieter, without clipping.', accepts: ['audio', 'video'], suffix: '-volume',
+    options: [choice('unit', 'Change by', [['db', 'Decibels'], ['percent', 'Percent']]), range('db', 'Volume', 6, -30, 30, { unit: 'dB', when: { unit: 'db' } }), range('percent', 'Volume', 150, 10, 400, { unit: '%', when: { unit: 'percent' } })],
+    run: each((f, o, c) => media().volume(f, o, c)) },
+  { id: 'fade-audio', cat: 'media', name: 'Fade in & out', desc: 'A smooth start and end for the sound.', accepts: ['audio', 'video'], suffix: '-faded',
+    options: [num('fadeIn', 'Fade in (seconds)', 2, { min: 0 }), num('fadeOut', 'Fade out (seconds)', 2, { min: 0 })], run: each((f, o, c) => media().fade(f, o, c)) },
+  { id: 'pitch-audio', cat: 'media', name: 'Change pitch', desc: 'Higher or lower, at the same speed.', accepts: ['audio', 'video'], suffix: '-pitch',
+    options: [range('semitones', 'Semitones', 2, -12, 12)], run: each((f, o, c) => media().pitch(f, o, c)) },
+  { id: 'loop-media', cat: 'media', name: 'Loop', desc: 'Play a clip several times in a row.', accepts: ['video', 'audio'], suffix: '-looped',
+    options: [select('times', 'Play', [['2', '2 times'], ['3', '3 times'], ['4', '4 times'], ['5', '5 times'], ['10', '10 times']], '2')], run: each((f, o, c) => media().loop(f, o, c)) },
+  { id: 'reverse-media', cat: 'media', name: 'Reverse', desc: 'Play video and sound backwards.', accepts: ['video', 'audio'], suffix: '-reversed', run: each((f, o, c) => media().reverse(f, o, c)) },
+  { id: 'crop-video', cat: 'media', name: 'Crop video', desc: 'Square, portrait, story, wide or exact pixels.', accepts: ['video'], suffix: '-cropped',
+    options: [select('aspect', 'Shape', [['1:1', 'Square'], ['4:5', 'Portrait 4:5'], ['9:16', 'Story 9:16'], ['16:9', 'Wide 16:9'], ['custom', 'Exact pixels']]), num('left', 'Left', 0, { when: { aspect: 'custom' } }), num('top', 'Top', 0, { when: { aspect: 'custom' } }), num('width', 'Width', 640, { when: { aspect: 'custom' } }), num('height', 'Height', 360, { when: { aspect: 'custom' } })],
+    run: each((f, o, c) => media().cropVideo(f, o, c)) },
+  { id: 'blur-video', cat: 'media', name: 'Blur area', desc: 'Hide a logo, face or number plate.', accepts: ['video'], suffix: '-blurred',
+    options: [choice('mode', 'Effect', [['blur', 'Blur'], ['pixelate', 'Pixelate']]), num('left', 'Left', 20), num('top', 'Top', 20), num('width', 'Width', 200), num('height', 'Height', 100), range('strength', 'Strength', 60, 1, 100)],
+    run: each((f, o, c) => media().blurArea(f, o, c)) },
+  { id: 'add-audio', cat: 'media', name: 'Add audio to video', desc: 'Replace a video’s sound or mix in music.', accepts: ['video', 'audio'], min: 2, max: 2, suffix: '-with-audio', ext: (o, files) => U.ext(files.find((f) => U.groupOf(f) === 'video') || files[0] || ''),
+    options: [choice('mode', 'Audio', [['replace', 'Replace'], ['mix', 'Mix with original']]), toggle('shortest', 'End with the shorter file', false)],
+    run: async (files, o, c) => [await media().addAudio(files, o, c)] },
+  { id: 'gif-speed', cat: 'media', name: 'GIF speed', desc: 'Speed up or slow down an animated GIF or WebP.', accepts: [], extAccept: ['gif', 'webp'], suffix: '-speed',
+    options: [select('speed', 'Speed', [['0.25', '0.25×'], ['0.5', '0.5×'], ['0.75', '0.75×'], ['1.5', '1.5×'], ['2', '2×'], ['3', '3×'], ['4', '4×']], '2')], run: each((f, o, c) => media().animation(f, o, c)) },
+  { id: 'gif-reverse', cat: 'media', name: 'Reverse GIF', desc: 'Play an animated GIF or WebP backwards.', accepts: [], extAccept: ['gif', 'webp'], suffix: '-reversed', run: each((f, o, c) => media().animation(f, { reverse: true }, c)) },
   { id: 'images-to-video', cat: 'media', name: 'Slideshow', desc: 'MP4 from photos, with optional music.', accepts: IMAGE_IN, min: 1, ordered: true, ext: 'mp4', stem: 'Slideshow',
     options: [range('seconds', 'Seconds each', 3, 1, 15, { unit: 's' }), select('size', 'Size', [['1920x1080', '1080p landscape'], ['1080x1920', '1080p portrait'], ['1080x1080', 'Square']]), file('audio', 'Music (optional)', [{ name: 'Audio', extensions: ['mp3', 'm4a', 'wav', 'aac', 'ogg', 'flac'] }])],
     run: async (files, o, c) => [await media().imagesToVideo(files, o, c)] },
@@ -305,12 +339,12 @@ const WHEELS = {
     tools: [W('enhance-photo', 'Enhance', 'Auto'), W('develop-raw', 'Develop', 'Options', {}, { ask: true }), W('strip-metadata', 'Clean', 'No EXIF'), W('image-to-text', 'Text', 'OCR')],
   },
   video: {
-    convert: [W('convert-video', 'MP4', 'Universal', { to: 'mp4' }), W('convert-video', 'MOV', 'Apple', { to: 'mov' }), W('convert-video', 'WebM', 'Web', { to: 'webm' }), W('video-to-gif', 'GIF', 'Clip', {}, { full: true }), W('extract-audio', 'MP3', 'Audio', { to: 'mp3' }), W('convert-video', 'HEVC', 'Smaller', { to: 'hevc' }), W('convert-video', 'MKV', 'Archive', { to: 'mkv' }), W('extract-audio', 'WAV', 'Audio', { to: 'wav' })],
-    tools: [W('compress-video', 'Compress', 'Smaller'), W('trim-media', 'Trim', 'Cut'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' })],
+    convert: [W('convert-video', 'MP4', 'Universal', { to: 'mp4' }), W('convert-video', 'MOV', 'Apple', { to: 'mov' }), W('convert-video', 'WebM', 'Web', { to: 'webm' }), W('video-to-gif', 'GIF', 'Clip', {}, { full: true }), W('extract-audio', 'MP3', 'Audio', { to: 'mp3' }), W('convert-video', 'HEVC', 'Smaller', { to: 'hevc' }), W('convert-video', 'MKV', 'Archive', { to: 'mkv' }), W('extract-audio', 'M4A', 'Audio', { to: 'm4a' }), W('extract-audio', 'WAV', 'Audio', { to: 'wav' })],
+    tools: [W('compress-video', 'Compress', 'Smaller'), W('trim-media', 'Trim', 'Cut'), W('crop-video', 'Crop', 'Shape'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('volume-media', 'Volume', 'Louder')],
   },
   audio: {
-    convert: [W('convert-audio', 'MP3', 'Universal', { to: 'mp3' }), W('convert-audio', 'M4A', 'Apple', { to: 'm4a' }), W('convert-audio', 'WAV', 'Studio', { to: 'wav' }), W('convert-audio', 'FLAC', 'Lossless', { to: 'flac' }), W('convert-audio', 'AIFF', 'Mac', { to: 'aiff' }), W('convert-audio', 'OGG', 'Open', { to: 'ogg' }), W('convert-audio', 'Opus', 'Voice', { to: 'opus' })],
-    tools: [W('compress-audio', 'Compress', 'Smaller'), W('normalize-audio', 'Level', 'Loudness'), W('trim-media', 'Trim', 'Cut'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' })],
+    convert: [W('convert-audio', 'MP3', 'Universal', { to: 'mp3' }), W('convert-audio', 'M4A', 'Apple', { to: 'm4a' }), W('convert-audio', 'WAV', 'Studio', { to: 'wav' }), W('convert-audio', 'FLAC', 'Lossless', { to: 'flac' }), W('convert-audio', 'ALAC', 'iTunes', { to: 'alac' }), W('convert-audio', 'AIFF', 'Mac', { to: 'aiff' }), W('convert-audio', 'OGG', 'Open', { to: 'ogg' }), W('convert-audio', 'Opus', 'Voice', { to: 'opus' }), W('convert-audio', 'WMA', 'Windows', { to: 'wma' })],
+    tools: [W('compress-audio', 'Compress', 'Smaller'), W('normalize-audio', 'Level', 'Loudness'), W('volume-media', 'Volume', 'Louder'), W('trim-media', 'Trim', 'Cut'), W('fade-audio', 'Fade', 'In & out'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('pitch-audio', 'Pitch', 'Semitones'), W('loop-media', 'Loop', 'Repeat'), W('reverse-media', 'Reverse', 'Backwards')],
   },
   doc: {
     convert: [W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'DOCX', 'Word', { to: 'docx' }), W('convert-document', 'MD', 'Markdown', { to: 'md' }), W('convert-document', 'TXT', 'Text', { to: 'txt' }), W('convert-document', 'HTML', 'Web', { to: 'html' }), W('convert-document', 'EPUB', 'eBook', { to: 'epub' }), W('convert-document', 'RTF', 'Rich text', { to: 'rtf' })],
@@ -365,8 +399,9 @@ const MULTI = {
   audio: [W('merge-media', 'Merge', 'One track')],
   sheet: [W('merge-sheets', 'Merge', 'One workbook')],
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
+  media: [W('add-audio', 'Soundtrack', 'Replace', { mode: 'replace' }), W('add-audio', 'Mix', 'Add music', { mode: 'mix' }), W('merge-media', 'Merge', 'One video')],
 };
-const SINGLE_OUTPUT = new Set(['create-archive', 'merge-media', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
+const SINGLE_OUTPUT = new Set(['create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
 const groupsOf = (files) => [...new Set(files.map(U.groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);
@@ -384,17 +419,18 @@ function wheelsFor(files) {
   const gs = groupsOf(files);
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
   const base = WHEELS[g] || WHEELS.any;
-  const ok = (w) => accepts(get(w.tool), files);
+  const ok = (w) => accepts(get(w.tool), files) && (!FFMPEG_TARGETS.has(w.tool) || !w.opts?.to || media().supports(w.opts.to));
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
   if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
   const multi = [...(MULTI[g] || [])];
   if (g === 'mixed' && gs.every((x) => ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout'].includes(x))) multi.push(...MULTI.mixed);
+  if (g === 'mixed' && gs.every((x) => x === 'video' || x === 'audio')) multi.push(...MULTI.media);
   const all = W('create-archive', 'ZIP', 'All files', { format: 'zip' });
   const convert = g === 'mixed' ? [...multi, all] : [...base.convert.slice(0, 7).map(quick), all];
   const tools = [...multi, ...(g === 'mixed' ? [] : base.tools.filter((w) => !get(w.tool)?.editor).slice(0, 5)), all];
   return { convert: dedupe(convert.filter(ok)).slice(0, 10), tools: dedupe(tools.filter(ok)).slice(0, 10) };
 }
-const catalog = () => TOOLS.map(({ run, ext, single, ...meta }) => meta);
+const catalog = () => TOOLS.map(({ run, ext, single, ...meta }) => (FFMPEG_TARGETS.has(meta.id) ? { ...meta, options: meta.options.map((o) => (o.key === 'to' ? { ...o, choices: o.choices.filter(([v]) => media().supports(v)) } : o)) } : meta));
 function archiveStem(f) { return path.basename(f).replace(/\.(tar\.(gz|bz2|xz|zst)|t[gbx]z|tbz2|[^.]+)$/i, '') || 'Extracted'; }
 function suggest(id, files, opts = {}) {
   const t = get(id);
