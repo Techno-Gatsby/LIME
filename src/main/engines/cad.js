@@ -16,9 +16,25 @@ const hex = (c) => `#${(c >>> 0 & 0xffffff).toString(16).padStart(6, '0')}`;
 const P = (p) => ({ x: Number(p?.x) || 0, y: Number(p?.y) || 0 });
 const deg = (d) => (d * Math.PI) / 180;
 
-function fromDxf(dxf) {
+const DWG_LW = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211];
+const dxfWeight = (v) => (v == null || v === -1 ? 'layer' : v === -2 ? 'block' : v < 0 ? null : v / 100);
+const dwgWeight = (v) => (v == null || v === 29 ? 'layer' : v === 30 ? 'block' : v < 24 ? DWG_LW[v] / 100 : null);
+const patterns = (list, of) => Object.fromEntries(list.map((t) => [String(t.name).toUpperCase(), (of(t) || []).map(Number)]));
+function dxfLayers(text) {
+  const out = {}, L = text.split(/\r?\n/);
+  let table = false, cur = null;
+  for (let i = 0; i + 1 < L.length; i += 2) {
+    const c = L[i].trim(), v = L[i + 1].trim();
+    if (c === '0') { if (v === 'ENDTAB') table = false; cur = table && v === 'LAYER' ? {} : null; } else if (c === '2' && !table && v === 'LAYER' && L[i - 1]?.trim() === 'TABLE') table = true;
+    else if (cur) { if (c === '2') out[v] = cur; else if (c === '6') cur.lt = v; else if (c === '370') cur.lw = dxfWeight(Number(v)); }
+    if (v === 'ENDSEC' && c === '0') table = false;
+  }
+  return out;
+}
+function fromDxf(dxf, text = '') {
+  const extra = dxfLayers(text);
   const conv = (e) => {
-    const base = { layer: e.layer || '0', color: e.colorIndex === 256 || e.colorIndex == null ? null : e.colorIndex === 0 ? 'block' : e.color != null && e.colorIndex == null ? { rgb: e.color } : e.colorIndex, rgb: e.color != null && (e.colorIndex == null || e.colorIndex === 256 ? false : true) ? e.color : null };
+    const base = { lw: dxfWeight(e.lineweight), lt: e.lineType || 'BYLAYER', lts: e.lineTypeScale || 1, layer: e.layer || '0', color: e.colorIndex === 256 || e.colorIndex == null ? null : e.colorIndex === 0 ? 'block' : e.color != null && e.colorIndex == null ? { rgb: e.color } : e.colorIndex, rgb: e.color != null && (e.colorIndex == null || e.colorIndex === 256 ? false : true) ? e.color : null };
     switch (e.type) {
       case 'LINE': return { ...base, t: 'line', a: P(e.vertices[0]), b: P(e.vertices[1]) };
       case 'LWPOLYLINE': case 'POLYLINE': return { ...base, t: 'poly', pts: (e.vertices || []).map((v) => ({ ...P(v), b: v.bulge || 0 })), closed: !!e.shape || !!(e.closed) };
@@ -40,12 +56,12 @@ function fromDxf(dxf) {
   const blocks = {};
   for (const [name, b] of Object.entries(dxf.blocks || {})) blocks[name] = { base: P(b.position), ents: (b.entities || []).map(conv).filter(Boolean) };
   const layers = {};
-  for (const [name, l] of Object.entries(dxf.tables?.layer?.layers || {})) layers[name] = { color: l.colorIndex != null ? Math.abs(l.colorIndex) : 7, rgb: null, hidden: l.visible === false || l.frozen === true || l.colorIndex < 0 };
-  return { ents: (dxf.entities || []).map(conv).filter(Boolean), blocks, layers, units: dxf.header?.$INSUNITS };
+  for (const [name, l] of Object.entries(dxf.tables?.layer?.layers || {})) layers[name] = { color: l.colorIndex != null ? Math.abs(l.colorIndex) : 7, rgb: null, hidden: l.visible === false || l.frozen === true || l.colorIndex < 0, lw: extra[name]?.lw === 'layer' ? null : extra[name]?.lw ?? null, lt: extra[name]?.lt || 'CONTINUOUS' };
+  return { ents: (dxf.entities || []).map(conv).filter(Boolean), blocks, layers, units: dxf.header?.$INSUNITS, ltypes: patterns(Object.values(dxf.tables?.lineType?.lineTypes || {}), (t) => t.pattern), ltscale: Number(dxf.header?.$LTSCALE) || 1 };
 }
 function fromDwg(db) {
   const conv = (e) => {
-    const base = { layer: e.layer || '0', color: e.colorIndex === 256 || e.colorIndex == null ? null : e.colorIndex === 0 ? 'block' : e.colorIndex, rgb: e.colorIndex === 256 || e.colorIndex == null || e.colorIndex < 257 ? null : e.color };
+    const base = { lw: dwgWeight(e.lineweight), lt: e.lineType || 'BYLAYER', lts: e.lineTypeScale || 1, layer: e.layer || '0', color: e.colorIndex === 256 || e.colorIndex == null ? null : e.colorIndex === 0 ? 'block' : e.colorIndex, rgb: e.colorIndex === 256 || e.colorIndex == null || e.colorIndex < 257 ? null : e.color };
     if (e.isVisible === false) return null;
     switch (e.type) {
       case 'LINE': return { ...base, t: 'line', a: P(e.startPoint), b: P(e.endPoint) };
@@ -71,10 +87,10 @@ function fromDwg(db) {
   const blocks = {};
   for (const b of db.tables?.BLOCK_RECORD?.entries || []) if (!/^\*(Model|Paper)_Space/i.test(b.name)) blocks[b.name] = { base: P(b.basePoint), ents: (b.entities || []).map(conv).filter(Boolean) };
   const layers = {};
-  for (const l of db.tables?.LAYER?.entries || []) layers[l.name] = { color: Math.abs(l.colorIndex ?? 7), rgb: l.colorIndex > 256 ? l.color : null, hidden: !!l.off || !!l.frozen || l.colorIndex < 0 };
+  for (const l of db.tables?.LAYER?.entries || []) { const lw = dwgWeight(l.lineweight); layers[l.name] = { color: Math.abs(l.colorIndex ?? 7), rgb: l.colorIndex > 256 ? l.color : null, hidden: !!l.off || !!l.frozen || l.colorIndex < 0, lw: typeof lw === 'number' ? lw : null, lt: l.lineType || 'CONTINUOUS' }; }
   const model = db.tables?.BLOCK_RECORD?.entries?.find((b) => /^\*Model_Space$/i.test(b.name));
   const ents = (db.entities || []).filter((e) => !model || !e.ownerBlockRecordSoftId || e.ownerBlockRecordSoftId === model.handle || !blocks[e.ownerBlockRecordSoftId]).filter((e) => e.type !== 'VIEWPORT');
-  return { ents: ents.map(conv).filter(Boolean), blocks, layers, units: db.header?.INSUNITS };
+  return { ents: ents.map(conv).filter(Boolean), blocks, layers, units: db.header?.INSUNITS, ltypes: patterns(db.tables?.LTYPE?.entries || [], (t) => (t.pattern || t.dashes || []).map((p) => (typeof p === 'number' ? p : p?.elementLength ?? p?.length ?? 0))), ltscale: Number(db.header?.LTSCALE) || 1 };
 }
 function hatchLoop(bp) {
   if (bp.polylineVertices?.length || bp.vertices?.length) return (bp.polylineVertices || bp.vertices).map(P);
@@ -215,13 +231,17 @@ function flatten(model) {
     return l ? (l.rgb != null ? { rgb: l.rgb } : l.color) : 7;
   };
   const resolve = (c) => (c && typeof c === 'object' ? c.rgb : typeof c === 'number' && c > 256 ? c : aci(c));
-  const walk = (ents, m, inherited, depth) => {
+  const weightOf = (e, inh) => (e.lw === 'layer' ? model.layers[e.layer]?.lw ?? null : e.lw === 'block' ? inh.lw : e.lw ?? null);
+  const typeOf = (e, inh) => (/^bylayer$/i.test(e.lt || 'BYLAYER') ? model.layers[e.layer]?.lt || 'CONTINUOUS' : /^byblock$/i.test(e.lt) ? inh.lt : e.lt);
+  const walk = (ents, m, inh, depth) => {
     for (const e of ents) {
       if (model.layers[e.layer]?.hidden || /^defpoints$/i.test(e.layer)) continue;
-      const col = colorOf(e, inherited);
+      const col = colorOf(e, inh.col);
       const rgb = resolve(col);
       const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
-      const push = (pts, closed, fill) => pts.length > 1 && out.push({ k: 'path', pts: pts.map((p) => ap(m, p)), closed, fill, rgb, aci: typeof col === 'number' ? col : null, layer: e.layer });
+      const lw = weightOf(e, inh), lt = typeOf(e, inh), pat = model.ltypes?.[String(lt).toUpperCase()];
+      const dash = pat?.length >= 2 && pat.some((v) => v < 0) && pat.every(Number.isFinite) ? pat.map((v) => v * (model.ltscale || 1) * (e.lts || 1) * scale) : null;
+      const push = (pts, closed, fill) => pts.length > 1 && out.push({ k: 'path', pts: pts.map((p) => ap(m, p)), closed, fill, rgb, lw, dash: fill ? null : dash, aci: typeof col === 'number' ? col : null, layer: e.layer });
       switch (e.t) {
         case 'line': push([e.a, e.b]); break;
         case 'poly': {
@@ -263,16 +283,16 @@ function flatten(model) {
           if (!b || depth > 12) break;
           for (let r = 0; r < (e.rows || 1); r++) for (let c = 0; c < (e.cols || 1); c++) {
             const t = mul(mul(mul(m, [1, 0, 0, 1, e.p.x, e.p.y]), [Math.cos(e.rot), Math.sin(e.rot), -Math.sin(e.rot), Math.cos(e.rot), 0, 0]), [e.sx, 0, 0, e.sy, c * (e.cs || 0), r * (e.rs || 0)]);
-            walk(b.ents, mul(t, [1, 0, 0, 1, -b.base.x, -b.base.y]), col, depth + 1);
+            walk(b.ents, mul(t, [1, 0, 0, 1, -b.base.x, -b.base.y]), { col, lw, lt }, depth + 1);
           }
-          if (e.attribs?.length) walk(e.attribs, m, col, depth + 1);
+          if (e.attribs?.length) walk(e.attribs, m, { col, lw, lt }, depth + 1);
           break;
         }
         default:
       }
     }
   };
-  walk(model.ents, ident, 7, 0);
+  walk(model.ents, ident, { col: 7, lw: null, lt: 'CONTINUOUS' }, 0);
   return out;
 }
 function bounds(it) {
@@ -330,10 +350,19 @@ async function readDrawing(p) {
   if (/^AutoCAD Binary DXF/.test(text)) throw new Error('Binary DXF isn’t supported. Save it as ASCII DXF.');
   const parser = new Parser();
   parser.registerEntityHandler(DxfHatch);
-  try { return fromDxf(parser.parseSync(text)); } catch (e) { throw new Error(`This DXF couldn’t be read: ${e.message}`); }
+  try { return fromDxf(parser.parseSync(text), text); } catch (e) { throw new Error(`This DXF couldn’t be read: ${e.message}`); }
 }
 
 const fmt = (n) => (Math.round(n * 1000) / 1000).toString();
+function dashes(it, perMm) {
+  if (!it.dash) return null;
+  const period = it.dash.reduce((s, v) => s + Math.abs(v), 0);
+  let len = 0;
+  for (let i = 1; i < it.pts.length; i++) len += Math.hypot(it.pts[i].x - it.pts[i - 1].x, it.pts[i].y - it.pts[i - 1].y);
+  if (period / perMm < 0.8 || len / period > 20000) return null;
+  const d = it.dash.map(Math.abs);
+  return it.dash[0] < 0 ? [0, ...d] : d.length % 2 ? [...d, ...d] : d;
+}
 const mix = (a, b, t) => `#${[1, 3, 5].map((k) => Math.round(parseInt(a.slice(k, k + 2), 16) * (1 - t) + parseInt(b.slice(k, k + 2), 16) * t).toString(16).padStart(2, '0')).join('')}`;
 function drawingSvg(items, opts = {}) {
   const ext = extents(items);
@@ -341,14 +370,15 @@ function drawingSvg(items, opts = {}) {
   const pad = Math.max(w, h) * 0.03;
   const dark = opts.background === 'dark';
   const ink = (it) => { const c = it.rgb ?? 0; if (opts.mono) return dark ? '#e8f0dd' : '#1a1f16'; return dark ? (c === 0 ? '#e8f0dd' : hex(c)) : hex(onLight(c)); };
-  const stroke = Math.max(w, h) / (opts.width || 2000) * (opts.lineWidth || 1);
+  const stroke = Math.max(w, h) / (opts.width || 2000) * (opts.lineWidth || 1), unit = Math.max(w, h) / 400;
   const tx = (p) => `${fmt(p.x - ext.x0 + pad)},${fmt(ext.y1 - p.y + pad)}`;
   const parts = [];
   for (const it of items) {
     if (it.k === 'path') {
       const d = it.sub ? it.sub.map((l) => `M${l.map(tx).join('L')}Z`).join('') : `M${it.pts.map(tx).join('L')}${it.closed ? 'Z' : ''}`;
       const fill = it.tint ? mix(ink(it), dark ? '#151913' : '#ffffff', 0.75) : ink(it);
-      parts.push(`<path d="${d}" ${it.fill ? `fill="${fill}" stroke="none"` : `fill="none" stroke="${ink(it)}"`}/>`);
+      const dash = dashes(it, unit);
+      parts.push(`<path d="${d}" ${it.fill ? `fill="${fill}" stroke="none"` : `fill="none" stroke="${ink(it)}" stroke-width="${fmt(Math.max(it.lw ?? 0.18, 0.1) * unit * (opts.lineWidth || 1))}"${dash ? ` stroke-dasharray="${dash.map(fmt).join(' ')}"` : ''}`}/>`);
     } else if (it.k === 'point') {
       const [x, y] = tx(it.p).split(',');
       parts.push(`<circle cx="${x}" cy="${y}" r="${fmt(stroke * 1.5)}" fill="${ink(it)}"/>`);
@@ -399,7 +429,8 @@ async function drawingPdf(items, out, opts = {}) {
   for (const it of items) {
     if (it.k === 'path') {
       const d = (it.sub || [it.pts]).map((l) => `M${l.map((p) => `${fmt(X(p))} ${fmt(PH - Y(p))}`).join(' L')}${it.closed ? ' Z' : ''}`).join(' ');
-      page.drawSvgPath(d, { x: 0, y: PH, ...(it.fill ? { color: col(it) } : { borderColor: col(it), borderWidth: 0.5 }) });
+      const dash = dashes(it, 72 / 25.4 / s);
+      page.drawSvgPath(d, { x: 0, y: PH, ...(it.fill ? { color: col(it) } : { borderColor: col(it), borderWidth: Math.max(it.lw ?? 0.18, 0.1) * 72 / 25.4, borderLineCap: 1, ...(dash ? { borderDashArray: dash.map((v) => v * s) } : {}) }) });
     } else if (it.k === 'point') page.drawCircle({ x: X(it.p), y: Y(it.p), size: 0.8, color: col(it) });
     else if (it.k === 'text') {
       const size = Math.max(1, it.h * s);

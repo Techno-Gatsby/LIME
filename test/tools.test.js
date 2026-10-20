@@ -185,6 +185,21 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const [to, chk] of [['pdf', async (o) => pages(o, 1)], ['svg', (o) => ok(txt(o).includes('LIME CAD TEST'), 'svg text')], ['png', async (o) => fmt(o, 'png')], ['dxf', (o) => ok(txt(o).includes('ENTITIES') && txt(o).includes('LIME CAD TEST'), 'dxf')], ['ai', (o) => ok(read(o).subarray(0, 5).toString() === '%PDF-', 'ai')], ['eps', (o) => ok(/^%!PS/.test(txt(o)) || read(o).readUInt32BE(0) === 0xc5d0d3c6, 'eps')]]) {
     T(`dxf→${to}`, 'convert-cad', ['test.dxf'], { to, sheet: 'a3', mono: false, size: 2000 }, async ([o]) => chk(o));
   }
+  T('dxf line weights and types', 'convert-cad', ['lines.dxf'], { to: 'svg' }, ([o]) => {
+    const paths = [...txt(o).matchAll(/<path d="M([\d.]+),([\d.]+)[^"]*"[^>]*stroke-width="([\d.]+)"([^>]*)>/g)].map((m) => ({ y: +m[2], w: +m[3], dash: /stroke-dasharray="([^"]+)"/.exec(m[4])?.[1] }));
+    ok(paths.length === 3, `paths ${JSON.stringify(paths)}`);
+    const [thin, dashed, thick] = [...paths].sort((a, b) => a.y - b.y);
+    ok(Math.abs(thick.w / thin.w - 70 / 13) < 0.05, `weights ${thick.w} vs ${thin.w}`);
+    ok(dashed.dash === '6.35 3.175' && !thick.dash && !thin.dash, `dashes ${JSON.stringify(paths)}`);
+  });
+  T('dxf line types in pdf', 'convert-cad', ['lines.dxf'], { to: 'pdf', sheet: 'a4' }, async ([o]) => {
+    const { PDFDocument, PDFArray, decodePDFRawStream } = require('pdf-lib');
+    const d = await PDFDocument.load(read(o)), c = d.getPages()[0].node.Contents(), list = c instanceof PDFArray ? c.asArray().map((x) => d.context.lookup(x)) : [c];
+    const ops = list.map((x) => Buffer.from(decodePDFRawStream(x).decode()).toString('latin1')).join('\n');
+    const widths = [...new Set([...ops.matchAll(/([\d.]+) w\b/g)].map((m) => +m[1]))].sort((x, y) => x - y);
+    ok(/\[\s*[\d.]+\s+[\d.]+\s*\]\s*[\d.]+\s+d/.test(ops), 'no dash pattern');
+    ok(widths.length >= 2 && Math.abs(widths[widths.length - 1] / widths[0] - 70 / 13) < 0.05, `widths ${widths}`);
+  });
   T('dxf hatches fill, keep holes, tint patterns', 'convert-cad', ['hatch.dxf'], { to: 'png', size: 2000, mono: false }, async ([o]) => {
     const { data, info } = await sharp(o).removeAlpha().raw().toBuffer({ resolveWithObject: true });
     const k = info.width / 318, px = (x, y) => { const i = (Math.round((100 - y + 9) * k) * info.width + Math.round((x + 9) * k)) * 3; return [data[i], data[i + 1], data[i + 2]]; };
