@@ -30,16 +30,21 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 let incoming = new Set(), incomingT = null;
 const takeFiles = (list) => {
-  list.filter((f) => f && path.isAbsolute(f) && fs.existsSync(f) && path.resolve(f) !== path.resolve(process.execPath)).forEach((f) => incoming.add(f));
+  const ok = (list || []).filter((f) => f && path.isAbsolute(f) && fs.existsSync(f) && path.resolve(f) !== path.resolve(process.execPath));
+  ok.forEach((f) => incoming.add(f));
+  if (!incoming.size) return ok;
   clearTimeout(incomingT);
   incomingT = setTimeout(() => { const files = [...incoming]; incoming = new Set(); if (app.isReady()) showWheel(files.length ? files : null); }, 300);
+  return ok;
 };
-const argFiles = (argv) => argv.slice(1).filter((a) => !a.startsWith('-') && a !== '.');
+const argFiles = (argv) => (argv || []).slice(1).filter((a) => typeof a === 'string' && !a.startsWith('-') && a !== '.' && path.resolve(a) !== app.getAppPath());
 app.on('open-file', (e, f) => { e.preventDefault(); takeFiles([f]); });
-app.on('second-instance', (e, argv) => takeFiles(argFiles(argv)).length || showWheel());
+app.on('second-instance', (e, argv) => { if (!takeFiles(argFiles(argv)).length && app.isReady()) showWheel(); });
+const log = (err) => { try { fs.appendFileSync(path.join(app.getPath('userData'), 'lime.log'), `${new Date().toISOString()} ${err?.stack || err}\n`); } catch (_) {} };
+process.on('uncaughtException', log);
 
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { theme: 'system', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, recent: [], signatures: [] };
+const DEFAULTS = { theme: 'system', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, recent: [], signatures: [] };
 let settings = { ...DEFAULTS };
 let saveT = null;
 const loadSettings = () => {
@@ -55,7 +60,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '' });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '', pandoc: settings.pandoc || '' });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -128,6 +133,7 @@ function submit({ tool, files = [], opts = {}, dest = null }) {
   const t = tools.get(tool);
   if (!t) throw new Error('Unknown tool.');
   if (!t.run) throw new Error(`${t.name} opens in its own window.`);
+  if (!files.length) throw new Error('Drop a file on the wheel first.');
   const id = crypto.randomUUID();
   jobs.set(id, { id, tool, name: t.name, files, opts, dest, status: 'queued', progress: 0, label: 'Waiting', results: [], createdAt: Date.now(), outMode: settings.outMode, outFolder: settings.outFolder });
   queue.push(id);
@@ -193,7 +199,7 @@ function notify(j, outs) {
   n.show();
 }
 
-let wheel = null, prefsWin = null, tray = null, dragTimer = null;
+let wheel = null, prefsWin = null, tray = null, dragTimer = null, sensor = null, watcher = null;
 const editors = new Set();
 const webPrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false };
 const workArea = (pt) => screen.getDisplayNearestPoint(pt).workArea;
@@ -201,14 +207,55 @@ function defaultAnchor() {
   const wa = screen.getPrimaryDisplay().workArea;
   return { x: wa.x + wa.width - 150, y: wa.y + Math.round(wa.height * 0.6) };
 }
-let layout = { w: 220, h: 220, ax: 110, ay: 110 };
-function placeWheel() {
-  if (!wheel) return;
+let layout = { w: 76, h: 76, ax: 38, ay: 38 }, mode = 'tab', bloomAt = null;
+const clamp = (v, a, b) => Math.min(Math.max(v, a), Math.max(a, b));
+function tabPoint() {
   const a = settings.anchor || defaultAnchor();
   const wa = workArea(a);
-  const x = Math.round(Math.min(Math.max(a.x - layout.ax, wa.x - layout.ax + 60), wa.x + wa.width - layout.w + (layout.w - layout.ax) - 60));
-  const y = Math.round(Math.min(Math.max(a.y - layout.ay, wa.y), wa.y + wa.height - layout.h));
-  wheel.setBounds({ x, y, width: Math.round(layout.w), height: Math.round(layout.h) });
+  return { x: wa.x + wa.width - 24, y: clamp(a.y, wa.y + 44, wa.y + wa.height - 44) };
+}
+function placeWheel() {
+  if (!wheel) return null;
+  const tab = tabPoint();
+  const c = mode === 'tab' ? tab : bloomAt || { x: tab.x - 168, y: tab.y };
+  const wa = workArea(c);
+  const x = mode === 'tab' ? wa.x + wa.width - layout.w : clamp(c.x - layout.ax, wa.x, wa.x + wa.width - layout.w);
+  const y = clamp(c.y - layout.ay, wa.y, wa.y + wa.height - layout.h);
+  wheel.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(layout.w), height: Math.round(layout.h) });
+  if (mode === 'tab' && settings.hidden) { if (wheel.isVisible()) wheel.hide(); } else if (!wheel.isVisible() && !wheel.webContents.isLoading()) wheel.showInactive();
+  return { bounds: wheel.getBounds(), tab };
+}
+function summon(why, at, focus) {
+  if (!wheel) createWheel();
+  const go = () => { if (!wheel.isVisible()) wheel.showInactive(); if (focus) wheel.focus(); wheel.webContents.send('wheel:summon', { why, at: at || null }); };
+  if (wheel.webContents.isLoading()) wheel.webContents.once('did-finish-load', () => setTimeout(go, 120)); else go();
+}
+const cornerPoint = () => { const wa = screen.getPrimaryDisplay().workArea; return { x: wa.x + 200, y: wa.y + wa.height - 240 }; };
+function placeSensor() {
+  if (!sensor) return;
+  const wa = screen.getPrimaryDisplay().workArea;
+  sensor.setBounds({ x: wa.x, y: wa.y + wa.height - 72, width: 72, height: 72 });
+}
+function applyCorner() {
+  if (settings.corner && !sensor) {
+    sensor = new BrowserWindow({
+      width: 72, height: 72, show: false, frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false, fullscreenable: false,
+      focusable: false, skipTaskbar: true, hasShadow: false, alwaysOnTop: true, backgroundColor: '#00000000', title: 'Lime corner', ...(isMac ? { type: 'panel' } : {}), webPreferences: webPrefs,
+    });
+    sensor.setAlwaysOnTop(true, 'floating');
+    if (isMac) sensor.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    placeSensor();
+    sensor.loadURL('app://local/sensor.html');
+    sensor.once('ready-to-show', () => sensor?.showInactive());
+    sensor.on('closed', () => { sensor = null; });
+  } else if (!settings.corner && sensor) sensor.destroy();
+}
+function startWatcher() {
+  watcher = require('./dragwatch').start({
+    onShift: () => { if (settings.shiftDrag !== false && mode === 'tab') summon('shift', screen.getCursorScreenPoint()); },
+    onEnd: () => wheel?.webContents.send('wheel:dragEnded'),
+    onError: log,
+  });
 }
 function createWheel() {
   wheel = new BrowserWindow({
@@ -232,24 +279,16 @@ function applyFloat() {
   if (isMac) wheel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !!settings.float, skipTransformProcessType: true });
 }
 function showWheel(files) {
+  if (!files) return summon('show', null, true);
   if (!wheel) createWheel();
-  settings.hidden = false;
-  saveSettings();
   const go = () => {
-    if (!wheel.isVisible()) wheel.show(); else wheel.moveTop();
+    if (!wheel.isVisible()) wheel.showInactive();
     wheel.focus();
-    wheel.webContents.send(files ? 'wheel:files' : 'wheel:pulse', files || null);
+    wheel.webContents.send('wheel:files', files);
   };
   if (wheel.webContents.isLoading()) { pendingShow = true; wheel.webContents.once('did-finish-load', () => setTimeout(go, 120)); } else go();
-  buildTray();
 }
-function hideWheel() {
-  if (wheel?.isVisible()) wheel.hide();
-  settings.hidden = true;
-  saveSettings();
-  buildTray();
-}
-const toggleWheel = () => (wheel?.isVisible() ? hideWheel() : showWheel());
+const toggleWheel = () => (mode === 'open' ? wheel?.webContents.send('wheel:fold') : showWheel());
 
 function openPrefs(tab) {
   if (prefsWin) { prefsWin.show(); prefsWin.focus(); if (tab) prefsWin.webContents.send('prefs:tab', tab); return; }
@@ -278,7 +317,7 @@ function openEditor(file, mode) {
 }
 
 function trayImage() {
-  const img = nativeImage.createFromPath(asset(isMac ? 'trayTemplate.png' : 'tray.png'));
+  const img = nativeImage.createFromPath(asset(isMac ? 'trayTemplate.png' : isWin ? 'tray.ico' : 'tray.png'));
   if (isMac) img.setTemplateImage(true);
   return img;
 }
@@ -291,7 +330,8 @@ function buildTray() {
   }
   const recent = settings.recent.filter((r) => r.kind === 'output' && fs.existsSync(r.path)).slice(0, 10);
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: wheel?.isVisible() ? 'Hide Wheel' : 'Show Wheel', accelerator: 'Control+Alt+L', click: toggleWheel },
+    { label: 'Open Wheel', accelerator: 'Control+Alt+L', click: () => showWheel() },
+    { label: 'Show Lime at Screen Edge', type: 'checkbox', checked: !settings.hidden, click: (i) => setSettings({ hidden: !i.checked }) },
     { label: 'Choose Files…', click: pickFiles },
     { label: 'Recent', enabled: recent.length > 0, submenu: recent.length ? recent.map((r) => ({ label: path.basename(r.path), click: () => shell.showItemInFolder(r.path) })) : [{ label: 'Nothing yet', enabled: false }] },
     { type: 'separator' },
@@ -355,10 +395,11 @@ async function setSettings(patch) {
   saveSettings();
   if ('theme' in patch) nativeTheme.themeSource = settings.theme;
   if ('float' in patch) applyFloat();
-  if ('anchor' in patch) placeWheel();
+  if ('anchor' in patch || 'hidden' in patch) placeWheel();
+  if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
-  if ('soffice' in patch && patch.soffice !== before.soffice) [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() }));
+  if (('soffice' in patch && patch.soffice !== before.soffice) || ('pandoc' in patch && patch.pandoc !== before.pandoc)) [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() }));
   buildTray();
   broadcast('settings', publicSettings());
   return publicSettings();
@@ -370,32 +411,43 @@ function registerIpc() {
   h('catalog', () => tools.catalog());
   h('wheel:items', (files) => ({ ...tools.wheelsFor(files), more: actionsFor(files), all: tools.toolsFor(files) }));
   h('wheel:action', (item, files) => doAction(item, files));
-  h('wheel:layout', (l) => { layout = { ...layout, ...l }; placeWheel(); });
-  h('wheel:hide', () => hideWheel());
+  h('wheel:layout', ({ mode: m, at, ...l }) => {
+    layout = { ...layout, ...l };
+    if (m === 'tab') bloomAt = null;
+    if (m === 'open' && at) bloomAt = at;
+    if (m) mode = m;
+    return placeWheel();
+  });
+  h('sensor:enter', () => { if (mode === 'tab') summon('corner', cornerPoint()); });
+  h('sensor:drop', (files) => takeFiles(files));
+  h('wheel:hide', () => setSettings({ hidden: true }));
   h('wheel:menu', () => Menu.buildFromTemplate([
     { label: 'Choose Files…', click: pickFiles },
     { label: 'Settings…', click: () => openPrefs() },
     { type: 'separator' },
     { label: 'Size', submenu: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([v, l]) => ({ label: l, type: 'radio', checked: settings.size === v, click: () => setSettings({ size: v }) })) },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
-    { label: 'Reset Position', click: () => { settings.anchor = null; saveSettings(); placeWheel(); } },
+    { label: 'Reset Position', click: () => { settings.anchor = null; bloomAt = null; saveSettings(); placeWheel(); } },
     { type: 'separator' },
-    { label: 'Hide Wheel', click: hideWheel },
+    { label: 'Hide from Screen Edge', click: () => setSettings({ hidden: true }) },
     { label: 'Quit Lime', click: () => { app.isQuitting = true; app.quit(); } },
   ]).popup({ window: wheel }));
   h('wheel:dragStart', () => {
     clearInterval(dragTimer);
     const start = screen.getCursorScreenPoint();
     const a0 = settings.anchor || defaultAnchor();
+    const b = wheel.getBounds(), b0 = bloomAt || { x: b.x + layout.ax, y: b.y + layout.ay };
     dragTimer = setInterval(() => {
       const p = screen.getCursorScreenPoint();
-      settings.anchor = { x: a0.x + p.x - start.x, y: a0.y + p.y - start.y };
+      if (mode === 'tab') settings.anchor = { x: p.x, y: a0.y + p.y - start.y };
+      else bloomAt = { x: b0.x + p.x - start.x, y: b0.y + p.y - start.y };
       placeWheel();
     }, 12);
   });
   h('wheel:dragEnd', () => { clearInterval(dragTimer); dragTimer = null; saveSettings(); });
   h('files:thumb', (p, size) => call('thumbnail', p, size).catch(() => null));
   h('tools:suggest', (tool, files, opts) => tools.suggest(tool, files, opts));
+  h('tools:accepts', (tool, files) => tools.accepts(tools.get(tool), files));
   h('files:dataUrl', async (p, max = 1800) => {
     const buf = await (await require('./engines/image').open(p)).rotate().resize(max, max, { fit: 'inside', withoutEnlargement: true }).png().toBuffer();
     return `data:image/png;base64,${buf.toString('base64')}`;
@@ -478,13 +530,17 @@ app.whenReady().then(async () => {
   buildTray();
   globalShortcut.register('Control+Alt+L', hotkey);
   createWheel();
+  applyCorner();
+  startWatcher();
   const files = argFiles(process.argv);
   if (files.length) takeFiles(files);
   if (incoming.size) clearTimeout(incomingT), takeFiles([]);
   nativeTheme.on('updated', () => broadcast('theme', { dark: nativeTheme.shouldUseDarkColors }));
-  screen.on('display-removed', placeWheel);
-  screen.on('display-metrics-changed', placeWheel);
+  screen.on('display-removed', () => { placeWheel(); placeSensor(); });
+  screen.on('display-metrics-changed', () => { placeWheel(); placeSensor(); });
+  screen.on('display-added', placeSensor);
   if (process.env.LIME_TEST && !app.isPackaged) require(path.join(ROOT, 'test', 'tools.test'))({ submit, jobs, app, tools, dir: process.env.LIME_TEST });
+  if (process.env.LIME_UI && !app.isPackaged) require(path.join(ROOT, 'test', 'ui.test'))({ wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, screen, dir: process.env.LIME_UI });
   if (process.env.LIME_SHOTS && !app.isPackaged) require(path.join(ROOT, 'test', 'shots'))({ wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, dir: process.env.LIME_SHOTS });
 });
 app.on('activate', () => showWheel());

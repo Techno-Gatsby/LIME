@@ -10,7 +10,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
   const w = () => wheel();
   const js = (code) => w().webContents.executeJavaScript(code, true);
   const shot = async (name, win = w()) => {
-    await sleep(700);
+    await sleep(Number(process.env.LIME_SHOT_WAIT) || 700);
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG());
     console.log('shot', name, img.getSize());
@@ -23,6 +23,24 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
   try {
     await js('window.lime.invoke("settings:set", { askSave: false })');
     if (want('idle')) await shot('01-idle');
+    if (want('bloom')) {
+      const frame = async (name) => { const img = await w().webContents.capturePage(); fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG()); console.log('shot', name, img.getSize()); };
+      await js('window.__lime.fold()');
+      await sleep(1200);
+      await frame('b0-tab');
+      await js('document.querySelector(".tab").classList.add("peek"); document.querySelector(".tab-lime").style.transform = "translateX(6px) rotate(-30deg)"');
+      await sleep(600);
+      await frame('b1-tab-hover');
+      await js('document.querySelector(".tab-lime").style.transform = ""');
+      await js('window.__lime.expand("edge")');
+      for (const t of [40, 110, 200, 320, 520, 900]) { await sleep(t - (frame.last || 0)); frame.last = t; await frame(`b2-bloom-${String(t).padStart(3, '0')}ms`); }
+      frame.last = 0;
+      await sleep(400);
+      js('window.__lime.fold()');
+      for (const t of [60, 160, 260, 420]) { await sleep(t - (frame.last || 0)); frame.last = t; await frame(`b3-fold-${String(t).padStart(3, '0')}ms`); }
+      await sleep(800);
+      await frame('b4-tucked-again');
+    }
     const img = path.join(samples, 'photo.jpg');
     if (want('menu')) {
       await js(`window.__lime.openWith(${JSON.stringify([img])})`);

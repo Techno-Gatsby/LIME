@@ -1,9 +1,9 @@
 import { icon, GROUP_ICON } from './icons.js';
 import { petal, labelAt, arc, limeSvg } from './petal.js';
-import { api, $, $$, h, esc, nameOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, form } from './ui.js';
+import { api, $, $$, h, esc, nameOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
 const R_IN = 50, R_OUT = 120, R_LABEL = 86;
-const IDLE = 0.6;
+const TAB = 76;
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['more', 'More']];
 const isMac = api.platform === 'darwin';
@@ -14,20 +14,85 @@ let settings = await applyTheme();
 const catalog = Object.fromEntries((await api.invoke('catalog')).map((t) => [t.id, t]));
 const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, depth: 0 };
 let k = SIZES[settings.size] || 1;
-let collapseT = null;
+let collapseT = null, foldT = null, shown = 'tab', geo = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+$('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, 't'));
 
-function layout() {
+async function layout() {
   const open = S.state !== 'idle';
   const cardH = card.hidden ? 0 : Math.min(card.scrollHeight, 380) + 14;
-  const L = open ? { w: 330, h: 392 + (cardH ? cardH + 4 : 0), cx: 165, cy: 194 } : { w: 210, h: 210, cx: 105, cy: 105 };
+  const L = open ? { w: 330, h: 392 + (cardH ? cardH + 4 : 0), cx: 165, cy: 194 } : { w: TAB, h: TAB, cx: TAB / 2, cy: TAB / 2 };
+  const growing = open && shown === 'tab';
+  if (growing) stage.classList.add('pre');
   stage.style.setProperty('--w', `${L.w}px`);
   stage.style.setProperty('--h', `${L.h}px`);
   stage.style.setProperty('--cx', `${L.cx}px`);
   stage.style.setProperty('--cy', `${L.cy}px`);
   stage.style.setProperty('--k', k);
-  stage.style.setProperty('--idle-scale', IDLE);
-  $('.wheel').style.setProperty('--ws', open ? 1 : IDLE);
-  return api.invoke('wheel:layout', { w: Math.ceil(L.w * k), h: Math.ceil(L.h * k), ax: Math.round(L.cx * k), ay: Math.round(L.cy * k) });
+  const at = growing ? S.bloomAt : null;
+  S.bloomAt = null;
+  shown = open ? 'open' : 'tab';
+  const r = await api.invoke('wheel:layout', { w: Math.ceil(L.w * k), h: Math.ceil(L.h * k), ax: Math.round(L.cx * k), ay: Math.round(L.cy * k), mode: open ? 'open' : 'tab', at: at || undefined });
+  if (r) geo = r;
+  if (growing) bloomFrom(at || r?.tab);
+  return r;
+}
+function offsetTo(pt) {
+  if (!pt || !geo) return { x: 140, y: 0 };
+  return { x: (pt.x - geo.bounds.x) / k - 165, y: (pt.y - geo.bounds.y) / k - 194 };
+}
+function bloomFrom(pt) {
+  const o = offsetTo(pt);
+  stage.style.setProperty('--ox', `${o.x}px`);
+  stage.style.setProperty('--oy', `${o.y}px`);
+  stage.classList.remove('folding');
+  stage.classList.add('blooming');
+  requestAnimationFrame(() => stage.classList.remove('pre'));
+  clearTimeout(bloomFrom.t);
+  bloomFrom.t = setTimeout(() => stage.classList.remove('blooming'), 900);
+}
+async function fold({ keepJob = false } = {}) {
+  if (S.state === 'idle') return;
+  if (S.state === 'busy' && !keepJob) return;
+  clearTimeout(collapseT);
+  clearTimeout(foldT);
+  closeCard(true);
+  const o = offsetTo(geo?.tab);
+  stage.style.setProperty('--ox', `${o.x}px`);
+  stage.style.setProperty('--oy', `${o.y}px`);
+  stage.classList.remove('blooming');
+  stage.classList.add('folding');
+  await sleep(330);
+  if (S.state === 'busy' && !keepJob) { stage.classList.remove('folding'); return; }
+  if (!keepJob) { S.files = []; S.items = null; S.result = null; }
+  S.hot = -1;
+  S.dragSummon = false;
+  setState('idle');
+  stage.classList.remove('folding');
+  drawRing([]);
+  drawCenter();
+  await layout();
+  stage.classList.add('tuck-in');
+  setTimeout(() => stage.classList.remove('tuck-in'), 700);
+}
+const armFold = (ms) => { clearTimeout(foldT); foldT = setTimeout(() => { if (S.state === 'ready' && !S.depth && !stage.matches(':hover')) fold(); }, ms); };
+function expand(why, at) {
+  if (S.state !== 'idle') return;
+  S.bloomAt = at || null;
+  S.dragSummon = ['shift', 'corner', 'edge'].includes(why);
+  setState('ready');
+  S.hot = -1;
+  drawPill();
+  drawRing([]);
+  drawCenter();
+  drawCaption();
+  layout();
+  if (!S.dragSummon) armFold(12000);
+}
+function tabProgress(p) {
+  const t = $('.tab');
+  t.classList.toggle('working', p != null);
+  t.style.setProperty('--p', p == null ? 0 : Math.max(0.03, p));
 }
 function setState(state) {
   S.state = state;
@@ -84,7 +149,7 @@ async function drawCenter() {
   const seq = ++centerSeq;
   const it = S.ring[S.hot];
   let html = '';
-  if (S.state === 'idle') html = limeSvg(58, 'c').replace('<svg', '<svg class="logo"');
+  if (S.state === 'idle' || S.state === 'ready') html = limeSvg(58, 'c').replace('<svg', '<svg class="logo"');
   else if (S.state === 'busy') {
     const j = S.job || {};
     html = `<div><div class="pct">${Math.round((j.progress || 0) * 100)}%</div><div class="small">${esc(j.status === 'queued' ? 'Waiting' : (j.label || 'Working').replace(/ · .*/, ''))}</div><div class="cancel">${icon('close')}Cancel</div></div>`;
@@ -131,6 +196,9 @@ async function drawCaption() {
   } else if (S.state === 'failed') {
     capName.textContent = `${S.result?.title || 'That'} didn’t finish`;
     capMeta.textContent = S.result?.error || '';
+  } else if (S.state === 'ready') {
+    capName.textContent = 'Drop files here';
+    capMeta.textContent = 'or click the lime to choose';
   }
 }
 
@@ -173,18 +241,8 @@ async function openWith(files) {
   else Promise.all(files.slice(0, 50).map((f) => api.invoke('files:describe', f).catch(() => null))).then((all) => { S.info = { total: all.reduce((s, i) => s + (i?.size || 0), 0) }; if (S.state === 'open' && S.hot < 0) drawCaption(); });
 }
 async function collapse() {
-  clearTimeout(collapseT);
-  closeCard(true);
-  if (S.state === 'busy') return;
-  S.files = [];
-  S.items = null;
-  S.result = null;
-  S.hot = -1;
-  setState('idle');
-  drawRing([]);
-  drawCenter();
-  await new Promise((r) => setTimeout(r, 260));
-  if (S.state === 'idle') layout();
+  if (S.state === 'busy') { closeCard(true); return; }
+  await fold();
 }
 
 async function pick(it, { options = false } = {}) {
@@ -204,17 +262,36 @@ async function pick(it, { options = false } = {}) {
     collapse();
     return;
   }
-  const opts = { ...defaultsFor(tool), ...(it.opts || {}) };
-  if (options || it.ask || missingRequired(tool, opts)) return showOptions(tool, opts, it);
+  const opts = { ...defaultsFor(tool), ...smartDefaults(tool), ...(it.opts || {}) };
+  if (options || it.ask || missingRequired(tool, opts) || needsCard(tool, opts, it)) return showOptions(tool, opts, it);
   return run(tool, opts);
 }
+function needsCard(tool, opts, it) {
+  if (it.quick) return false;
+  if (tool.ordered && S.files.length > 1) return true;
+  const preset = Object.keys(it.opts || {});
+  return (tool.options || []).some((o) => !o.advanced && visible(o, opts) && !preset.includes(o.key));
+}
+function smartDefaults(tool) {
+  const n = S.files.length === 1 ? S.info?.pages : 0;
+  if (tool.id === 'split-pdf' && n > 1) {
+    const half = Math.ceil(n / 2);
+    return { ranges: n > 2 ? `1-${half}, ${half + 1}-${n}` : '1, 2', every: Math.max(1, Math.min(2, n - 1)), pages: n > 2 ? `1, ${n}` : '1' };
+  }
+  return {};
+}
 async function run(tool, opts) {
-  const dest = await api.invoke('save:ask', { tool: tool.id, files: S.files, opts }).catch((e) => { flash(clean(e)); return null; });
+  const files = S.files.slice();
+  if (!files.length) return;
+  S.asking = true;
+  clearTimeout(collapseT);
+  const dest = await api.invoke('save:ask', { tool: tool.id, files, opts }).catch((e) => { flash(clean(e)); return null; }).finally(() => { S.asking = false; });
   if (dest === null) return;
   closeCard(true);
-  const id = await api.invoke('jobs:submit', { tool: tool.id, files: S.files, opts, dest: dest.kind === 'none' || dest.kind === 'auto' ? null : dest }).catch((e) => { fail(tool.name, clean(e), { tool, opts }); return null; });
+  S.files = files;
+  const id = await api.invoke('jobs:submit', { tool: tool.id, files, opts, dest: dest.kind === 'none' || dest.kind === 'auto' ? null : dest }).catch((e) => { fail(tool.name, clean(e), { tool, opts, files }); return null; });
   if (!id) return;
-  S.last = { tool, opts, files: S.files };
+  S.last = { tool, opts, files };
   S.job = { id, name: tool.name, progress: 0, label: 'Starting', status: 'queued' };
   setState('busy');
   drawPill();
@@ -236,11 +313,12 @@ api.on('jobs', (list) => {
   S.job = j;
   if (j.status === 'running' || j.status === 'queued') {
     drawProgress(j.progress || 0);
-    if (S.state === 'busy') { drawCenter(); drawCaption(); } else if (S.state === 'idle') drawProgress(j.progress || 0);
+    if (S.state === 'busy') { drawCenter(); drawCaption(); } else if (S.state === 'idle') tabProgress(j.progress || 0);
     return;
   }
   const job = S.job;
   S.job = null;
+  tabProgress(null);
   if (j.status === 'done') {
     drawProgress(1);
     setTimeout(() => drawProgress(null), 600);
@@ -305,7 +383,7 @@ async function doneAction(it) {
 }
 function armCollapse(ms) {
   clearTimeout(collapseT);
-  collapseT = setTimeout(() => { if (!stage.matches(':hover') && card.hidden && (S.state === 'done' || S.state === 'open')) collapse(); }, ms);
+  collapseT = setTimeout(() => { if (!S.asking && !stage.matches(':hover') && card.hidden && ['done', 'open', 'ready'].includes(S.state)) collapse(); }, ms);
 }
 let flashT = null;
 function flash(msg) {
@@ -331,14 +409,17 @@ function closeCard(silent) {
   S.cardFor = null;
   if (!silent) layout();
 }
+const VERB = { 'merge-pdf': 'Merge PDF', 'split-pdf': 'Split PDF', 'compress-pdf': 'Compress PDF', 'jpg-to-pdf': 'Create PDF', 'to-pdf': 'Make PDF', 'page-numbers': 'Add page numbers', 'ocr-pdf': 'Make searchable', 'watermark-pdf': 'Add watermark', 'watermark-image': 'Add watermark', 'enhance-photo': 'Enhance', 'html-to-pdf': 'Save as PDF', 'screenshot-url': 'Capture page', 'video-to-gif': 'Make GIF', 'image-to-text': 'Read text', 'video-frames': 'Save frames', collage: 'Make collage', 'images-to-gif': 'Make GIF', 'images-to-video': 'Make slideshow', panorama: 'Stitch', 'hdr-merge': 'Merge HDR', 'cad-info': 'Measure', 'file-hash': 'Calculate', 'rename-files': 'Rename', 'audit-pdf': 'Check', 'normalize-audio': 'Level loudness', 'speed-media': 'Change speed', 'strip-metadata': 'Remove info', 'merge-documents': 'Merge into PDF', 'merge-media': 'Merge', 'merge-sheets': 'Merge', 'remove-background': 'Remove background', 'extract-archive': 'Extract', 'create-archive': 'Compress', 'test-archive': 'Test', 'remove-pages': 'Remove pages', 'extract-pages': 'Extract pages', 'extract-images-pdf': 'Extract images', 'burn-subtitles': 'Add subtitles' };
 const verbFor = (tool, opts) => {
-  if (/^convert|^develop|^render/.test(tool.id)) return opts.to ? `Convert to ${String(opts.to).toUpperCase().replace('HEVC', 'HEVC MP4')}` : 'Convert';
-  return tool.name.split(' ')[0];
+  if (/^convert|^develop|^render|^pdf-to|^json-to/.test(tool.id)) return opts.to || opts.format ? `Convert to ${String(opts.to || opts.format).toUpperCase().replace('HEVC', 'HEVC MP4')}` : 'Convert';
+  return VERB[tool.id] || tool.name.split(' ')[0];
 };
 function showOptions(tool, opts, it) {
   S.cardFor = tool.id;
-  const node = h(`<div><div class="head"><h3>${esc(tool.name)}</h3><button class="btn subtle icon" data-a="x" title="Close">${icon('close', 'sm')}</button></div><p class="desc">${esc(tool.desc || '')}</p></div>`);
+  const about = S.files.length === 1 ? describe(S.info, S.files[0]) : `${S.files.length} files`;
+  const node = h(`<div><div class="head"><h3>${esc(tool.name)}</h3><button class="btn subtle icon" data-a="x" title="Close">${icon('close', 'sm')}</button></div><p class="desc">${esc(tool.desc || '')}</p><p class="about">${esc(S.files.length === 1 ? `${nameOf(S.files[0])} · ${about}` : about)}</p></div>`);
   const btn = h(`<button class="btn primary">${esc(verbFor(tool, opts))}</button>`);
+  if (tool.ordered && S.files.length > 1) node.append(orderList(tool, () => { btn.disabled = S.files.length < (tool.min || 1); btn.title = btn.disabled ? `${tool.name} needs at least ${tool.min} files` : ''; }));
   node.append(form(tool, opts, () => { btn.textContent = verbFor(tool, opts); requestAnimationFrame(layout); }));
   const foot = h('<div class="foot"><button class="btn" data-a="x">Cancel</button></div>');
   foot.append(btn);
@@ -351,6 +432,54 @@ function showOptions(tool, opts, it) {
   });
   openCard(node);
   setTimeout(() => node.querySelector('input.input, textarea, select')?.focus(), 60);
+}
+function orderList(tool, changed) {
+  const box = h(`<div class="order"><div class="otop"><span class="label">Order</span><span class="muted">Drag to rearrange</span></div><ol></ol><div class="obar"><button class="btn subtle" type="button" data-o="add">${icon('add', 'sm')}Add files</button><button class="btn subtle" type="button" data-o="sort">A–Z</button><button class="btn subtle" type="button" data-o="rev">Reverse</button></div></div>`);
+  const ol = $('ol', box);
+  const draw = () => {
+    ol.innerHTML = S.files.map((f, i) => `<li data-i="${i}" draggable="true"><span class="n">${i + 1}</span><span class="pic" data-p="${esc(f)}"></span><span class="nm" title="${esc(f)}">${esc(nameOf(f))}</span><button type="button" class="ob" data-mv="-1" ${i ? '' : 'disabled'} title="Move up">${icon('up', 'sm')}</button><button type="button" class="ob" data-mv="1" ${i < S.files.length - 1 ? '' : 'disabled'} title="Move down">${icon('down', 'sm')}</button><button type="button" class="ob" data-rm title="Remove">${icon('close', 'sm')}</button></li>`).join('');
+    $$('.pic', ol).forEach(async (el) => { el.innerHTML = await fileVisual(el.dataset.p); });
+    changed();
+    requestAnimationFrame(layout);
+  };
+  const move = (from, to) => { if (to < 0 || to >= S.files.length || from === to) return; const [f] = S.files.splice(from, 1); S.files.splice(to, 0, f); draw(); };
+  box.addEventListener('click', async (e) => {
+    const li = e.target.closest('li'), i = li ? Number(li.dataset.i) : -1;
+    const mv = e.target.closest('[data-mv]');
+    if (mv) return move(i, i + Number(mv.dataset.mv));
+    if (e.target.closest('[data-rm]')) { S.files.splice(i, 1); return draw(); }
+    const o = e.target.closest('[data-o]')?.dataset.o;
+    if (o === 'sort') { S.files.sort((a, b) => nameOf(a).localeCompare(nameOf(b), undefined, { numeric: true, sensitivity: 'base' })); draw(); }
+    if (o === 'rev') { S.files.reverse(); draw(); }
+    if (o === 'add') {
+      S.asking = true;
+      const add = await api.invoke('dialog:open', { title: `Add files to ${tool.name}` }).catch(() => []).finally(() => { S.asking = false; });
+      const ok = await api.invoke('tools:accepts', tool.id, [...S.files, ...add]).catch(() => true);
+      if (!ok) { flash(`${tool.name} can’t use those files`); return; }
+      S.files.push(...add.filter((f) => !S.files.includes(f)));
+      draw();
+    }
+  });
+  let dragFrom = -1;
+  ol.addEventListener('dragstart', (e) => { const li = e.target.closest('li'); if (!li) return; dragFrom = Number(li.dataset.i); li.classList.add('lift'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/x-lime-order', String(dragFrom)); });
+  ol.addEventListener('dragover', (e) => {
+    if (dragFrom < 0) return;
+    e.preventDefault();
+    const li = e.target.closest('li');
+    $$('li', ol).forEach((x) => x.classList.remove('before', 'after'));
+    if (li && Number(li.dataset.i) !== dragFrom) { const r = li.getBoundingClientRect(); li.classList.add(e.clientY < r.top + r.height / 2 ? 'before' : 'after'); }
+  });
+  ol.addEventListener('drop', (e) => {
+    if (dragFrom < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const li = e.target.closest('li');
+    if (li) { const r = li.getBoundingClientRect(); let to = Number(li.dataset.i) + (e.clientY < r.top + r.height / 2 ? 0 : 1); if (to > dragFrom) to--; move(dragFrom, to); }
+    dragFrom = -1;
+  });
+  ol.addEventListener('dragend', () => { dragFrom = -1; $$('li', ol).forEach((x) => x.classList.remove('lift', 'before', 'after')); });
+  draw();
+  return box;
 }
 const CATS = [['pdf', 'PDF'], ['image', 'Images'], ['media', 'Video & audio'], ['docs', 'Documents'], ['cad', 'CAD & vector'], ['archive', 'Archives'], ['utility', 'Utilities']];
 const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft' };
@@ -402,8 +531,8 @@ function petalFromEvent(e) {
   const g = e.target.closest?.('.petal[data-i]');
   return g ? Number(g.dataset.i) : -1;
 }
-svg.addEventListener('pointermove', (e) => { if (S.state !== 'idle' && S.state !== 'busy') setHot(petalFromEvent(e)); });
-svg.addEventListener('pointerleave', () => { if (S.state !== 'idle' && S.state !== 'busy') setHot(-1); });
+svg.addEventListener('pointermove', (e) => { if (!['idle', 'busy', 'ready'].includes(S.state)) setHot(petalFromEvent(e)); });
+svg.addEventListener('pointerleave', () => { if (!['idle', 'busy', 'ready'].includes(S.state)) setHot(-1); });
 let downAt = null, dragging = false;
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || e.target.closest('.pill, .card, input, button, select, textarea')) return;
@@ -428,8 +557,9 @@ window.addEventListener('pointerup', async (e) => {
   if (!d) return;
   if (dragging) { dragging = false; api.invoke('wheel:dragEnd'); return; }
   if (d.onPetal) { const i = petalFromEvent(e); if (i === d.i) pick(S.ring[i], { options: e.altKey }); return; }
+  if (S.state === 'idle' && e.target.closest('.tab')) { expand('click'); return; }
   if (d.onBtn || e.target.closest('.center')) {
-    if (S.state === 'idle') { const files = await api.invoke('dialog:open', { title: 'Choose files for Lime' }); if (files.length) openWith(files); }
+    if (S.state === 'ready') { S.asking = true; const files = await api.invoke('dialog:open', { title: 'Choose files for Lime' }).finally(() => { S.asking = false; }); if (files.length) openWith(files); }
     else if (S.state === 'busy' && S.job) api.invoke('jobs:cancel', S.job.id);
     else if (S.ring[S.hot]) pick(S.ring[S.hot]);
     else if (S.state === 'done' && S.result?.outs?.[0]) api.invoke('shell:show', S.result.outs[0]);
@@ -449,7 +579,7 @@ center.addEventListener('dragstart', (e) => {
 let wheelAcc = 0;
 stage.addEventListener('wheel', (e) => {
   if (e.target.closest('.card')) return;
-  if (S.state === 'idle' || S.state === 'busy' || !S.ring.length) return;
+  if (['idle', 'busy', 'ready'].includes(S.state) || !S.ring.length) return;
   e.preventDefault();
   wheelAcc += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
   const n = S.ring.length;
@@ -466,16 +596,13 @@ pill.addEventListener('click', (e) => {
   if (b.dataset.m) { closeCard(); setMode(b.dataset.m); }
 });
 function collapseKeepJob() {
-  closeCard(true);
-  setState('idle');
-  drawRing([]);
-  drawCenter();
-  setTimeout(layout, 260);
+  fold({ keepJob: true }).then(() => tabProgress(S.job?.progress || 0));
 }
 document.addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, textarea, select') && e.key !== 'Escape') return;
   if (e.key === 'Escape') { e.preventDefault(); if (!card.hidden) closeCard(); else if (S.state === 'busy') collapseKeepJob(); else collapse(); return; }
   if (S.state === 'idle' || S.state === 'busy') return;
+  if (S.state === 'ready') return;
   const n = S.ring.length;
   if (e.key === 'Tab' && S.state === 'open') { e.preventDefault(); const i = MODES.findIndex(([m]) => m === S.mode); closeCard(true); setMode(MODES[(i + (e.shiftKey ? 2 : 1)) % 3][0]); return; }
   if (n && ['ArrowRight', 'ArrowDown'].includes(e.key)) { e.preventDefault(); setHot((S.hot + 1 + n) % n); }
@@ -488,28 +615,36 @@ const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
 window.addEventListener('dragenter', (e) => {
   if (!isFiles(e)) return;
   e.preventDefault();
-  if (++S.depth === 1) { stage.classList.add('over'); clearTimeout(collapseT); }
+  if (++S.depth === 1) {
+    stage.classList.add('over');
+    clearTimeout(collapseT);
+    clearTimeout(foldT);
+    if (S.state === 'idle') expand('edge');
+  }
 });
 window.addEventListener('dragover', (e) => { if (isFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
-window.addEventListener('dragleave', () => { if (--S.depth <= 0) { S.depth = 0; stage.classList.remove('over'); } });
+window.addEventListener('dragleave', () => { if (--S.depth <= 0) { S.depth = 0; stage.classList.remove('over'); if (S.state === 'ready') armFold(1400); } });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   S.depth = 0;
+  clearTimeout(foldT);
   stage.classList.remove('over');
   const files = [...(e.dataTransfer?.files || [])].map((f) => api.pathFor(f)).filter(Boolean);
   if (files.length) openWith(files);
 });
-window.addEventListener('blur', () => { if (S.state === 'open' && card.hidden) armCollapse(900); });
-window.addEventListener('focus', () => { if (S.state === 'open') clearTimeout(collapseT); });
-stage.addEventListener('pointerenter', () => clearTimeout(collapseT));
-stage.addEventListener('pointerleave', () => { if (S.state === 'done') armCollapse(6000); });
+window.addEventListener('blur', () => { if ((S.state === 'open' || (S.state === 'ready' && !S.dragSummon)) && card.hidden && !S.asking) armCollapse(900); });
+window.addEventListener('focus', () => { if (S.state === 'open' || S.state === 'ready') clearTimeout(collapseT); });
+stage.addEventListener('pointerenter', () => { clearTimeout(collapseT); clearTimeout(foldT); });
+stage.addEventListener('pointerleave', () => { if (S.state === 'done') armCollapse(6000); if (S.state === 'ready' && !S.depth) armFold(2500); });
 
 api.on('wheel:files', (files) => openWith(files));
-api.on('wheel:pulse', () => { stage.classList.remove('pulse'); void stage.offsetWidth; stage.classList.add('pulse'); });
+api.on('wheel:summon', ({ why, at }) => { if (S.state === 'idle') expand(why, at); else if (why === 'show') window.focus(); });
+api.on('wheel:dragEnded', () => { if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.depth) fold(); }, 260); });
+api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
 api.on('settings', (s) => { settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; layout(); } });
 
 setState('idle');
 drawRing([]);
 drawCenter();
 layout();
-window.__lime = { S, openWith, collapse, pick, setHot, setMode, showAll, showOptions, catalog };
+window.__lime = { S, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, catalog, geo: () => geo };

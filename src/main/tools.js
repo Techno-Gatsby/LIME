@@ -46,8 +46,9 @@ const TOOLS = [
       fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
       return [out];
     } },
-  { id: 'split-pdf', cat: 'pdf', name: 'Split PDF', desc: 'One PDF per page, per range, or every N pages.', accepts: ['pdf'], save: 'folder', suffix: ' - pages',
-    options: [choice('mode', 'Split', [['all', 'Every page'], ['ranges', 'By ranges'], ['every', 'Every N']]), text('ranges', 'Ranges', '1-3, 4-6', { when: { mode: 'ranges' } }), toggle('mergeRanges', 'Save ranges as one PDF', false, { when: { mode: 'ranges' } }), num('every', 'Pages per file', 2, { when: { mode: 'every' }, min: 1 })],
+  { id: 'split-pdf', cat: 'pdf', name: 'Split PDF', desc: 'Split by ranges, into equal parts, or pull out the pages you pick.', accepts: ['pdf'], save: 'folder', suffix: ' - split',
+    single: (o) => (o.mode === 'ranges' && !!o.mergeRanges) || (o.mode === 'select' && o.mergeSelected !== false),
+    options: [choice('mode', 'Split', [['ranges', 'Ranges'], ['every', 'Fixed size'], ['all', 'Every page'], ['select', 'Pick pages']]), text('ranges', 'Ranges (each becomes a PDF)', '1-3, 4-6', { when: { mode: 'ranges' }, placeholder: '1-3, 4-6, 7-' }), toggle('mergeRanges', 'Combine the ranges into one PDF', false, { when: { mode: 'ranges' } }), num('every', 'Pages in each PDF', 2, { when: { mode: 'every' }, min: 1 }), pages('pages', 'Pages to extract', '1', { when: { mode: 'select' } }), toggle('mergeSelected', 'Save them as one PDF', true, { when: { mode: 'select' } })],
     run: each((f, o, c) => pdf().split(f, o, c)) },
   { id: 'compress-pdf', cat: 'pdf', name: 'Compress PDF', desc: 'Recompress images and rebuild the file.', accepts: ['pdf'], ext: 'pdf', suffix: '-compressed',
     options: [level(), pdfPassword], run: each((f, o, c) => pdf().compress(f, o, outFile('-compressed', 'pdf')(f, c), c)) },
@@ -292,8 +293,8 @@ const ZIP = W('create-archive', 'ZIP', 'Archive', { format: 'zip' });
 const HASH = W('file-hash', 'SHA-256', 'Checksum');
 const WHEELS = {
   pdf: {
-    convert: [W('pdf-to-word', 'DOCX', 'Word'), W('pdf-to-jpg', 'JPG', 'Pages', { format: 'jpg' }), W('pdf-to-jpg', 'PNG', 'Pages', { format: 'png' }), W('pdf-to-excel', 'XLSX', 'Excel', { to: 'xlsx' }), W('pdf-to-powerpoint', 'PPTX', 'PowerPoint'), W('pdf-to-text', 'TXT', 'Text'), W('pdf-to-html', 'HTML', 'Web'), W('pdf-to-svg', 'SVG', 'Vector')],
-    tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Organize'), W('ocr-pdf', 'OCR', 'Searchable'), W('protect-pdf', 'Protect', 'Password'), W('optimize-pdf', 'Optimize', 'Rebuild'), W('split-pdf', 'Split', 'Every page')],
+    convert: [W('pdf-to-word', 'DOCX', 'Word'), W('pdf-to-jpg', 'JPG', 'Pages', { format: 'jpg' }, { full: true }), W('pdf-to-jpg', 'PNG', 'Pages', { format: 'png' }, { full: true }), W('pdf-to-excel', 'XLSX', 'Excel', { to: 'xlsx' }), W('pdf-to-powerpoint', 'PPTX', 'PowerPoint'), W('pdf-to-text', 'TXT', 'Text'), W('pdf-to-html', 'HTML', 'Web'), W('pdf-to-svg', 'SVG', 'Vector')],
+    tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Organize'), W('ocr-pdf', 'OCR', 'Searchable'), W('protect-pdf', 'Protect', 'Password'), W('optimize-pdf', 'Optimize', 'Rebuild'), W('split-pdf', 'Split', 'Pages')],
   },
   image: {
     convert: [W('convert-image', 'JPG', 'Photo', { to: 'jpg' }), W('convert-image', 'PNG', 'Lossless', { to: 'png' }), W('convert-image', 'WebP', 'Web', { to: 'webp' }), W('convert-image', 'AVIF', 'Smallest', { to: 'avif' }), W('convert-image', 'PDF', 'Document', { to: 'pdf' }), W('convert-image', 'PSD', 'Layers', { to: 'psd' }), W('convert-image', 'TIFF', 'Print', { to: 'tiff' }), W('convert-image', 'GIF', 'Classic', { to: 'gif' }), W('convert-image', 'ICO', 'Icon', { to: 'ico' })],
@@ -304,7 +305,7 @@ const WHEELS = {
     tools: [W('enhance-photo', 'Enhance', 'Auto'), W('develop-raw', 'Develop', 'Options', {}, { ask: true }), W('strip-metadata', 'Clean', 'No EXIF'), W('image-to-text', 'Text', 'OCR')],
   },
   video: {
-    convert: [W('convert-video', 'MP4', 'Universal', { to: 'mp4' }), W('convert-video', 'MOV', 'Apple', { to: 'mov' }), W('convert-video', 'WebM', 'Web', { to: 'webm' }), W('video-to-gif', 'GIF', 'First 5 s'), W('extract-audio', 'MP3', 'Audio', { to: 'mp3' }), W('convert-video', 'HEVC', 'Smaller', { to: 'hevc' }), W('convert-video', 'MKV', 'Archive', { to: 'mkv' }), W('extract-audio', 'WAV', 'Audio', { to: 'wav' })],
+    convert: [W('convert-video', 'MP4', 'Universal', { to: 'mp4' }), W('convert-video', 'MOV', 'Apple', { to: 'mov' }), W('convert-video', 'WebM', 'Web', { to: 'webm' }), W('video-to-gif', 'GIF', 'Clip', {}, { full: true }), W('extract-audio', 'MP3', 'Audio', { to: 'mp3' }), W('convert-video', 'HEVC', 'Smaller', { to: 'hevc' }), W('convert-video', 'MKV', 'Archive', { to: 'mkv' }), W('extract-audio', 'WAV', 'Audio', { to: 'wav' })],
     tools: [W('compress-video', 'Compress', 'Smaller'), W('trim-media', 'Trim', 'Cut'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' })],
   },
   audio: {
@@ -384,15 +385,16 @@ function wheelsFor(files) {
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
   const base = WHEELS[g] || WHEELS.any;
   const ok = (w) => accepts(get(w.tool), files);
-  if (files.length < 2) return { convert: base.convert.filter(ok), tools: base.tools.filter(ok) };
+  const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
+  if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
   const multi = [...(MULTI[g] || [])];
   if (g === 'mixed' && gs.every((x) => ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout'].includes(x))) multi.push(...MULTI.mixed);
   const all = W('create-archive', 'ZIP', 'All files', { format: 'zip' });
-  const convert = g === 'mixed' ? [...multi, all] : [...base.convert.slice(0, 7), all];
+  const convert = g === 'mixed' ? [...multi, all] : [...base.convert.slice(0, 7).map(quick), all];
   const tools = [...multi, ...(g === 'mixed' ? [] : base.tools.filter((w) => !get(w.tool)?.editor).slice(0, 5)), all];
   return { convert: dedupe(convert.filter(ok)).slice(0, 10), tools: dedupe(tools.filter(ok)).slice(0, 10) };
 }
-const catalog = () => TOOLS.map(({ run, ext, ...meta }) => meta);
+const catalog = () => TOOLS.map(({ run, ext, single, ...meta }) => meta);
 function archiveStem(f) { return path.basename(f).replace(/\.(tar\.(gz|bz2|xz|zst)|t[gbx]z|tbz2|[^.]+)$/i, '') || 'Extracted'; }
 function suggest(id, files, opts = {}) {
   const t = get(id);
@@ -400,14 +402,15 @@ function suggest(id, files, opts = {}) {
   const first = files[0];
   const stem = t.stem || (first ? U.base(first) : 'Lime');
   if (files.length > 1 && !SINGLE_OUTPUT.has(t.id) && !(t.id === 'jpg-to-pdf' && opts.combine !== 'each')) return { kind: 'dir' };
-  if (t.save === 'folder' || (t.folderWhen && Object.entries(t.folderWhen).every(([k, v]) => opts[k] === v))) {
+  if ((t.save === 'folder' && !t.single?.(opts)) || (t.folderWhen && Object.entries(t.folderWhen).every(([k, v]) => opts[k] === v))) {
     return { kind: 'folder', name: t.id === 'extract-archive' ? archiveStem(first) : `${stem}${t.suffix ?? ''}${t.folderWhen ? ' - pages' : ''}` };
   }
   let e = typeof t.ext === 'function' ? t.ext(opts, files) : t.ext;
   if (!e) e = U.ext(first) === 'jpeg' ? 'jpg' : U.ext(first);
   if (e === 'tif') e = 'tiff';
   const name = t.id === 'create-archive' && files.length > 1 ? path.basename(path.dirname(first)) || 'Archive' : stem;
-  return { kind: 'file', name: `${name}${t.suffix ?? (U.ext(first) === e ? '-converted' : '')}.${e}`, ext: e };
+  const suffix = t.single?.(opts) ? ' - extract' : t.suffix ?? (U.ext(first) === e ? '-converted' : '');
+  return { kind: 'file', name: `${name}${suffix}.${e}`, ext: e };
 }
 
 module.exports = { TOOLS, catalog, get, toolsFor, wheelsFor, groupsOf, suggest, accepts };

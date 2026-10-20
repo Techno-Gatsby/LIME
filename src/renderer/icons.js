@@ -1,5 +1,7 @@
 const P = {
   add: 'M12 5v14M5 12h14',
+  up: 'M6 15l6-6 6 6',
+  down: 'M6 9l6 6 6-6',
   back: 'M15 5l-7 7 7 7',
   chevron: 'M9 6l6 6-6 6',
   close: 'M6 6l12 12M18 6L6 18',

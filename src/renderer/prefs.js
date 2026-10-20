@@ -17,7 +17,8 @@ const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').repla
 
 async function render() {
   const eng = await api.invoke('engines:status').catch(() => ({ crafts: [] }));
-  const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not found'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
+  const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
+  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">Found</span>` : '<span class="tag">Not installed</span>'}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
   <header>${limeSvg(52, 'p')}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">
@@ -43,10 +44,10 @@ async function render() {
     ${row('image', 'libvips · MuPDF · Tesseract', 'Images, PDF and text recognition in 13 languages', '<span class="dot on"></span>')}
     ${row('ruler', 'LibreDWG · OpenCascade', 'DWG drawings and STEP, IGES and BREP models', '<span class="dot on"></span>')}
   </div></section>
-  <section><h2>Also used when installed</h2><div class="group">
-    ${row('doc', 'LibreOffice', 'Exact Word, Excel and PowerPoint layouts', found(!!eng.libreoffice, 'LibreOffice'))}
+  <section><h2>Optional helpers</h2><p class="note">Lime converts Office documents on its own. If these free apps are on this ${isMac ? 'Mac' : 'PC'}, it uses them for even more exact layouts and extra formats.</p><div class="group">
+    ${row('doc', 'LibreOffice', eng.libreoffice ? esc(eng.libreoffice) : 'Exact Word, Excel and PowerPoint layouts', helper('soffice', eng.libreoffice, 'LibreOffice'))}
     ${isMac ? row('layers', 'Pages · Keynote · Numbers', 'Opens and exports Apple iWork files', found(eng.pages || eng.keynote || eng.numbers, 'iWork')) : ''}
-    ${row('text', 'Pandoc', 'LaTeX, reStructuredText and Org files', found(!!eng.pandoc, 'Pandoc'))}
+    ${row('text', 'Pandoc', eng.pandoc ? esc(eng.pandoc) : 'LaTeX, reStructuredText and Org files', helper('pandoc', eng.pandoc, 'Pandoc'))}
   </div></section>
   <section><h2>About</h2><div class="group">
     ${row('info', 'Open-source licences', 'Lime is AGPL-3.0. ArtCraft engines are MIT or Apache-2.0', '<button class="btn" data-a="licenses">View</button>')}
@@ -58,6 +59,11 @@ app.addEventListener('click', async (e) => {
   const a = e.target.closest('[data-a]')?.dataset.a;
   if (a === 'folder') { const [d] = await api.invoke('dialog:open', { folders: true, multi: false, create: true }); if (d) set({ outFolder: d }); }
   if (a === 'reset') { await api.invoke('settings:set', { anchor: null }); }
+  if (a === 'locate') {
+    const el = e.target.closest('[data-a]');
+    const [f] = await api.invoke('dialog:open', { title: `Find ${el.dataset.what}`, multi: false, filters: isMac ? undefined : [{ name: 'Programs', extensions: ['exe'] }] });
+    if (f) { const p = isMac && /\.app$/i.test(f) ? `${f}/Contents/MacOS/soffice` : f; set({ [el.dataset.k]: p }); }
+  }
   if (a === 'licenses') { const p = await api.invoke('app:paths'); api.invoke('shell:open', `${p.licenses}/THIRD-PARTY-NOTICES.txt`); }
 });
 app.addEventListener('change', (e) => { const i = e.target.closest('input[type=checkbox][data-k]'); if (i) set({ [i.dataset.k]: i.checked }); });

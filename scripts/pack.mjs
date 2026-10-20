@@ -20,6 +20,8 @@ export async function pack(platform, arch, opts) {
   const slim = ({ buildPath }) => {
     const nm = path.join(buildPath, 'node_modules');
     for (const d of ls(path.join(nm, '@img'))) if (d.startsWith('sharp-')) rm(nm, '@img', d);
+    for (const d of ls(path.join(nm, '@koromix'))) if (d !== `koffi-${T}`) rm(nm, '@koromix', d);
+    if (!fs.existsSync(path.join(nm, '@koromix', `koffi-${T}`))) console.warn(`! koffi-${T} isn't installed, so Shift-drag won't work in this build`);
     fs.cpSync(path.join(V, 'npm', T, '@img'), path.join(nm, '@img'), { recursive: true });
     const ort = path.join(nm, 'onnxruntime-node/bin/napi-v3');
     for (const os of ls(ort)) for (const a of ls(path.join(ort, os))) if (`${os}-${a}` !== T) rm(ort, os, a);
@@ -35,6 +37,6 @@ export async function pack(platform, arch, opts) {
 }
 
 export function addResources(res, T) {
-  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], ['data', 'data']]) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
+  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], ['data', 'data']]) if (fs.existsSync(path.join(V, from))) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
   fs.cpSync(path.join(ROOT, 'LICENSES'), path.join(res, 'LICENSES'), { recursive: true });
 }

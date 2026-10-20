@@ -16,6 +16,7 @@ const cfg = {
   user: process.env.LIME_USER || path.join(os.tmpdir(), 'lime-user'),
   tmp: path.join(os.tmpdir(), 'lime'),
   soffice: process.env.LIME_SOFFICE || '',
+  pandoc: process.env.LIME_PANDOC || '',
 };
 function configure(c) { Object.assign(cfg, c || {}); }
 

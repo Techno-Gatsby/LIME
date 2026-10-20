@@ -51,16 +51,41 @@ html, body { background: transparent !important; overflow: hidden; }
 .petal.press { transform: scale(.985); }
 .petal.danger .l { fill: var(--danger); }
 .petal.dim { opacity: .35; }
-.open .petal { animation: bloom .44s var(--spring) both; animation-delay: calc(var(--i) * 16ms); }
+.open .petal, .ready .petal { animation: bloom .44s var(--spring) both; animation-delay: calc(var(--i) * 16ms); }
 @keyframes bloom { from { opacity: 0; transform: scale(.78) rotate(-7deg); } }
 
-.idle .petal path, .over .petal path { fill: url(#gPetal); }
-.idle .petal text { display: none; }
-.idle .petal { pointer-events: none; }
+.idle .wheel, .idle .caption, .idle .pill, .idle .card { display: none; }
+.ready .petal path, .over .petal path { fill: url(#gPetal); }
+.ready .petal text { display: none; }
+.ready .petal { pointer-events: none; }
 .over .halo { opacity: .9; stroke-width: 3; }
 .over .petal path { animation: chase 1.1s linear infinite; animation-delay: calc(var(--i) * 0.11s); }
 @keyframes chase { 0%, 70%, 100% { fill: url(#gPetal); } 12% { fill: url(#gHot); } }
-.over .wheel { --ws: calc(var(--idle-scale) * 1.07) !important; }
+.ready.over .wheel { --ws: 1.035 !important; }
+
+.tab { position: absolute; inset: 0; display: none; background: rgba(128, 128, 128, .012); cursor: grab; }
+.idle .tab { display: block; }
+.tab-lime { position: absolute; left: 14px; top: 12px; width: 52px; height: 52px; transform: translateX(30px) rotate(0deg); transition: transform .5s var(--spring); filter: drop-shadow(0 6px 10px rgba(30, 60, 10, .32)) drop-shadow(0 1px 2px rgba(15, 23, 42, .3)); }
+.tab-lime > svg:not(.tab-ring) { display: block; }
+.tab:hover .tab-lime { transform: translateX(6px) rotate(-30deg); }
+.idle.over .tab-lime { transform: translateX(0) scale(1.1) rotate(-60deg); }
+.tab-ring { position: absolute; inset: -6px; width: 64px; height: 64px; overflow: visible; transform: rotate(-90deg); pointer-events: none; }
+.tab-ring circle { fill: none; stroke: var(--green-2); stroke-width: 3.2; stroke-linecap: round; stroke-dasharray: 188.5; stroke-dashoffset: calc(188.5 * (1 - var(--p, 0))); opacity: 0; transition: stroke-dashoffset .3s var(--ease), opacity .3s; }
+.tab.working .tab-ring circle { opacity: 1; }
+.tab.working .tab-lime { transform: translateX(10px); }
+.tuck-in .tab-lime { animation: tuckIn .62s var(--spring) both; }
+@keyframes tuckIn { from { transform: translateX(-18px) scale(1.5) rotate(140deg); opacity: .35; } }
+
+.pre .wheel, .pre .caption, .pre .pill { opacity: 0 !important; animation: none !important; }
+.blooming .wheel { animation: grow .64s var(--spring) both; }
+@keyframes grow { from { transform: translate(var(--ox), var(--oy)) scale(.17) rotate(-140deg); opacity: .25; } 35% { opacity: 1; } }
+.blooming .petal { animation: bloom .52s var(--spring) both; animation-delay: calc(140ms + var(--i) * 26ms); }
+.blooming .center .logo { animation: spinIn .8s var(--spring) both; }
+@keyframes spinIn { from { transform: rotate(-200deg) scale(.5); } }
+.blooming .caption { animation: fade .4s .25s ease both; }
+.folding .wheel { animation: shrink .33s cubic-bezier(.55, 0, .8, .25) forwards; }
+@keyframes shrink { to { transform: translate(var(--ox), var(--oy)) scale(.17) rotate(160deg); opacity: 0; } }
+.folding .caption, .folding .pill, .folding .card { opacity: 0; transition: opacity .12s; }
 
 .center { position: absolute; left: 50%; top: 50%; width: 84px; height: 84px; margin: -42px 0 0 -42px; border-radius: 50%; display: grid; place-items: center; text-align: center; pointer-events: none; line-height: 1.12; }
 .center > * { pointer-events: none; }
@@ -96,7 +121,7 @@ html, body { background: transparent !important; overflow: hidden; }
 @keyframes drop { from { opacity: 0; transform: translate(-50%, -8px) scale(.94); } }
 
 .caption { position: absolute; left: 14px; right: 14px; top: calc(var(--cy) + 152px); display: none; flex-direction: column; align-items: center; gap: 1px; text-align: center; pointer-events: none; }
-.open .caption, .busy .caption, .done .caption, .failed .caption, .card-open .caption { display: flex; animation: fade .3s ease both; }
+.open .caption, .busy .caption, .done .caption, .failed .caption, .ready .caption, .card-open .caption { display: flex; animation: fade .3s ease both; }
 .caption .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 640; font-size: 12.5px; color: var(--ink); padding: 2px 9px; border-radius: 5px; background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(16px); box-shadow: 0 0 0 .5px var(--line); }
 .caption .meta { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 500; color: var(--ink-2); padding: 1px 8px; border-radius: 5px; background: color-mix(in srgb, var(--surface) 78%, transparent); backdrop-filter: blur(16px); }
 .failed .caption .meta { white-space: normal; color: var(--danger); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
@@ -104,13 +129,34 @@ html, body { background: transparent !important; overflow: hidden; }
 .card { position: absolute; left: 12px; right: 12px; top: calc(var(--cy) + 196px); max-height: 380px; overflow: auto; padding: 14px; border-radius: 11px; background: color-mix(in srgb, var(--surface) 97%, transparent); backdrop-filter: blur(30px) saturate(1.7); box-shadow: var(--shadow-lg); animation: rise .34s var(--spring) both; -webkit-user-select: none; }
 .card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 .card h3 { font-size: 14px; font-weight: 660; flex: 1; }
-.card .desc { color: var(--ink-2); font-size: 12px; margin: 0 0 12px; }
+.card .desc { color: var(--ink-2); font-size: 12px; margin: 0 0 4px; }
+.card .about { color: var(--ink-3); font-size: 11px; font-weight: 550; margin: 0 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order { margin: 0 0 12px; }
+.order .otop { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.order .otop .muted { font-size: 11px; }
+.order ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 196px; overflow: auto; }
+.order li { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 4px 0 6px; border-radius: 7px; background: var(--well, color-mix(in srgb, var(--ink) 4%, transparent)); box-shadow: inset 0 0 0 .5px var(--line); cursor: grab; transition: transform .18s var(--ease), box-shadow .15s, opacity .15s; }
+.order li.lift { opacity: .45; }
+.order li.before { box-shadow: inset 0 2px 0 var(--accent, #3a7d1f), inset 0 0 0 .5px var(--line); }
+.order li.after { box-shadow: inset 0 -2px 0 var(--accent, #3a7d1f), inset 0 0 0 .5px var(--line); }
+.order .n { width: 16px; text-align: right; font-size: 11px; font-weight: 650; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.order .pic { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 5px; overflow: hidden; color: var(--ink-2); }
+.order .pic img { width: 100%; height: 100%; object-fit: cover; }
+.order .pic .glyph { display: grid; place-items: center; }
+.order .pic .glyph svg { width: 18px; height: 18px; }
+.order .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 560; }
+.order .ob { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--ink-2); }
+.order .ob:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.order .ob:disabled { opacity: .3; }
+.order .obar { display: flex; gap: 4px; margin-top: 6px; }
+.order .obar .btn { height: 26px; padding: 0 9px; font-size: 11.5px; }
+.card .btn.primary:disabled { opacity: .45; }
 .card .form { display: grid; gap: 11px; }
 .card details.more summary { color: var(--ink-2); font-size: 12px; font-weight: 500; list-style: none; cursor: pointer; padding: 2px 0; }
 .card details.more summary::before { content: "›"; display: inline-block; margin-right: 6px; transition: transform .2s; }
 .card details[open].more summary::before { transform: rotate(90deg); }
 .card details .form { margin-top: 10px; }
-.card .foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.card .foot { position: sticky; bottom: -14px; z-index: 2; display: flex; gap: 8px; justify-content: flex-end; margin: 14px -14px -14px; padding: 10px 14px 14px; background: inherit; box-shadow: 0 -.5px 0 var(--line); }
 .card .row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .card .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .search { position: sticky; top: -14px; margin: -14px -14px 8px; padding: 12px 14px 8px; background: inherit; z-index: 2; display: flex; gap: 8px; align-items: center; }

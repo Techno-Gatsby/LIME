@@ -161,16 +161,18 @@ async function split(input, opts, ctx) {
     groups = [];
     for (let i = 0; i < n; i += k) groups.push([...Array(Math.min(k, n - i)).keys()].map((j) => i + j));
   } else if (opts.mode === 'ranges') groups = U.parseRangeGroups(opts.ranges || '1', n);
+  else if (opts.mode === 'select') groups = U.parseRanges(opts.pages || '1', n).map((i) => [i]);
   else groups = [...Array(n).keys()].map((i) => [i]);
-  if (opts.mode === 'ranges' && opts.mergeRanges) {
-    const out = ctx.out.file(input, `${U.base(input)} - pages ${String(opts.ranges).replace(/\s+/g, '')}.pdf`);
+  if ((opts.mode === 'ranges' && opts.mergeRanges) || (opts.mode === 'select' && opts.mergeSelected !== false)) {
+    const out = ctx.out.file(input, `${U.base(input)} - extract.pdf`);
     return [await subset(input, groups.flat(), out)];
   }
   const folder = ctx.out.folder(input, `${U.base(input)} - split`);
   const outs = [];
   for (let g = 0; g < groups.length; g++) {
     const idx = groups[g];
-    const label = idx.length === 1 ? `page ${idx[0] + 1}` : `pages ${idx[0] + 1}-${idx[idx.length - 1] + 1}`;
+    const pagesLabel = idx.length === 1 ? `page ${idx[0] + 1}` : `pages ${idx[0] + 1}-${idx[idx.length - 1] + 1}`;
+    const label = groups.every((x) => x.length === 1) ? pagesLabel : `part ${g + 1} (${pagesLabel})`;
     const dst = await PDFDocument.create();
     (await dst.copyPages(src, idx)).forEach((p) => dst.addPage(p));
     outs.push(await saveLib(dst, U.uniquePath(path.join(folder, `${U.base(input)} - ${label}.pdf`))));

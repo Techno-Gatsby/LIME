@@ -4,14 +4,33 @@ const { fs, fsp, path } = U;
 const { pathToFileURL } = require('url');
 const isMac = process.platform === 'darwin';
 
-function libreOfficePath() {
-  if (process.env.LIME_NO_LO) return null;
-  const c = [U.cfg.soffice, '/Applications/LibreOffice.app/Contents/MacOS/soffice', '/usr/bin/soffice', '/usr/local/bin/soffice', '/opt/libreoffice/program/soffice', '/snap/bin/libreoffice'];
-  if (U.isWin) for (const b of [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]) if (b) c.push(path.join(b, 'LibreOffice', 'program', 'soffice.exe'));
-  return c.find((x) => x && fs.existsSync(x)) || null;
+const home = require('os').homedir(), env = process.env;
+const isFile = (p) => { try { return !!p && fs.statSync(p).isFile(); } catch (_) { return false; } };
+const onPath = (names) => String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean).flatMap((d) => names.map((n) => path.join(d, n))).find(isFile) || null;
+const subdirs = (d, re) => { try { return fs.readdirSync(d).filter((n) => re.test(n)).map((n) => path.join(d, n)); } catch (_) { return []; } };
+const programDirs = () => [...new Set([env.ProgramFiles, env.ProgramW6432, env['ProgramFiles(x86)'], env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Programs')].filter(Boolean))];
+function regDefault(key) {
+  try { return /REG_(?:EXPAND_)?SZ\s+(.+)/.exec(require('child_process').execFileSync('reg', ['query', key, '/ve'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 4000 }))?.[1].trim() || null; } catch (_) { return null; }
 }
+let loFound = null;
+function libreOfficePath() {
+  if (env.LIME_NO_LO) return null;
+  if (isFile(U.cfg.soffice)) return U.cfg.soffice;
+  if (isFile(loFound)) return loFound;
+  const c = ['/Applications/LibreOffice.app/Contents/MacOS/soffice', path.join(home, 'Applications/LibreOffice.app/Contents/MacOS/soffice'), '/usr/bin/soffice', '/usr/local/bin/soffice', '/opt/libreoffice/program/soffice', '/snap/bin/libreoffice'];
+  if (U.isWin) {
+    for (const b of programDirs()) for (const d of subdirs(b, /^libreoffice/i)) c.push(path.join(d, 'program', 'soffice.exe'));
+    for (const k of ['HKLM\\SOFTWARE\\LibreOffice\\UNO\\InstallPath', 'HKLM\\SOFTWARE\\WOW6432Node\\LibreOffice\\UNO\\InstallPath', 'HKCU\\SOFTWARE\\LibreOffice\\UNO\\InstallPath']) { const v = regDefault(k); if (v) c.push(path.join(v, 'soffice.exe')); }
+  }
+  return (loFound = c.find(isFile) || onPath(U.isWin ? ['soffice.exe'] : ['soffice', 'libreoffice']));
+}
+let pandocFound = null;
 function pandocPath() {
-  return ['/opt/homebrew/bin/pandoc', '/usr/local/bin/pandoc', '/usr/bin/pandoc', U.isWin && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Pandoc', 'pandoc.exe')].find((x) => x && fs.existsSync(x)) || null;
+  if (isFile(U.cfg.pandoc)) return U.cfg.pandoc;
+  if (isFile(pandocFound)) return pandocFound;
+  const c = ['/opt/homebrew/bin/pandoc', '/usr/local/bin/pandoc', '/usr/bin/pandoc', '/opt/local/bin/pandoc', path.join(home, '.local/bin/pandoc'), path.join(home, '.cabal/bin/pandoc')];
+  if (U.isWin) c.push(env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Pandoc', 'pandoc.exe'), ...programDirs().map((b) => path.join(b, 'Pandoc', 'pandoc.exe')), env.ProgramData && path.join(env.ProgramData, 'chocolatey', 'bin', 'pandoc.exe'), path.join(home, 'scoop', 'shims', 'pandoc.exe'), env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'pandoc.exe'));
+  return (pandocFound = c.find(isFile) || onPath([U.isWin ? 'pandoc.exe' : 'pandoc']));
 }
 const iworkPath = (app) => (isMac && ['/Applications', '/System/Applications'].map((d) => path.join(d, `${app}.app`)).find((p) => fs.existsSync(p))) || null;
 const missing = (why) => Object.assign(new Error(why), { code: 'ENGINE_MISSING' });
