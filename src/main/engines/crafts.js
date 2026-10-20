@@ -206,16 +206,53 @@ function appFor(file) {
   const id = PREF[U.ext(file)] || BY_GROUP[U.groupOf(file)];
   return id && installedApp(id) ? { id, ...APPS[id] } : null;
 }
-function openApp(id, files) {
-  const app = installedApp(id);
-  if (!app) throw new Error(`${APPS[id].name} isn’t installed.`);
-  const child = process.platform === 'darwin' ? spawn('open', ['-a', app, ...files], { detached: true, stdio: 'ignore' }) : spawn(app, files, { detached: true, stdio: 'ignore' });
+const bundledApps = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
+const appSource = (id) => path.join(U.cfg.apps, U.isWin ? `${id}.exe.br` : `${id}.app.tar.br`);
+const unpackingApps = new Map();
+async function bundledApp(id) {
+  const m = bundledApps()[id];
+  if (!m || !fs.existsSync(appSource(id))) return null;
+  const root = path.join(U.cfg.user, 'apps'), dir = path.join(root, `${id}-${m.version}`), target = path.join(dir, m.file);
+  if (fs.existsSync(target)) return target;
+  if (!unpackingApps.has(id)) {
+    unpackingApps.set(id, (async () => {
+      const part = `${dir}.part`;
+      await fsp.rm(part, { recursive: true, force: true });
+      await fsp.mkdir(part, { recursive: true });
+      const unbrotli = () => fs.createReadStream(appSource(id)).pipe(zlib.createBrotliDecompress());
+      if (U.isWin) await pipeline(unbrotli(), fs.createWriteStream(path.join(part, m.file)));
+      else {
+        await new Promise((ok, no) => {
+          const tar = spawn('/usr/bin/tar', ['-xf', '-', '-C', part], { stdio: ['pipe', 'ignore', 'pipe'] });
+          let err = '';
+          tar.stderr.on('data', (d) => { err += d; });
+          tar.on('error', no);
+          tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
+          pipeline(unbrotli(), tar.stdin).catch(no);
+        });
+      }
+      await fsp.rm(dir, { recursive: true, force: true });
+      await fsp.rename(part, dir);
+      for (const d of await fsp.readdir(root)) if (d.startsWith(`${id}-`) && d !== path.basename(dir)) fsp.rm(path.join(root, d), { recursive: true, force: true }).catch(() => {});
+      return target;
+    })().finally(() => unpackingApps.delete(id)));
+  }
+  return unpackingApps.get(id);
+}
+async function openApp(id, files = []) {
+  if (!APPS[id]) throw new Error('Unknown app.');
+  const app = installedApp(id) || (await bundledApp(id));
+  if (!app) throw new Error(`${APPS[id].name} isn’t in this build of Lime.`);
+  const child = process.platform === 'darwin' ? spawn('open', ['-a', app, ...files], { detached: true, stdio: 'ignore' }) : spawn(app, files, { detached: true, stdio: 'ignore', cwd: path.dirname(app) });
+  child.on('error', () => {});
   child.unref();
+  return app;
 }
 function status() {
   let manifest = {};
   try { manifest = JSON.parse(fs.readFileSync(path.join(U.cfg.crafts, 'manifest.json'), 'utf8')); } catch (_) {}
-  return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) }));
+  const apps = bundledApps();
+  return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
-module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, appFor, openApp, status };
+module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, appFor, openApp, bundledApp, status };

@@ -127,7 +127,7 @@ function appFromDmg(dmg, tmp) {
   }
   const z = which('7zz', '7z');
   if (!z) throw new Error('Install 7-Zip to unpack the Mac apps on this machine.');
-  sh(z, ['x', '-y', `-o${path.join(tmp, 'x')}`, dmg]);
+  sh(z, ['x', '-y', `-o${path.join(tmp, 'x')}`, '-xr!Applications', dmg]);
   const plist = walk(path.join(tmp, 'x')).find((f) => /\.app[\\/]Contents[\\/]Info\.plist$/.test(f));
   if (!plist) throw new Error(`no app in ${path.basename(dmg)}`);
   const app = path.dirname(path.dirname(plist));

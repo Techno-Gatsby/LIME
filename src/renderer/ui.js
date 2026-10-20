@@ -112,7 +112,7 @@ export function form(tool, opts, onChange) {
         break;
       default: {
         const type = o.type === 'password' ? 'password' : o.type === 'number' ? 'number' : 'text';
-        el = h(`<input class="input" id="${id}" type="${type}" value="${esc(val)}" placeholder="${esc(o.placeholder || '')}" ${o.min != null ? `min="${o.min}"` : ''} autocomplete="off" spellcheck="false">`);
+        el = h(`<input class="input" id="${id}" type="${type}" value="${esc(val)}" placeholder="${esc(o.placeholder || '')}" ${o.min != null ? `min="${o.min}"` : ''} ${o.required ? 'required aria-required="true"' : ''} autocomplete="off" spellcheck="false">`);
         el.addEventListener('input', (e) => set(o, o.type === 'number' && e.target.value !== '' ? Number(e.target.value) : e.target.value));
       }
     }

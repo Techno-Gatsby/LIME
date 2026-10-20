@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow, app, openEditor, editors, screen, dir }) => {
+module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, screen, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -169,7 +169,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
           asked = [];
           await click(`.petal[data-i="${i}"] text.l`);
           await sleep(500);
-          const card = await lime(`const c = document.querySelector('.card'); if (c.hidden) return null; return { required: [...c.querySelectorAll('[required]')].some((x) => !x.value) };`);
+          const card = await lime(`const c = document.querySelector('.card'); if (c.hidden) return null; const t = L.catalog[${JSON.stringify(it.tool)}]; return { required: [...c.querySelectorAll('[required]')].some((x) => !x.value) || (t.options || []).some((o) => o.required && c.querySelector('#o-' + o.key) && !c.querySelector('#o-' + o.key).value) };`);
           if (card) {
             if (card.required) { status = 'SKIP'; detail = 'needs typed input'; await lime('await L.collapse();'); }
             else await click('.card .foot .btn.primary');
@@ -274,6 +274,41 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
   } catch (e) { again.status = 'FAIL'; again.detail = e.message; }
   console.log(`${again.status} ${again.name.padEnd(44)}        ${again.detail}`);
   results.push(again);
+
+  const crafts = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'crafts'));
+  const { execFileSync } = require('child_process');
+  const running = (exe) => {
+    try {
+      if (process.platform === 'darwin') return execFileSync('pgrep', ['-f', `${exe}/Contents/MacOS/`], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
+      return execFileSync('powershell', ['-NoProfile', '-Command', `Get-Process | Where-Object { $_.Path -eq '${exe.replace(/'/g, "''")}' } | ForEach-Object { $_.Id }`], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
+    } catch (_) { return []; }
+  };
+  const stopApp = (pids) => { for (const pid of pids) try { process.kill(Number(pid)); } catch (_) {} };
+  openPrefs();
+  const pw = prefs();
+  while (pw.webContents.isLoading()) await sleep(200);
+  await sleep(800);
+  for (const { id, name } of crafts.status()) {
+    await check(`settings · open ${name}`, async () => {
+      const btn = `[data-a="app"][data-id="${id}"]`;
+      if (!(await js(`!!document.querySelector('${btn}')`, pw.webContents))) {
+        if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('apps are bundled only on Mac and Windows'), { skip: true });
+        throw new Error('no Open button in Settings');
+      }
+      await js(`document.querySelector('${btn}').click()`, pw.webContents);
+      const t = Date.now();
+      let label = '';
+      while (Date.now() - t < 120000) { label = await js(`document.querySelector('${btn}').textContent`, pw.webContents); if (label !== 'Opening…') break; await sleep(250); }
+      if (label !== 'Open') throw new Error(`${label}: ${await js(`document.querySelector('${btn}').title`, pw.webContents)}`);
+      const exe = await crafts.bundledApp(id);
+      await sleep(8000);
+      const pids = running(exe);
+      if (!pids.length) throw new Error(`${path.basename(exe)} is not running 8 s after opening`);
+      stopApp(pids);
+      return `${path.basename(exe)} running (pid ${pids.join(', ')}) in ${Math.round((Date.now() - t) / 1000)} s`;
+    });
+  }
+  pw.close();
 
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed through the wheel${skip.length ? `, ${skip.length} skipped` : ''}`);

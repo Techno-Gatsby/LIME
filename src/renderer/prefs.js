@@ -13,6 +13,7 @@ function seg(key, choices) {
   return `<div class="seg" data-k="${key}">${choices.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(s[key]) === v}">${l}</button>`).join('')}</div>`;
 }
 const sw = (key, invert) => `<label class="switch"><input type="checkbox" data-k="${key}" ${(invert ? !s[key] : s[key]) ? 'checked' : ''}></label>`;
+const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf' };
 const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').replace('class="ic', 'class="ic lead') : ''}<div class="t"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</div>${ctl || ''}</div>`;
 
 async function render() {
@@ -36,10 +37,12 @@ async function render() {
     ${row('cursor', 'Show or hide the wheel', isMac ? 'With files selected in Finder, opens them in the wheel' : '', '<kbd>⌃</kbd><kbd>⌥</kbd><kbd>L</kbd>')}
     ${row('fit', 'Reset position', '', '<button class="btn" data-a="reset">Reset</button>')}
   </div></section>
-  <section><h2>Built-in engines</h2><div class="group crafts">
-    ${eng.crafts.map((c) => row('', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, `<span class="dot ${c.bundled ? 'on' : ''}"></span>`)).join('')}
-  </div>
-  <div class="group" style="margin-top:10px">
+  <section><h2>ArtCraft apps</h2><div class="group apps">
+    ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : '<span class="tag">Not in this build</span>')).join('')}
+  </div></section>
+  <section><h2>Built-in engines</h2>
+  <div class="group">
+    ${eng.crafts.length ? row('cube', 'ArtCraft engines', eng.crafts.map((c) => c.name.replace('Craft', '')).join(' · '), `<span class="dot ${eng.crafts.every((c) => c.bundled) ? 'on' : ''}"></span>`) : ''}
     ${row('video', 'FFmpeg', 'Video and audio conversion', '<span class="dot on"></span>')}
     ${row('image', 'libvips · MuPDF · Tesseract', 'Images, PDF and text recognition in 13 languages', '<span class="dot on"></span>')}
     ${row('ruler', 'LibreDWG · OpenCascade', 'DWG drawings and STEP, IGES and BREP models', '<span class="dot on"></span>')}
@@ -59,6 +62,12 @@ app.addEventListener('click', async (e) => {
   const a = e.target.closest('[data-a]')?.dataset.a;
   if (a === 'folder') { const [d] = await api.invoke('dialog:open', { folders: true, multi: false, create: true }); if (d) set({ outFolder: d }); }
   if (a === 'reset') { await api.invoke('settings:set', { anchor: null }); }
+  if (a === 'app') {
+    const b = e.target.closest('[data-a]');
+    b.disabled = true;
+    b.textContent = 'Opening…';
+    try { await api.invoke('apps:open', b.dataset.id); b.textContent = 'Open'; } catch (err) { b.textContent = 'Try again'; b.title = String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''); } finally { b.disabled = false; }
+  }
   if (a === 'locate') {
     const el = e.target.closest('[data-a]');
     const [f] = await api.invoke('dialog:open', { title: `Find ${el.dataset.what}`, multi: false, filters: isMac ? undefined : [{ name: 'Programs', extensions: ['exe'] }] });

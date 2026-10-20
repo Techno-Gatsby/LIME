@@ -13,6 +13,7 @@ const cfg = {
   bin: process.env.LIME_BIN || path.join(__dirname, '../../../vendor/bin', `${process.platform}-${process.arch}`),
   data: process.env.LIME_DATA || path.join(__dirname, '../../../vendor/data'),
   crafts: process.env.LIME_CRAFTS || path.join(__dirname, '../../../vendor/crafts', `${process.platform}-${process.arch}`),
+  apps: process.env.LIME_APPS || path.join(__dirname, '../../../vendor/apps', `${process.platform}-${process.arch}`),
   user: process.env.LIME_USER || path.join(os.tmpdir(), 'lime-user'),
   tmp: path.join(os.tmpdir(), 'lime'),
   soffice: process.env.LIME_SOFFICE || '',

@@ -17,6 +17,7 @@ const RES = app.isPackaged ? process.resourcesPath : path.join(ROOT, 'vendor');
 const BIN = app.isPackaged ? path.join(RES, 'bin') : path.join(ROOT, 'vendor', 'bin', `${process.platform}-${process.arch}`);
 const DATA = path.join(RES, 'data');
 const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
+const APPS = app.isPackaged ? path.join(RES, 'apps') : path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
 const asset = (n) => path.join(ROOT, 'build', n);
 
 app.setName('Lime');
@@ -60,7 +61,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '', pandoc: settings.pandoc || '' });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '', pandoc: settings.pandoc || '' });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -399,7 +400,7 @@ async function setSettings(patch) {
   if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
-  if (('soffice' in patch && patch.soffice !== before.soffice) || ('pandoc' in patch && patch.pandoc !== before.pandoc)) [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() }));
+  if (('soffice' in patch && patch.soffice !== before.soffice) || ('pandoc' in patch && patch.pandoc !== before.pandoc)) { require('./engines/util').configure(engineCfg()); [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() })); }
   buildTray();
   broadcast('settings', publicSettings());
   return publicSettings();
@@ -492,6 +493,7 @@ function registerIpc() {
   h('settings:set', (patch) => setSettings(patch));
   h('prefs:open', (tab) => openPrefs(tab));
   h('engines:status', () => call('enginesStatus'));
+  h('apps:open', async (id) => { await crafts.openApp(id, []); return true; });
   h('recent:list', () => settings.recent.filter((r) => fs.existsSync(r.path)));
 }
 
@@ -529,6 +531,7 @@ app.whenReady().then(async () => {
   for (let i = 0; i < POOL; i++) pool.push(spawnWorker('jobs'));
   buildTray();
   globalShortcut.register('Control+Alt+L', hotkey);
+  require('./engines/util').configure(engineCfg());
   createWheel();
   applyCorner();
   startWatcher();
@@ -540,7 +543,7 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', () => { placeWheel(); placeSensor(); });
   screen.on('display-added', placeSensor);
   if (process.env.LIME_TEST && !app.isPackaged) require(path.join(ROOT, 'test', 'tools.test'))({ submit, jobs, app, tools, dir: process.env.LIME_TEST });
-  if (process.env.LIME_UI && !app.isPackaged) require(path.join(ROOT, 'test', 'ui.test'))({ wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, screen, dir: process.env.LIME_UI });
+  if (process.env.LIME_UI && !app.isPackaged) require(path.join(ROOT, 'test', 'ui.test'))({ wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, screen, dir: process.env.LIME_UI });
   if (process.env.LIME_SHOTS && !app.isPackaged) require(path.join(ROOT, 'test', 'shots'))({ wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, dir: process.env.LIME_SHOTS });
 });
 app.on('activate', () => showWheel());
