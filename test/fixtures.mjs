@@ -177,6 +177,48 @@ for (const [src, dst, main, mainDir] of [['doc.docx', 'macro.docm', 'application
   const desk = await sharp({ create: { width: 1300, height: 1500, channels: 3, background: '#3b3631' }, }).composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="1500"><filter id="n"><feTurbulence baseFrequency="0.9" numOctaves="2"/></filter><rect width="1300" height="1500" filter="url(#n)" opacity="0.18"/></svg>') }, { input: tilted, left: 300, top: 260 }]).jpeg({ quality: 90 }).toFile(P('doc-photo.jpg'));
 }
 fs.writeFileSync(P('lines.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$LTSCALE', '40', '1.0', '0', 'ENDSEC', '0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LTYPE', '70', '1', '0', 'LTYPE', '2', 'DASHED', '70', '0', '3', 'Dashed', '72', '65', '73', '2', '40', '9.525', '49', '6.35', '49', '-3.175', '0', 'ENDTAB', '0', 'TABLE', '2', 'LAYER', '70', '2', '0', 'LAYER', '2', '0', '70', '0', '62', '7', '6', 'CONTINUOUS', '370', '-3', '0', 'LAYER', '2', 'THICK', '70', '0', '62', '7', '6', 'CONTINUOUS', '370', '70', '0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES', '0', 'LINE', '8', 'THICK', '10', '0', '20', '0', '11', '200', '21', '0', '0', 'LINE', '8', '0', '6', 'DASHED', '10', '0', '20', '50', '11', '200', '21', '50', '0', 'LINE', '8', '0', '370', '13', '10', '0', '20', '100', '11', '200', '21', '100', '0', 'ENDSEC', '0', 'EOF', ''].join('\n'));
+{
+  const E = (type, ...kv) => ['0', type, ...kv.map(String)];
+  const doc = (ents, head = []) => [...head, '0', 'SECTION', '2', 'ENTITIES', ...ents.flat(), '0', 'ENDSEC', '0', 'EOF', ''].join('\n');
+  const lw = (pts, ...kv) => E('LWPOLYLINE', ...kv, 90, pts.length, ...pts.flatMap(([x, y, ...w]) => [10, x, 20, y, ...w]));
+  const line = (a, b, ...kv) => E('LINE', ...kv, 10, a[0], 20, a[1], 30, 0, 11, b[0], 21, b[1], 31, 0);
+  const frame = (x0, y0, x1, y1) => lw([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], 8, 'FRAME', 62, 3, 70, 1);
+  const corners = (pts) => pts.flatMap(([x, y], k) => [10 + k, x, 20 + k, y, 30 + k, 0]);
+  const blocks = (name, ents) => ['0', 'SECTION', '2', 'BLOCKS', ...E('BLOCK', 8, 0, 2, name, 70, 0, 10, 0, 20, 0, 30, 0, 3, name), ...ents.flat(), ...E('ENDBLK', 8, 0), '0', 'ENDSEC'];
+  const layers = (...ls) => ['0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(ls.length), ...ls.flatMap(([name, ...kv]) => E('LAYER', 2, name, 6, 'CONTINUOUS', ...kv)), '0', 'ENDTAB', '0', 'ENDSEC'];
+  const flip = [210, 0, 220, 0, 230, -1];
+  fs.writeFileSync(P('widths.dxf'), doc([
+    lw([[0, 0], [100, 0]], 8, 0, 43, 5),
+    lw([[0, 50, 40, 0, 41, 6], [20, 50, 40, 0, 41, 0], [100, 50]], 8, 0),
+    E('POLYLINE', 8, 0, 66, 1, 10, 0, 20, 0, 30, 0, 70, 0, 40, 0, 41, 0), E('VERTEX', 8, 0, 10, 0, 20, 100, 30, 0, 40, 4, 41, 2, 42, 1), E('VERTEX', 8, 0, 10, 40, 20, 100, 30, 0), E('SEQEND', 8, 0),
+  ]));
+  fs.writeFileSync(P('ocs.dxf'), doc([
+    frame(-200, -100, 200, 100),
+    E('CIRCLE', 8, 0, 10, 50, 20, 0, 30, 0, 40, 10, ...flip),
+    E('ARC', 8, 0, 10, 0, 20, 0, 30, 0, 40, 10, ...flip, 50, 0, 51, 90),
+    E('INSERT', 8, 0, 2, 'B', 10, 100, 20, 0, 30, 0, ...flip),
+    lw([[10, 20], [30, 20]], 8, 0, 38, 7, ...flip),
+    E('TEXT', 8, 0, 10, 60, 20, 50, 30, 0, 40, 5, 1, 'MIRROR', ...flip),
+    E('CIRCLE', 8, 0, 10, 0, 20, 0, 30, 5, 40, 10, 210, 1, 220, 0, 230, 0),
+    E('SOLID', 8, 0, ...corners([[120, -10], [130, -10], [120, -20], [130, -20]]), ...flip),
+    E('HATCH', 8, 0, 62, 1, 10, 0, 20, 0, 30, 0, ...flip, 2, 'SOLID', 70, 1, 71, 0, 91, 1, 92, 3, 72, 0, 73, 1, 93, 4, ...[[140, 40], [160, 40], [160, 60], [140, 60]].flatMap(([x, y]) => [10, x, 20, y]), 97, 0, 75, 0, 76, 1, 98, 0),
+  ], blocks('B', [line([0, 0], [10, 5], 8, 0)])));
+  fs.writeFileSync(P('layers.dxf'), doc([
+    frame(-200, -100, 200, 100),
+    E('INSERT', 8, 'TC', 62, 6, 2, 'BLK', 10, 0, 20, 0, 30, 0), E('INSERT', 8, 'OFF', 2, 'BLK', 10, 0, 20, 20, 30, 0), E('INSERT', 8, 'FROZEN', 2, 'BLK', 10, 0, 20, 40, 30, 0),
+    line([0, 60], [10, 60], 8, 'NOPLOT'), line([0, 62], [10, 62], 8, 'Defpoints'), line([0, 64], [10, 64], 8, 0, 62, 0), line([0, 66], [10, 66], 8, 0, 62, 94), line([0, 68], [10, 68], 8, 0, 62, 7, 420, 0xf0f0f0), line([0, 70], [10, 70], 8, 'TC'),
+  ], [...layers(['0', 70, 0, 62, 7], ['FRAME', 70, 0, 62, 3], ['A', 70, 0, 62, 150], ['OFF', 70, 0, 62, -3], ['FROZEN', 70, 1, 62, 5], ['NOPLOT', 70, 0, 62, 4, 290, 0], ['Defpoints', 70, 0, 62, 7], ['TC', 70, 0, 62, 7, 420, 0x123456]),
+    ...blocks('BLK', [line([0, 0], [10, 0], 8, 0), line([0, 2], [10, 2], 8, 'A'), line([0, 4], [10, 4], 8, 0, 62, 0)])]));
+  const paper = [line([0, 50], [100, 50], 8, 0, 67, 1), E('CIRCLE', 8, 0, 67, 1, 10, 50, 20, 50, 30, 0, 40, 10)];
+  fs.writeFileSync(P('paper.dxf'), doc([line([0, 0], [100, 0], 8, 0), ...paper]));
+  fs.writeFileSync(P('paperonly.dxf'), doc(paper));
+  fs.writeFileSync(P('xline.dxf'), doc([frame(0, 0, 100, 100), E('XLINE', 8, 0, 10, 50, 20, 50, 30, 0, 11, 1, 21, 0, 31, 0), E('RAY', 8, 0, 10, 50, 20, 50, 30, 0, 11, 0, 21, 1, 31, 0)]));
+  fs.writeFileSync(P('faces.dxf'), doc([
+    frame(-200, -100, 200, 100),
+    E('3DFACE', 8, 0, ...corners([[0, 0], [10, 0], [10, 10], [0, 10]]), 70, 5), E('3DFACE', 8, 0, ...corners([[20, 0], [30, 0], [30, 10], [20, 10]]), 70, 0),
+    E('SOLID', 8, 0, ...corners([[40, 0], [50, 0], [40, 10], [50, 10]])), E('TRACE', 8, 0, ...corners([[60, 0], [70, 0], [60, 10], [70, 10]])),
+  ]));
+}
 const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
 fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));
