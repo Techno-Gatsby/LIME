@@ -509,82 +509,9 @@ async function toHtml(input, opts, out) {
 
 async function toWord(input, opts, out, ctx) {
   const { doc, m } = await readPdf(input, opts.password);
-  const D = require('docx');
-  const n = doc.countPages();
-  const sizeVotes = new Map();
-  const pagesData = [];
-  for (let i = 0; i < n; i++) {
-    const page = doc.loadPage(i);
-    const blocks = [];
-    let block = null;
-    let line = null;
-    page.toStructuredText('preserve-images,preserve-whitespace').walk({
-      onImageBlock(bbox, transform, image) {
-        try {
-          const png = image.toPixmap().asPNG();
-          blocks.push({ type: 'image', png, w: bbox[2] - bbox[0], h: bbox[3] - bbox[1] });
-        } catch (_) {}
-      },
-      beginTextBlock(bbox) { block = { type: 'text', lines: [], bbox }; },
-      beginLine() { line = { runs: [] }; },
-      onChar(c, origin, font, size, quad, color) {
-        const bold = font.isBold() || /bold|black|heavy/i.test(font.getName());
-        const italic = font.isItalic() || /italic|oblique/i.test(font.getName());
-        const last = line.runs[line.runs.length - 1];
-        const col = color && color.length >= 3 ? color : [color?.[0] ?? 0, color?.[0] ?? 0, color?.[0] ?? 0];
-        const hexc = col.slice(0, 3).map((v) => Math.round(U.clamp(v, 0, 1) * 255).toString(16).padStart(2, '0')).join('');
-        if (last && last.bold === bold && last.italic === italic && Math.abs(last.size - size) < 0.5 && last.color === hexc) last.text += c;
-        else line.runs.push({ text: c, bold, italic, size, color: hexc, serif: font.isSerif(), mono: font.isMono() });
-        const r = Math.round(size);
-        sizeVotes.set(r, (sizeVotes.get(r) || 0) + 1);
-      },
-      endLine() { if (line && line.runs.length) block.lines.push(line); line = null; },
-      endTextBlock() { if (block && block.lines.length) blocks.push(block); block = null; },
-    });
-    const b = page.getBounds();
-    pagesData.push({ blocks, w: b[2] - b[0], h: b[3] - b[1] });
-    ctx?.progress((i + 1) / n * 0.7, `Reading page ${i + 1}`);
-  }
-  const body = [...sizeVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 11;
-  const children = [];
-  pagesData.forEach((pg, pi) => {
-    pg.blocks.forEach((bl) => {
-      if (bl.type === 'image') {
-        const maxW = (pg.w - 72) * (96 / 72);
-        let w = bl.w * (96 / 72), h = bl.h * (96 / 72);
-        if (w > maxW) { h *= maxW / w; w = maxW; }
-        children.push(new D.Paragraph({ children: [new D.ImageRun({ type: 'png', data: Buffer.from(bl.png), transformation: { width: Math.round(w), height: Math.round(h) } })] }));
-        return;
-      }
-      const runs = [];
-      bl.lines.forEach((ln, li) => {
-        ln.runs.forEach((r) => {
-          runs.push(new D.TextRun({ text: r.text, bold: r.bold, italics: r.italic, size: Math.round(r.size * 2), color: r.color === '000000' ? undefined : r.color, font: r.mono ? 'Consolas' : r.serif ? 'Times New Roman' : 'Calibri' }));
-        });
-        const nextText = bl.lines[li + 1]?.runs[0]?.text || '';
-        const thisText = ln.runs.map((r) => r.text).join('');
-        if (li < bl.lines.length - 1) {
-
-          if (/[-\u00ad]$/.test(thisText)) {} else if (thisText.trim().length < 45 || /^[•\-–\d]/.test(nextText.trim())) runs.push(new D.TextRun({ break: 1 }));
-          else runs.push(new D.TextRun({ text: ' ' }));
-        }
-      });
-      const maxSize = Math.max(...bl.lines.flatMap((l) => l.runs.map((r) => r.size)));
-      const heading = maxSize >= body * 1.7 ? D.HeadingLevel.HEADING_1 : maxSize >= body * 1.3 ? D.HeadingLevel.HEADING_2 : undefined;
-      children.push(new D.Paragraph({ children: runs, heading, spacing: { after: 120 } }));
-    });
-    if (pi < pagesData.length - 1) children.push(new D.Paragraph({ children: [new D.PageBreak()] }));
-  });
-  if (!children.length || !pagesData.some((p) => p.blocks.some((b) => b.type === 'text'))) {
-    if (!pagesData.some((p) => p.blocks.length)) throw new Error('No text or images found. If this is a scan, run OCR PDF first.');
-  }
-  const first = pagesData[0] || { w: 595, h: 842 };
-  const document = new D.Document({
-    creator: 'Lime',
-    styles: { default: { document: { run: { font: 'Calibri', size: Math.round(body * 2) } } } },
-    sections: [{ properties: { page: { size: { width: Math.round(first.w * 20), height: Math.round(first.h * 20) }, margin: { top: 720, bottom: 720, left: 900, right: 900 } } }, children }],
-  });
-  await fsp.writeFile(out, await D.Packer.toBuffer(document));
+  const R = require('./pdfread');
+  const layout = await R.readDocument(doc, m, ctx);
+  await fsp.writeFile(out, await require('docx').Packer.toBuffer(R.wordDocument(layout)));
   ctx?.progress(1);
   return out;
 }
@@ -623,17 +550,24 @@ async function toExcel(input, opts, out) {
   const { doc, m } = await readPdf(input, opts.password);
   const XLSX = require('xlsx');
   const wb = XLSX.utils.book_new();
+  const value = (t) => {
+    const num = /^-?[$€£]?\(?[\d,]*\.?\d+\)?%?$/.test(t) ? Number(t.replace(/[$€£,%()]/g, '')) * (/^\(.*\)$/.test(t) ? -1 : 1) : NaN;
+    return Number.isFinite(num) && t.replace(/[^\d]/g, '').length < 16 ? num : t;
+  };
   let any = false;
   for (let i = 0; i < doc.countPages(); i++) {
-    const lines = extractLines(m, doc.loadPage(i));
+    const page = doc.loadPage(i);
+    const tables = require('./pdfread').pageTables(m, page);
+    const inTable = (q) => { const x = (q[0] + q[2]) / 2, y = (q[1] + q[5]) / 2; return tables.some((t) => x > t.box[0] && x < t.box[2] && y > t.box[1] && y < t.box[3]); };
     const segs = [];
-    for (const l of lines) {
+    for (const l of extractLines(m, page)) {
+      const chars = l.chars.filter((ch) => !inTable(ch.quad));
       let cur = null;
-      for (let k = 0; k < l.chars.length; k++) {
-        const ch = l.chars[k];
-        const prev = l.chars[k - 1];
+      for (let k = 0; k < chars.length; k++) {
+        const ch = chars[k];
+        const prev = chars[k - 1];
         const gap = prev ? ch.quad[0] - prev.quad[2] : 0;
-        if (!cur || gap > Math.max(ch.size * 0.9, 4) || (ch.c === ' ' && l.chars[k + 1]?.c === ' ')) {
+        if (!cur || gap > Math.max(ch.size * 0.9, 4) || (ch.c === ' ' && chars[k + 1]?.c === ' ')) {
           if (cur && cur.text.trim()) segs.push(cur);
           cur = { text: '', x: ch.quad[0], y: l.origin[1], size: ch.size };
         }
@@ -641,7 +575,7 @@ async function toExcel(input, opts, out) {
       }
       if (cur && cur.text.trim()) segs.push(cur);
     }
-    if (!segs.length) continue;
+    if (!segs.length && !tables.length) continue;
     any = true;
     segs.sort((a, b) => a.y - b.y || a.x - b.x);
     const rows = [];
@@ -652,19 +586,28 @@ async function toExcel(input, opts, out) {
     const starts = [];
     segs.map((s) => s.x).sort((a, b) => a - b).forEach((x) => { if (!starts.length || x - starts[starts.length - 1] > 8) starts.push(x); });
     const colOf = (x) => { let best = 0; starts.forEach((s, j) => { if (Math.abs(s - x) < Math.abs(starts[best] - x)) best = j; }); return best; };
-    const aoa = rows.map((r) => {
+    const aoa = [], merges = [];
+    for (const b of [...rows.map((r) => ({ y: r.y, row: r })), ...tables.map((t) => ({ y: t.box[1], table: t }))].sort((p, q) => p.y - q.y)) {
+      if (b.table) {
+        const top = aoa.length;
+        for (let r = 0; r < b.table.rows; r++) aoa.push([]);
+        for (const c of b.table.cells) {
+          aoa[top + c.r][c.c] = value(c.text);
+          if (c.rs > 1 || c.cs > 1) merges.push({ s: { r: top + c.r, c: c.c }, e: { r: top + c.r + c.rs - 1, c: c.c + c.cs - 1 } });
+        }
+        continue;
+      }
       const arr = [];
-      r.segs.sort((a, b) => a.x - b.x).forEach((s) => {
+      b.row.segs.sort((p, q) => p.x - q.x).forEach((s) => {
         let c = colOf(s.x);
         while (arr[c] !== undefined) c++;
-        const t = s.text.trim();
-        const num = /^-?[$€£]?\(?[\d,]*\.?\d+\)?%?$/.test(t) ? Number(t.replace(/[$€£,%()]/g, '')) * (/^\(.*\)$/.test(t) ? -1 : 1) : NaN;
-        arr[c] = Number.isFinite(num) && t.replace(/[^\d]/g, '').length < 16 ? num : t;
+        arr[c] = value(s.text.trim());
       });
-      return Array.from(arr, (v) => (v === undefined ? '' : v));
-    });
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = starts.map(() => ({ wch: 16 }));
+      aoa.push(arr);
+    }
+    const ws = XLSX.utils.aoa_to_sheet(aoa.map((r) => Array.from(r, (v) => (v === undefined ? '' : v))));
+    if (merges.length) ws['!merges'] = merges;
+    ws['!cols'] = Array.from({ length: Math.max(starts.length, ...tables.map((t) => t.cols)) }, () => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, ws, `Page ${i + 1}`);
   }
   if (!any) throw new Error('No text found to build tables from. If this is a scan, run OCR PDF first.');

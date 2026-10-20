@@ -25,6 +25,14 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const dur = async (p, d, tol = 0.6) => { const i = await probe(p); ok(Math.abs(i.duration - d) <= tol, `duration ${i.duration} ≠ ${d}`); return i; };
   const zipHas = (p, name) => { const z = require('fflate').unzipSync(new Uint8Array(read(p))); ok(Object.keys(z).some((k) => k.includes(name)), `zip lacks ${name}: ${Object.keys(z).slice(0, 8)}`); return z; };
   const docxText = async (p) => (await require('mammoth').extractRawText({ path: p })).value;
+  const docxPart = (p, f = 'word/document.xml') => { const z = require('fflate').unzipSync(new Uint8Array(read(p))); return z[f] ? Buffer.from(z[f]).toString() : ''; };
+  const xmlText = (x) => (x.match(/<w:t(?:\s[^>]*)?>[^<]*<\/w:t>|<w:tab\/>|<w:br\/>/g) || []).map((t) => (t === '<w:tab/>' ? '\t' : t === '<w:br/>' ? '\n' : t.replace(/<[^>]+>/g, ''))).join('')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const docxBlocks = (p) => (docxPart(p).match(/<w:tbl>[\s\S]*?<\/w:tbl>|<w:p\b[^>]*\/>|<w:p\b[\s\S]*?<\/w:p>/g) || []).map((x) => (x.startsWith('<w:tbl>')
+    ? { x, rows: x.match(/<w:tr\b[\s\S]*?<\/w:tr>/g).map((r) => (r.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || []).map((c) => ({ x: c, t: (c.match(/<w:p\b[\s\S]*?<\/w:p>/g) || []).map(xmlText).filter(Boolean).join('\n'), span: +(/<w:gridSpan w:val="(\d+)"/.exec(c)?.[1] || 1), merge: /<w:vMerge w:val="(\w+)"/.exec(c)?.[1] || '' }))) }
+    : { x, t: xmlText(x), style: /<w:pStyle w:val="([^"]+)"/.exec(x)?.[1] || '' }));
+  const paras = (p) => docxBlocks(p).filter((b) => !b.rows && b.t.trim()).map((b) => b.t);
+  const same = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: ${JSON.stringify(a)}`);
   const files = (d) => (fs.existsSync(d) && fs.statSync(d).isDirectory() ? fs.readdirSync(d) : []);
   const U = E('util'), M = E('media');
   const ffp = async (p, extra = []) => JSON.parse((await U.run(U.binPath('ffprobe'), ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', ...extra, p])).stdout);
@@ -220,6 +228,68 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('images to pdf', 'jpg-to-pdf', ['photo.jpg', 'photo2.jpg', 'photo.png'], { combine: 'one', pageSize: 'a4', orientation: 'auto', margin: 'small' }, async ([o]) => pages(o, 3));
 
   T('pdf→docx', 'pdf-to-word', ['doc.pdf'], {}, async ([o]) => ok((await docxText(o)).includes('Lime test document'), 'docx text missing'));
+  const FIRST = 'Lime converts files on your own computer. This paragraph is long enough to wrap over several lines, so the reader has to join the lines again into one paragraph without losing or doubling any of the words in it.';
+  const SECOND = 'The second page continues the report with more details. Headers and footers repeat on every page and are left out.';
+  T('pdf→docx paragraphs, headings, runs, links, pictures', 'pdf-to-word', ['layout-report.pdf'], {}, ([o]) => {
+    const bl = docxBlocks(o).filter((b) => !b.rows && b.t.trim()), x = docxPart(o);
+    same(bl.map((b) => b.t), ['Annual Report 2026', '1. Introduction', FIRST, 'Warning this line is italic', 'Visit https://example.com', '2. Details', SECOND,
+      'Every invoice of the second quarter was paid in full; the remaining ones are due by October 31.', 'The formula E = mc2 has a superscript.'], 'paragraphs');
+    same(bl.map((b) => b.style), ['Heading1', 'Heading2', '', '', '', 'Heading2', '', '', ''], 'headings by size');
+    ok(/<w:vertAlign w:val="superscript"\/><\/w:rPr><w:t xml:space="preserve">2/.test(bl[8].x), 'superscript');
+    ok(/<w:b\/>.*<w:color w:val="FF0000"\/>.*>Warning <\/w:t>.*<w:i\/>.*this line is italic/.test(bl[3].x) && /w:ascii="Arial"/.test(bl[3].x) && /<w:color w:val="000000"\/><w:sz w:val="22"\/>/.test(bl[2].x), 'run formatting');
+    ok(/<w:hyperlink [^>]*>.*Visit/.test(bl[4].x) && /Target="https:\/\/example\.com\/" TargetMode="External"/.test(docxPart(o, 'word/_rels/document.xml.rels')), 'link');
+    ok(/<w:pageBreakBefore\/>/.test(bl[5].x) && !/<w:br w:type="page"\/>/.test(x), 'page 2 starts with a page break before its heading');
+    ok(!/Quarterly|Page \d/.test(paras(o).join('\n')), 'running header or footer kept');
+    same([...x.matchAll(/<wp:extent cx="(\d+)" cy="(\d+)"/g)].map((m) => `${m[1]}x${m[2]}`), ['2540000x1524000', '1270000x1270000'], 'pictures at their drawn size');
+    const z = zipHas(o, 'word/media/'), media = (e) => Object.keys(z).filter((k) => k.startsWith('word/media/') && k.endsWith(e));
+    ok(media('.jpg').length === 1 && Buffer.from(z[media('.jpg')[0]]).equals(read(fx('layout-photo.jpg'))) && media('.png').length === 1, 'JPEG not passed through as it was');
+    ok(/<dc:title>Lime Annual Report<\/dc:title>/.test(docxPart(o, 'docProps/core.xml')) && /<w:pgSz w:w="11900" w:h="16840"/.test(x), 'title or page size');
+    same(['ABCDEF+TimesNewRomanPS-BoldMT', 'Arial-BoldMT', 'Helvetica-Oblique', 'QWERTY+MalgunGothic,Bold', 'NanumGothic', 'F1', 'T3Font_2'].map(E('pdfread').fontFamily), ['Times New Roman', 'Arial', 'Arial', 'Malgun Gothic', 'NanumGothic', null, null], 'font families');
+  });
+  T('pdf→docx two columns in reading order', 'pdf-to-word', ['layout-columns.pdf'], {}, ([o]) => {
+    const t = (l) => `${l} paragraph of the column: it has enough words to wrap over a few lines inside its narrow column of text.`;
+    same(paras(o), ['Two Column Layout', t('Left first'), t('Left second'), t('Right first'), t('Right second'), 'A closing paragraph spans both columns again at the end of the page, below everything else.'], 'reading order');
+  });
+  T('pdf→docx tabbed rows and address breaks', 'pdf-to-word', ['layout-schedule.pdf'], {}, ([o]) => {
+    same(paras(o).filter((p) => /[\t\n]/.test(p)), ['1.\tRFP Published\t08/14/2026', '2.\tProposal Submission\t10/16/2026', '3.\tProposal Selection\t10/19/2026', '1880 Willamette Falls Drive, Ste. 200E\nWest Linn, Oregon 97068', 'Name:\tJEFFREY P. GABLER', 'Organization:\tWESTAR COUNCIL', 'Phone:\t503-657-4838'], 'tabbed rows');
+    same([...docxBlocks(o).find((b) => b.t?.startsWith('1.\t')).x.matchAll(/<w:tab w:val="left" w:pos="(\d+)"\/>/g)].map((m) => m[1]), ['1080', '7560'], 'tab stops');
+    ok(paras(o).includes('WESTAR') && paras(o).includes('Attn: Jeffrey P. Gabler'), 'address lines joined');
+  });
+  T('pdf→docx scanned and turned pages as page pictures', 'pdf-to-word', ['layout-scan.pdf'], {}, ([o]) => {
+    const x = docxPart(o);
+    same([...x.matchAll(/<wp:anchor [^>]*behindDoc="1"[^>]*>.*?<wp:positionH relativeFrom="page"><wp:posOffset>0<\/wp:posOffset>.*?<wp:positionV relativeFrom="page"><wp:posOffset>0<\/wp:posOffset>.*?<wp:extent cx="(\d+)" cy="(\d+)"/g)].map((m) => `${m[1]}x${m[2]}`), ['7556500x10693400', '10693400x7556500'], 'page pictures');
+    same(paras(o), ['Text after the scan'], 'text (invisible OCR text or the turned page leaked)');
+    ok(/<w:pageBreakBefore\/>/.test(docxBlocks(o).find((b) => b.t === 'Text after the scan').x) && /<w:pgSz w:w="16840" w:h="11900" w:orient="landscape"\/>/.test(x), 'page break or turned page size');
+  });
+  T('pdf→docx drops running heads, page numbers, logos', 'pdf-to-word', ['layout-book.pdf'], {}, ([o]) => {
+    const bl = docxBlocks(o).filter((b) => !b.rows && b.t.trim()), all = bl.map((b) => b.t);
+    ok(!all.some((t) => /Chapter|^(i|ii|iii|iv|v|vi|vii|viii)$/.test(t.trim())), `running head or page number kept: ${all.join(' | ')}`);
+    ok(bl.filter((b) => b.t === 'Overview' && b.style === 'Heading1').length === 3, 'the larger heading at the top of three pages was dropped');
+    for (let p = 1; p <= 8; p++) ok(all.some((t) => t.startsWith(`Body text of page ${p} `)), `page ${p} body missing`);
+    ok((docxPart(o).match(/<w:drawing>/g) || []).length === 1 && Object.keys(zipHas(o, 'word/media/')).filter((k) => /^word\/media\/.+\.jpg$/.test(k)).length === 1, 'logo kept or photo lost');
+  });
+  T('pdf→docx joins Korean with spaces, Chinese without', 'pdf-to-word', ['layout-cjk.pdf'], {}, ([o]) => same(paras(o), ['한글 문단도 읽을 수 있어야 합니다. 줄이 바뀌어도 한 문단으로 이어지고 단어 사이의 빈칸도 그대로 남습니다.', '中文段落也应该能够正确读取。换行之后仍然是同一个段落，字与字之间不应该出现多余的空格。'], 'paragraphs'));
+  T('pdf→docx ruled table between paragraphs', 'pdf-to-word', ['layout-table.pdf'], {}, ([o]) => {
+    const bl = docxBlocks(o).filter((b) => b.rows || b.t.trim()), t = bl[1];
+    ok(bl.length === 3 && bl[0].t.startsWith('The files converted') && t.rows && bl[2].t.startsWith('Everything was converted'), `blocks ${bl.map((b) => (b.rows ? 'TABLE' : b.t.slice(0, 20)))}`);
+    same(t.rows.map((r) => r.map((c) => c.t)), [['Name', 'Format', 'Size'], ['Report', 'PDF', '120 KB'], ['Photo', 'JPEG', '2.4 MB']], 'cells');
+    same([...t.x.matchAll(/<w:gridCol w:w="(\d+)"\/>/g)].map((m) => +m[1]), [3000, 3000, 3900], 'column widths');
+    ok([...t.x.matchAll(/<w:trHeight w:val="(\d+)" w:hRule="atLeast"\/>/g)].map((m) => +m[1]).join() === '400,400,400', 'row heights');
+    ok(t.rows.flat().every((c) => ['top', 'left', 'bottom', 'right'].every((s) => new RegExp(`<w:${s} w:val="single"`).test(c.x))) && /<w:b\/>/.test(t.rows[0][0].x) && !/<w:b\/>/.test(t.rows[1][0].x), 'borders or bold header');
+  });
+  T('pdf→docx missing inner rules become merged cells', 'pdf-to-word', ['layout-merged.pdf'], {}, ([o]) => same(docxBlocks(o).find((b) => b.rows).rows.map((r) => r.map((c) => c.t + (c.span > 1 ? `[${c.span}]` : '') + (c.merge ? `[${c.merge}]` : ''))), [['Region and city[2]', 'Total'], ['North[restart]', 'Seoul', '10'], ['[continue]', 'Busan', '20']], 'cells'));
+  T('pdf→docx bar rules keep weight and shading', 'pdf-to-word', ['layout-bars.pdf'], {}, ([o]) => {
+    const t = docxBlocks(o).find((b) => b.rows), sz = (c, s) => +new RegExp(`<w:${s} w:val="single"[^>]*w:sz="(\\d+)"`).exec(c.x)?.[1];
+    same(t.rows.map((r) => r.map((c) => c.t)), [['Test', 'Before', 'After'], ['Speed', '12 s', '4 s'], ['Memory', '800 MB', '300 MB']], 'cells');
+    const corner = t.rows[0][0], inner = t.rows[1][1], mm = sz(corner, 'left') / 8 * 25.4 / 72;
+    ok(sz(corner, 'top') > 2 * sz(inner, 'top') && mm >= 0.5 && mm <= 1, `borders ${sz(corner, 'top')} vs ${sz(inner, 'top')}, left ${mm} mm`);
+    ok(t.rows[0].every((c) => /w:fill="D9D9D9"/.test(c.x)) && !/w:fill=/.test(inner.x), 'shading');
+  });
+  T('pdf→docx boxes and empty grids stay text', 'pdf-to-word', ['layout-boxes.pdf'], {}, ([o]) => {
+    ok(!docxBlocks(o).some((b) => b.rows), 'a box became a table');
+    same(paras(o), ['Note', 'A box drawn around a note is no table, even with a rule under its title line.', 'Important words', 'Chart axis label'], 'paragraphs');
+  });
+  F('pdf→docx password-protected message', 'pdf-to-word', ['layout-locked.pdf'], {}, /password/i);
   T('pdf→pptx keeps page shapes', 'pdf-to-powerpoint', ['mixed.pdf'], { notes: true }, ([o]) => {
     const z = zipHas(o, 'ppt/slides/slide2.xml'), x = (f) => Buffer.from(z[f]).toString();
     const sz = /<p:sldSz cx="(\d+)" cy="(\d+)"/.exec(x('ppt/presentation.xml')).slice(1).map(Number);
@@ -231,10 +301,21 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   T('pdf→pptx', 'pdf-to-powerpoint', ['doc.pdf'], { notes: true }, ([o]) => { const z = zipHas(o, 'ppt/slides/slide'); ok(Object.keys(z).filter((k) => /slides\/slide\d+\.xml$/.test(k)).length === 3, 'slide count'); });
   T('pdf→xlsx', 'pdf-to-excel', ['doc.pdf'], { to: 'xlsx' }, ([o]) => ok(require('xlsx').readFile(o).SheetNames.length >= 1, 'no sheets'));
+  T('pdf→xlsx ruled table into cells', 'pdf-to-excel', ['layout-table.pdf'], { to: 'xlsx' }, ([o]) => {
+    const X = require('xlsx'), rows = X.utils.sheet_to_json(X.readFile(o).Sheets['Page 1'], { header: 1, defval: '' }), i = rows.findIndex((r) => r[0] === 'Name');
+    same(rows.slice(i, i + 3).map((r) => r.slice(0, 3)), [['Name', 'Format', 'Size'], ['Report', 'PDF', '120 KB'], ['Photo', 'JPEG', '2.4 MB']], 'table rows');
+    ok(String(rows[i - 1]?.[0]).startsWith('The files converted') && String(rows[i + 3]?.[0]).startsWith('Everything was converted'), `text around the table: ${JSON.stringify(rows)}`);
+  });
+  T('pdf→xlsx merged cells', 'pdf-to-excel', ['layout-merged.pdf'], { to: 'xlsx' }, ([o]) => {
+    const X = require('xlsx'), ws = X.readFile(o).Sheets['Page 1'];
+    same((ws['!merges'] || []).map((m) => X.utils.encode_range(m)).sort(), ['A1:B1', 'A2:A3'], 'merges');
+    same(['A1', 'C1', 'A2', 'B2', 'C2', 'B3', 'C3'].map((k) => ws[k]?.v), ['Region and city', 'Total', 'North', 'Seoul', 10, 'Busan', 20], 'cells');
+  });
   T('pdf→jpg', 'pdf-to-jpg', ['doc.pdf'], { format: 'jpg', dpi: '96', pages: 'all' }, async ([o]) => { const fl = files(o); ok(fl.length === 3, `${fl.length} images`); await fmt(path.join(o, fl[0]), 'jpeg'); });
   T('pdf→tiff every page', 'pdf-to-tiff', ['mixed.pdf'], { dpi: '72' }, async ([o]) => { const m = await sharp(o).metadata(); ok(m.format === 'tiff' && m.pages === 2, `tiff pages ${m.pages}`); const p2 = await sharp(o, { page: 1 }).metadata(); ok(p2.width === 842 && p2.height === 595, `page 2 ${p2.width}×${p2.height}`); });
   T('pdf→cbz', 'pdf-to-cbz', ['doc.pdf'], {}, async ([o]) => { const z = require('fflate').unzipSync(new Uint8Array(read(o))); ok(Object.keys(z).join() === '001.jpg,002.jpg,003.jpg', `entries ${Object.keys(z)}`); ok((await sharp(Buffer.from(z['002.jpg'])).metadata()).format === 'jpeg', 'not jpeg'); });
   T('pdf→md', 'pdf-to-markdown', ['doc.pdf'], {}, ([o]) => ok(/Lime test document/.test(txt(o)) && /quick brown fox/.test(txt(o)), `markdown: ${txt(o).slice(0, 120)}`));
+  T('pdf→md headings without running heads', 'pdf-to-markdown', ['layout-report.pdf'], {}, ([o]) => ok(txt(o).replace(/__/g, '').startsWith(`# Annual Report 2026\n\n## 1\\. Introduction\n\n${FIRST.replace(/\./g, '\\.')}\n\n`) && /## (__)?2\\\. Details/.test(txt(o)) && !/Quarterly|Page \d/.test(txt(o)), `markdown: ${txt(o).slice(0, 160)}`));
   T('pdf→webp pages', 'pdf-to-jpg', ['doc.pdf'], { format: 'webp', dpi: '96' }, async ([o]) => { const f = files(o); ok(f.length === 3, `${f}`); ok((await sharp(path.join(o, f[0])).metadata()).format === 'webp', 'not webp'); });
   T('pdf→txt', 'pdf-to-text', ['doc.pdf'], {}, ([o]) => ok(score(txt(o)) > 0.95, 'text missing'));
   T('pdf→html', 'pdf-to-html', ['doc.pdf'], {}, ([o]) => ok(/<html/i.test(txt(o)) && txt(o).includes('Lime'), 'html'));
