@@ -393,15 +393,15 @@ async function toImages(input, opts, ctx) {
   const n = doc.countPages();
   const idx = U.parseRanges(opts.pages || 'all', n);
   const dpi = Number(opts.dpi) || 150;
-  const fmt = opts.format === 'png' ? 'png' : 'jpg';
+  const fmt = ['png', 'webp'].includes(opts.format) ? opts.format : 'jpg';
   const single = idx.length === 1;
   const folder = single ? null : ctx.out.folder(input, `${U.base(input)} - images`);
   const outs = [];
   for (let k = 0; k < idx.length; k++) {
     const page = doc.loadPage(idx[k]);
     const s = dpi / 72;
-    const pix = page.toPixmap(m.Matrix.scale(s, s), m.ColorSpace.DeviceRGB, fmt === 'png' && opts.transparent, true);
-    const data = fmt === 'png' ? pix.asPNG() : pix.asJPEG(Number(opts.quality) || 90, false);
+    const pix = page.toPixmap(m.Matrix.scale(s, s), m.ColorSpace.DeviceRGB, fmt !== 'jpg' && opts.transparent, true);
+    const data = fmt === 'png' ? pix.asPNG() : fmt === 'webp' ? await require('sharp')(Buffer.from(pix.asPNG())).webp({ quality: Number(opts.quality) || 90 }).toBuffer() : pix.asJPEG(Number(opts.quality) || 90, false);
     const name = `${U.base(input)} - page ${idx[k] + 1}.${fmt}`;
     const p = single ? ctx.out.file(input, name) : U.uniquePath(path.join(folder, name));
     await fsp.writeFile(p, data);
@@ -409,6 +409,54 @@ async function toImages(input, opts, ctx) {
     ctx.progress((k + 1) / idx.length, `Page ${k + 1} of ${idx.length}`);
   }
   return single ? outs : [folder];
+}
+function rgbPages(doc, m, idx, dpi, ctx) {
+  return idx.map((i, k) => {
+    const pix = doc.loadPage(i).toPixmap(m.Matrix.scale(dpi / 72, dpi / 72), m.ColorSpace.DeviceRGB, false, true);
+    const w = pix.getWidth(), h = pix.getHeight(), st = pix.getStride(), px = pix.getPixels(), rgb = Buffer.alloc(w * h * 3);
+    for (let y = 0; y < h; y++) rgb.set(px.subarray(y * st, y * st + w * 3), y * w * 3);
+    ctx?.progress((k + 1) / idx.length, `Page ${k + 1} of ${idx.length}`);
+    return { w, h, rgb, pix };
+  });
+}
+function multiTiff(pages, dpi) {
+  const out = [Buffer.from([0x49, 0x49, 42, 0, 0, 0, 0, 0])];
+  let pos = 8, link = [out[0], 4];
+  for (const { w, h, rgb } of pages) {
+    const strip = zlib.deflateSync(rgb), pad = Buffer.alloc(strip.length & 1), extra = Buffer.alloc(22);
+    [8, 8, 8].forEach((v, k) => extra.writeUInt16LE(v, k * 2));
+    [dpi, 1, dpi, 1].forEach((v, k) => extra.writeUInt32LE(v, 6 + k * 4));
+    const extraAt = pos + strip.length + pad.length, ifdAt = extraAt + extra.length;
+    const E = [[256, 4, 1, w], [257, 4, 1, h], [258, 3, 3, extraAt], [259, 3, 1, 8], [262, 3, 1, 2], [273, 4, 1, pos], [277, 3, 1, 3], [278, 4, 1, h], [279, 4, 1, strip.length], [282, 5, 1, extraAt + 6], [283, 5, 1, extraAt + 14], [284, 3, 1, 1], [296, 3, 1, 2]];
+    const ifd = Buffer.alloc(6 + E.length * 12);
+    ifd.writeUInt16LE(E.length, 0);
+    E.forEach(([tag, type, count, v], k) => { const o = 2 + k * 12; ifd.writeUInt16LE(tag, o); ifd.writeUInt16LE(type, o + 2); ifd.writeUInt32LE(count, o + 4); if (type === 3 && count === 1) ifd.writeUInt16LE(v, o + 8); else ifd.writeUInt32LE(v, o + 8); });
+    link[0].writeUInt32LE(ifdAt, link[1]);
+    link = [ifd, 2 + E.length * 12];
+    out.push(strip, pad, extra, ifd);
+    pos = ifdAt + ifd.length;
+  }
+  return Buffer.concat(out);
+}
+async function toTiff(input, opts, out, ctx) {
+  const { doc, m } = await readPdf(input, opts.password);
+  const dpi = U.clamp(Number(opts.dpi) || 300, 36, 1200);
+  await fsp.writeFile(out, multiTiff(rgbPages(doc, m, U.parseRanges(opts.pages || 'all', doc.countPages()), dpi, ctx), dpi));
+  return out;
+}
+async function toComic(input, opts, out, ctx) {
+  const { doc, m } = await readPdf(input, opts.password);
+  const idx = U.parseRanges(opts.pages || 'all', doc.countPages()), digits = Math.max(3, String(idx.length).length), files = {};
+  rgbPages(doc, m, idx, U.clamp(Number(opts.dpi) || 150, 36, 600), ctx).forEach(({ pix }, k) => { files[`${String(k + 1).padStart(digits, '0')}.jpg`] = [Buffer.from(pix.asJPEG(Number(opts.quality) || 90, false)), { level: 0 }]; });
+  await fsp.writeFile(out, require('fflate').zipSync(files));
+  return out;
+}
+async function toMarkdown(input, opts, out, ctx) {
+  const dir = await U.tmpDir('pdfmd');
+  try {
+    const docx = await toWord(input, opts, path.join(dir, `${U.base(input)}.docx`), { ...ctx, progress: (p, l) => ctx?.progress(p * 0.8, l) });
+    return await require('./office').convertDocument(docx, { to: 'md' }, { ...ctx, out: { ...ctx.out, file: () => out } });
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
 async function extractImages(input, opts, ctx) {
   const { doc, m } = await readPdf(input, opts.password);
@@ -884,6 +932,6 @@ async function thumbnail(input, width = 240) {
 module.exports = {
   mupdf, readPdf, loadLib, saveLib, unpredict, pageCount, pageFrame, fontCache, hex, extractLines, quadRect, STD, FONT_FILES,
   merge, subset, split, removePages, extract, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
-  repair, flatten, protect, unlock, redact, toImages, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
+  repair, flatten, protect, unlock, redact, toImages, toTiff, toComic, toMarkdown, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
   compress, ocr, imagesToPdf, thumbnail,
 };

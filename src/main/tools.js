@@ -61,8 +61,13 @@ const TOOLS = [
   { id: 'pdf-to-excel', cat: 'pdf', name: 'PDF to Excel', desc: 'Rebuild tables into rows and columns.', accepts: ['pdf'], ext: (o) => o.to || 'xlsx',
     options: [choice('to', 'Format', [['xlsx', 'Excel'], ['csv', 'CSV']]), pdfPassword], run: each((f, o, c) => pdf().toExcel(f, o, outFile('', o.to || 'xlsx')(f, c))) },
   { id: 'pdf-to-jpg', cat: 'pdf', name: 'PDF to images', desc: 'Save each page as a picture.', accepts: ['pdf'], save: 'folder', suffix: ' - images',
-    options: [choice('format', 'Format', [['jpg', 'JPG'], ['png', 'PNG']]), choice('dpi', 'Resolution', [['96', 'Screen'], ['150', 'Standard'], ['300', 'Print']], '150'), pages(), pdfPassword],
+    options: [choice('format', 'Format', [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP']]), choice('dpi', 'Resolution', [['96', 'Screen'], ['150', 'Standard'], ['300', 'Print']], '150'), pages(), pdfPassword],
     run: each((f, o, c) => pdf().toImages(f, o, c)) },
+  { id: 'pdf-to-tiff', cat: 'pdf', name: 'PDF to TIFF', desc: 'Every page in one multi-page TIFF.', accepts: ['pdf'], ext: 'tif',
+    options: [choice('dpi', 'Resolution', [['150', 'Standard'], ['300', 'Print'], ['600', 'Archive']], '300'), pages(), pdfPassword], run: each((f, o, c) => pdf().toTiff(f, o, outFile('', 'tif')(f, c), c)) },
+  { id: 'pdf-to-cbz', cat: 'pdf', name: 'PDF to comic book', desc: 'Pages as a CBZ for comic and e-book readers.', accepts: ['pdf'], ext: 'cbz',
+    options: [choice('dpi', 'Resolution', [['96', 'Small'], ['150', 'Standard'], ['300', 'Sharp']], '150'), pages(), pdfPassword], run: each((f, o, c) => pdf().toComic(f, o, outFile('', 'cbz')(f, c), c)) },
+  { id: 'pdf-to-markdown', cat: 'pdf', name: 'PDF to Markdown', desc: 'Headings, paragraphs, lists and pictures as Markdown.', accepts: ['pdf'], ext: 'md', options: [pdfPassword], run: each((f, o, c) => pdf().toMarkdown(f, o, outFile('', 'md')(f, c), c)) },
   { id: 'pdf-to-text', cat: 'pdf', name: 'PDF to text', desc: 'All text as a plain-text file.', accepts: ['pdf'], ext: 'txt', options: [pdfPassword], run: each((f, o, c) => pdf().toText(f, o, outFile('', 'txt')(f, c))) },
   { id: 'pdf-to-html', cat: 'pdf', name: 'PDF to HTML', desc: 'A web page that keeps the layout.', accepts: ['pdf'], ext: 'html', options: [pdfPassword], run: each((f, o, c) => pdf().toHtml(f, o, outFile('', 'html')(f, c))) },
   { id: 'pdf-to-svg', cat: 'pdf', name: 'PDF to SVG', desc: 'Vector artwork via VectorCraft.', accepts: ['pdf'], ext: 'svg', craft: 'vectorcraft', run: each((f, o, c) => craft().vector(f, { to: 'svg' }, c)) },
@@ -293,7 +298,7 @@ const ZIP = W('create-archive', 'ZIP', 'Archive', { format: 'zip' });
 const HASH = W('file-hash', 'SHA-256', 'Checksum');
 const WHEELS = {
   pdf: {
-    convert: [W('pdf-to-word', 'DOCX', 'Word'), W('pdf-to-jpg', 'JPG', 'Pages', { format: 'jpg' }, { full: true }), W('pdf-to-jpg', 'PNG', 'Pages', { format: 'png' }, { full: true }), W('pdf-to-excel', 'XLSX', 'Excel', { to: 'xlsx' }), W('pdf-to-powerpoint', 'PPTX', 'PowerPoint'), W('pdf-to-text', 'TXT', 'Text'), W('pdf-to-html', 'HTML', 'Web'), W('pdf-to-svg', 'SVG', 'Vector')],
+    convert: [W('pdf-to-word', 'DOCX', 'Word'), W('pdf-to-jpg', 'JPG', 'Pages', { format: 'jpg' }, { full: true }), W('pdf-to-jpg', 'PNG', 'Pages', { format: 'png' }, { full: true }), W('pdf-to-excel', 'XLSX', 'Excel', { to: 'xlsx' }), W('pdf-to-powerpoint', 'PPTX', 'PowerPoint'), W('pdf-to-text', 'TXT', 'Text'), W('pdf-to-html', 'HTML', 'Web'), W('pdf-to-svg', 'SVG', 'Vector'), W('pdf-to-markdown', 'MD', 'Markdown'), W('pdf-to-tiff', 'TIFF', 'All pages')],
     tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Organize'), W('ocr-pdf', 'OCR', 'Searchable'), W('protect-pdf', 'Protect', 'Password'), W('optimize-pdf', 'Optimize', 'Rebuild'), W('split-pdf', 'Split', 'Pages')],
   },
   image: {
