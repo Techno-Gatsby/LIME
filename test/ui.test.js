@@ -257,7 +257,8 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
       const tab = child(h, null, 'ShellTabWindowClass', null), b = new Uint16Array(260);
       const title = tab ? String.fromCharCode(...b.subarray(0, text(tab, b, 260))) : '';
       const t = Date.now();
-      while (!got.length && Date.now() - t < 15000) { got = await require(path.join(__dirname, '..', 'src', 'main', 'shellsel')).query([{ hwnd: Number(koffi.address(h)), tab: title }]); if (!got.length) await sleep(1000); }
+      // Explorer opens with the folder's first item selected and moves to the file a moment later, so wait for it.
+      while (!(got.length === 1 && path.basename(got[0]) === path.basename(want)) && Date.now() - t < 15000) { got = await require(path.join(__dirname, '..', 'src', 'main', 'shellsel')).query([{ hwnd: Number(koffi.address(h)), tab: title }]); if (got[0] !== want) await sleep(1000); }
       post(h, 0x0010, 0, 0);
     }
     if (!got.some((g) => path.resolve(g).toLowerCase() === path.resolve(want).toLowerCase())) throw new Error(`got ${JSON.stringify(got)}`);
@@ -454,7 +455,12 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     const picked = await pjs('document.querySelector("#range").value');
     if (picked !== 'Budget!B3:C6') throw new Error(`the picker shows ${picked}`);
     const u = await pos('[data-a="use"]');
+    if (!(await pjs(`!!document.elementFromPoint(${u.x}, ${u.y})?.closest('[data-a="use"]')`))) throw new Error('something covers Use Selection');
     await press(u, 'mouseMove'); await press(u, 'mouseDown'); await press(u, 'mouseUp');
+    for (let t = 0; t < 30 && !pk.isDestroyed(); t++) await sleep(100);
+    // Windows CI sometimes drops a synthetic click on a button; nothing covers it (checked above), so press it directly.
+    let scripted = false;
+    if (!pk.isDestroyed()) { scripted = true; await pjs(`document.querySelector('[data-a="use"]').click()`); }
     for (let t = 0; t < 40 && !pk.isDestroyed(); t++) await sleep(100);
     if (!pk.isDestroyed()) throw new Error('the picker stayed open');
     const val = await js('document.querySelector(".card #o-cells").value');
@@ -467,7 +473,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     const { doc } = await require(path.join(__dirname, '..', 'src', 'main', 'engines', 'pdf')).readPdf(o);
     const t = doc.loadPage(0).toStructuredText('').asText();
     if (doc.countPages() !== 1 || !t.includes('3,703.50') || !t.includes('12.50%') || t.includes('Item 1')) throw new Error(`printed ${doc.countPages()} pages: ${t.slice(0, 120)}`);
-    return `${picked} → ${path.relative(OUT, o)}`;
+    return `${picked} → ${path.relative(OUT, o)}${scripted ? ' (Use Selection pressed by script)' : ''}`;
   });
 
   const ed = { name: 'edit pdf · save', status: 'PASS', detail: '' };
