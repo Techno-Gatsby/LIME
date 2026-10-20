@@ -131,11 +131,12 @@ function outputPlanner(job) {
     return job.outFolder || path.join(os.homedir(), 'Downloads');
   }
   const claim = (p) => { while (reserved.has(p)) p = uniquePath(p.replace(/(\.[^.]+)?$/, ' x$1')); reserved.add(p); return p; };
+  const kind = (p) => { const e = path.extname(p).toLowerCase(); return { '.tiff': '.tif', '.jpeg': '.jpg' }[e] || e; };
   function file(src, name) {
     if (dest?.kind === 'file' && !used) {
       used = true;
       const want = path.extname(name).toLowerCase();
-      const p = path.extname(dest.path).toLowerCase() === want || !want ? dest.path : dest.path.replace(/(\.[^./\\]+)?$/, want);
+      const p = kind(dest.path) === kind(name) || !want ? dest.path : dest.path.replace(/(\.[^./\\]+)?$/, want);
       fs.mkdirSync(path.dirname(p), { recursive: true });
       if (p !== dest.path || (fs.existsSync(p) && !fs.statSync(p).isFile())) return claim(uniquePath(p));
       fs.rmSync(p, { force: true });
@@ -147,6 +148,8 @@ function outputPlanner(job) {
   }
   function folder(src, name) {
     if (dest?.kind === 'folder' && !used) { used = true; fs.mkdirSync(dest.path, { recursive: true }); return dest.path; }
+    // Asked for one file but the result is several (every sheet, every page): a folder under the chosen name.
+    if (dest?.kind === 'file' && !used) { used = true; const p = uniquePath(dest.path.replace(/\.[^./\\]+$/, '')); fs.mkdirSync(p, { recursive: true }); return p; }
     const p = uniquePath(path.join(dest?.kind === 'folder' ? dest.path : dirFor(src), sanitize(name)));
     fs.mkdirSync(p, { recursive: true });
     return p;

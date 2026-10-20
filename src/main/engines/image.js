@@ -20,7 +20,8 @@ async function open(p, opts = {}) {
   const lim = { limitInputPixels: false, animated: !!opts.animated, failOn: 'none' };
   if (e === 'heic' || e === 'heif' || e === 'hif') return openHeif(p, lim);
   if (e === 'psd') {
-    const { readPsd } = require('ag-psd');
+    const { readPsd, initializeCanvas } = require('ag-psd');
+    initializeCanvas(() => { throw new Error('This PSD needs PhotoCraft to open.'); }, (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }));
     const psd = readPsd(await fsp.readFile(p), { useImageData: true, skipLayerImageData: true, skipThumbnail: true });
     if (!psd.imageData) throw new Error('This PSD was saved without a flattened preview. Open it in PhotoCraft and save with “Maximize compatibility”.');
     const d = psd.imageData;

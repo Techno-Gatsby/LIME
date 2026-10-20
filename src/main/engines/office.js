@@ -38,7 +38,8 @@ const missing = (why) => Object.assign(new Error(why), { code: 'ENGINE_MISSING' 
 let loQueue = Promise.resolve();
 function soffice(input, toSpec, outDir, opts = {}) {
   const job = async () => {
-    const profile = path.join(U.cfg.user, 'lo-profile');
+    // One profile per worker: LibreOffice instances sharing a profile hand work to each other and fail.
+    const profile = path.join(U.cfg.user, `lo-profile${require('worker_threads').threadId || ''}`);
     await fsp.mkdir(profile, { recursive: true });
     const args = ['--headless', '--norestore', '--nolockcheck', '--nodefault', '--nofirststartwizard', `-env:UserInstallation=${pathToFileURL(profile).href}`];
     if (opts.infilter) args.push(`--infilter=${opts.infilter}`);
@@ -444,6 +445,7 @@ async function pptxToHtml(file) {
 }
 async function convertSlides(input, to, ctx) {
   const from = U.ext(input);
+  if (from === to) throw new Error(`This file is already ${to.toUpperCase()}.`);
   if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   const out = ctx.out.file(input, `${U.base(input)}.${to}`);
   if (libreOfficePath() && ['pdf', 'pptx', 'ppt', 'odp'].includes(to) && from !== to) return viaLibreOffice(input, to, ctx, { out });

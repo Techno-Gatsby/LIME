@@ -214,10 +214,13 @@ async function makeFillable(p, opts, ctx) {
   return { path: out, note: `Added ${k} field${k === 1 ? '' : 's'}` };
 }
 async function enhanceScan(pdfIn, opts, ctx) {
-  const pages = (await pdfInfo(pdfIn))?.pages || 1;
+  const { doc } = await require('./pdf').readPdf(pdfIn), pages = doc.countPages();
   let straight = 0;
   for (let i = 1; i <= pages; i++) {
-    try { await pdfScript([openDoc(pdfIn), { tool: 'page_enhance_camera', args: { doc: 1, page: i, mode: opts.mode || 'greyscale' } }, { tool: 'doc_save', args: { doc: 1 } }], ctx, `Straightening page ${i} of ${pages}`); straight++; } catch (_) {}
+    const [x0, y0, x1, y1] = doc.loadPage(i - 1).getBounds(), w = x1 - x0, h = y1 - y0;
+    const enhance = (more) => pdfScript([openDoc(pdfIn), { tool: 'page_enhance_camera', args: { doc: 1, page: i, mode: opts.mode || 'greyscale', ...more } }, { tool: 'doc_save', args: { doc: 1 } }], ctx, `Straightening page ${i} of ${pages}`);
+    // A flat scan has no desk edges to find: the whole page is the document, so the look still applies.
+    try { await enhance({}); straight++; } catch (_) { await enhance({ corners: [0, 0, w, 0, w, h, 0, h] }).catch(() => {}); }
   }
   return straight;
 }

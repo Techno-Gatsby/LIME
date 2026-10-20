@@ -824,6 +824,19 @@ try { sh(cli('designcraft'), ['run', '--sample', '--export', P('layout.idml')]);
 try { sh(cli('effectcraft'), ['--demo', 'exec', 'file.exportLottie', '--params', JSON.stringify({ path: P('anim.json') })]); } catch (e) { console.log('lottie', e.message); }
 try { sh(cli('filmcraft'), ['--demo', 'exec', 'file.exportOtio', `path=${P('timeline.otio')}`]); } catch (e) { console.log('otio', e.message); }
 fs.rmSync(unpacked, { recursive: true, force: true });
+// Short copies for the option sweep: half a second of the animation, and the timeline's first clip at 320×180.
+if (fs.existsSync(P('anim.json'))) { const a = JSON.parse(fs.readFileSync(P('anim.json'), 'utf8')); a.op = a.ip + 12; fs.writeFileSync(P('brief.json'), JSON.stringify(a)); }
+if (fs.existsSync(P('timeline.otio'))) {
+  const t = JSON.parse(fs.readFileSync(P('timeline.otio'), 'utf8')), video = t.tracks.children.find((x) => x.kind === 'Video'), clip = video.children.find((c) => /^Clip/.test(c.OTIO_SCHEMA));
+  Object.assign(t.metadata.filmcraft.settings, { width: 320, height: 180 });
+  clip.source_range.duration.value = 12;
+  video.children = [clip];
+  t.tracks.children = [video];
+  fs.writeFileSync(P('brief.otio'), JSON.stringify(t));
+}
+const stereo = 'aevalsrc=sin(440*2*PI*t)|sin(660*2*PI*t):s=48000';
+sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=960x540:rate=24', '-f', 'lavfi', '-i', stereo, '-t', '1', '-c:v', 'libx264', '-crf', '4', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', P('sweep.mp4')]);
+sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', stereo, '-t', '1', '-c:a', 'aac', '-b:a', '256k', P('sweep.m4a')]);
 
 // Data, contacts, subtitles and archives, all built here (CP949 through iconv-lite, archives through fflate, zlib or a
 // tiny TAR writer, so no symlink has to exist on disk).

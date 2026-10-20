@@ -253,6 +253,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('rotate 90', 'rotate-image', ['photo2.jpg'], { angle: '90', flip: 'none' }, async ([o]) => { const m = await fmt(o); const s = await sharp(fx('photo2.jpg')).metadata(); ok(m.width === s.height, 'not rotated'); });
   T('adjust grayscale', 'adjust-image', ['photo2.jpg'], { filter: 'grayscale', brightness: 0, contrast: 0, saturation: 0, sharpen: 0, blur: 0 }, async ([o]) => { const st = await sharp(o).stats(); ok(Math.abs(st.channels[0].mean - st.channels[1].mean) < 2, 'not gray'); });
   T('watermark image', 'watermark-image', ['photo2.jpg'], { kind: 'text', text: 'LIME', layout: 'single', position: 'bottom-right', opacity: 60, color: '#ffffff' }, async ([o]) => fmt(o, 'jpeg'));
+  T('psd through the image tools', 'resize-image', ['layers.psd'], { mode: 'percent', percent: 50 }, async ([o]) => { const m = await fmt(o, 'png'); ok(m.width === 400 && m.height === 267, `${m.width}x${m.height}`); const px = await pixels(o); ok(near(px.at(200, 133), [245, 251, 227, 255], 20), `centre ${px.at(200, 133)}`); });
   T('strip exif', 'strip-metadata', ['photo.jpg'], {}, async ([o]) => { const m = await sharp(o).metadata(); ok(!m.exif, 'exif kept'); ok((await sharp(fx('photo.jpg')).metadata()).exif, 'fixture had no exif'); });
   T('collage', 'collage', ['photo.jpg', 'photo2.jpg', 'photo.png'], { gap: 12, background: '#ffffff' }, async ([o]) => fmt(o, 'jpeg'));
   T('make gif', 'images-to-gif', ['photo.jpg', 'photo2.jpg', 'photo.png'], { seconds: 1, width: 300 }, async ([o]) => { const m = await fmt(o, 'gif'); ok((m.pages || 1) >= 3, `frames ${m.pages}`); });
@@ -398,6 +399,12 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const corners = [[2, 2], [w - 3, 2], [2, h - 3], [w - 3, h - 3]].map(([x, y]) => g[y * st + x]);
     ok(corners.every((v) => v > 170), `desk still in corners ${corners}`);
     ok(/Invoice 2041/.test(page.toStructuredText('').asText()), 'text not recognised');
+  });
+  T('scan to pdf: a flat page still gets its look', 'scan-to-pdf', ['photo2.jpg'], { mode: 'bw', ocr: false }, async ([o], r) => {
+    ok(/0 of 1 page straightened/.test(r[0].note), r[0].note);
+    const { doc, m } = await E('pdf').readPdf(o), g = doc.loadPage(0).toPixmap(m.Matrix.scale(1, 1), m.ColorSpace.DeviceGray, false, true).getPixels();
+    const mid = g.filter((v) => v > 40 && v < 215).length / g.length;
+    ok(mid < 0.1, `${Math.round(mid * 100)}% grey pixels: not black and white`);
   });
   T('redact pdf', 'redact-pdf', ['doc.pdf'], { terms: 'Invoice', patterns: ['email'], boxes: true }, async ([o]) => { const t = await pdfText(o); ok(!t.includes('hello@example.com') && !t.includes('Invoice'), 'not redacted'); ok(t.includes('quick brown'), 'too much removed'); });
   T('audit pdf', 'audit-pdf', ['doc.pdf'], {}, (o, r) => ok(/No hidden text|fake redaction/.test(r[0].note), r[0].note));
@@ -817,6 +824,14 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const got = svgWorld(o).paths.map((p) => `${Math.round(p.box[2])}:${p.color}`).sort((a, b) => parseInt(a, 10) - parseInt(b, 10)).join(' ');
     ok(got === '0:#123456 2:#007fff 4:#ff00ff 22:#007fff 64:#000000 66:#009800 68:#000000 70:#123456', got);
   });
+  for (const mono of [false, true]) {
+    T(`dxf→pdf ${mono ? 'black lines' : 'in colour'}`, 'convert-cad', ['layers.dxf'], { to: 'pdf', mono }, async ([o]) => {
+      const { doc, m } = await E('pdf').readPdf(o), px = doc.loadPage(0).toPixmap(m.Matrix.scale(1, 1), m.ColorSpace.DeviceRGB, false, true).getPixels();
+      let ink = 0, colour = 0;
+      for (let i = 0; i < px.length; i += 3) { if (Math.min(px[i], px[i + 1], px[i + 2]) < 200) ink++; if (Math.max(px[i], px[i + 1], px[i + 2]) - Math.min(px[i], px[i + 1], px[i + 2]) > 60) colour++; }
+      ok(ink > 500 && (mono ? colour === 0 : colour > 500), `${ink} inked pixels, ${colour} coloured`);
+    });
+  }
   T('dxf draws model space only', 'convert-cad', ['paper.dxf'], { to: 'svg' }, ([o]) => { const ps = [...txt(o).matchAll(/<path d="([^"]+)"/g)].map((m) => m[1].split('L').length); ok(ps.join() === '2', `paths ${ps}`); });
   T('dxf falls back to paper space', 'convert-cad', ['paperonly.dxf'], { to: 'svg' }, ([o]) => { const ps = [...txt(o).matchAll(/<path d="([^"]+)"/g)].map((m) => m[1].split('L').length).sort((a, b) => a - b); ok(ps.length === 2 && ps[0] === 2 && ps[1] > 100, `paths ${ps}`); });
   T('dxf xlines and rays clipped to the drawing', 'convert-cad', ['xline.dxf'], { to: 'svg' }, ([o]) => { const { paths } = svgWorld(o, [0, 100]); ok(paths.length === 2 && box(paths, [-5, 105, 50, 50]) && box(paths, [50, 50, 50, 105]), boxes(paths)); });
@@ -1022,27 +1037,163 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const fmt of ['bz2', 'xz']) T(`compress one file→${fmt}`, 'create-archive', ['doc.txt'], { format: fmt, level: 5 }, ([o]) => { ok(path.basename(o) === `doc.txt.${fmt}`, path.basename(o)); magic(o, fmt === 'xz' ? '7zXZ' : 'BZh'); ok(sevenZip(['x', '-so', o]).equals(read(fx('doc.txt'))), `${fmt} content`); });
   T('convert gz→xz', 'convert-archive', ['notes.txt.gz'], { format: 'xz', level: 5 }, ([o]) => { ok(path.basename(o) === 'notes.txt.xz', path.basename(o)); same(sevenZip(['x', '-so', o]).toString(), 'hello from a gzip file\n'); });
 
+  // Option sweep: every tool in the catalogue runs with its defaults, then once per value of each choice, select, toggle and multi
+  // option and at both ends of each range, one option at a time with its `when` controller set so it shows. Each job saves where
+  // the Save dialog would point, every result is checked by type, and options whose result matches the default run are listed.
+  const SWEEP_IN = { pdf: 'doc.pdf', image: 'photo2.jpg', raw: 'raw.dng', video: 'sweep.mp4', audio: 'sweep.m4a', doc: 'doc.docx', sheet: 'sheet.xlsx', slides: 'deck.pptx', vector: 'logo.ai',
+    cad2d: 'layers.dxf', cad3d: 'box.stl', layout: 'layout.idml', motion: 'brief.json', timeline: 'brief.otio', archive: 'archive.zip', subtitle: 'sub.srt', data: 'data.json', contacts: 'contacts.vcf',
+    font: 'font.otf', mail: 'mail.eml', webarchive: 'page.mhtml', comic: 'comic.cbz', ebook: 'novel.epub', any: 'doc.txt' };
+  const SWEEP = {
+    'unlock-pdf': [['layout-locked.pdf'], { password: '1234' }], 'protect-pdf': [0, { userPassword: 'lime123' }], 'split-pdf': [0, { ranges: '1, 2-3', pages: '1, 3' }], 'remove-pages': [0, { pages: '2' }],
+    'optimize-pdf': [['images.pdf']], 'redact-pdf': [0, { terms: 'Invoice' }], 'ocr-pdf': [['scan.pdf']], 'make-fillable': [['form.pdf']], 'compare-pdf': [['v1.pdf', 'v2.pdf']], 'merge-pdf': [['doc.pdf', 'photo2.jpg']],
+    'watermark-pdf': [0, { image: fx('alpha.png') }], 'scan-to-pdf': [['text.png']], 'image-to-text': [['text.png']], 'jpg-to-pdf': [['photo2.jpg', 'photo.webp']],
+    'hdr-merge': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], panorama: [['pano/view-0.png', 'pano/view-1.png', 'pano/view-2.png']], collage: [['photo2.jpg', 'photo.webp']],
+    'images-to-gif': [['photo2.jpg', 'photo.webp']], 'images-to-cbz': [['photo2.jpg', 'photo.webp']], 'watermark-image': [0, { image: fx('alpha.png') }], meme: [0, { top: 'Lime', bottom: 'Sweep' }],
+    'blur-faces': [['faces.png']], 'animation-speed': [['anim.gif']], 'gif-to-video': [['anim.gif']], 'extract-subtitles': [['subs.mkv']], 'burn-subtitles': [0, { subtitles: fx('sub.srt') }],
+    'trim-media': [0, { end: '0.5' }], 'merge-media': [['tone.mp3', 'sweep.m4a']], 'add-audio': [['sweep.mp4', 'tone.wav']], 'render-motion': [0, { resolution: 'quarter' }],
+    'merge-documents': [['doc.md', 'photo2.jpg']], 'merge-sheets': [['sheet.xlsx', 'sheet.csv']], 'json-to-sheet': [['data.json']], 'decompress-file': [['notes.txt.gz']], 'rename-files': [0, { pattern: '{name} {n}' }],
+  };
+  // Choices that refuse this input on purpose: the same format again, several files into a one-file compressor, or ODT where
+  // neither LibreOffice nor macOS's text converter is there to write it.
+  const SWEEP_REFUSE = { 'convert-document to=docx': /already DOCX/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
+    'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
+    ...(process.platform !== 'darwin' && !E('office').libreOfficePath() ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
+  const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])]];
+  const defaults = (t) => ({ ...Object.fromEntries((t.options || []).map((o) => [o.key, Array.isArray(o.default) ? [...o.default] : o.default])), ...SWEEP[t.id]?.[1] });
+  const VIDEO_EXT = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpg', 'ts', 'm2ts', 'vob', 'ogv', '3gp', '3g2', 'dv', 'mxf']);
+  const AUDIO_EXT = new Set(['mp3', 'm4a', 'wav', 'flac', 'aiff', 'ogg', 'opus', 'aac', 'wma', 'ac3', 'eac3', 'm4b', 'wv', 'tta', 'caf', 'au', 'w64', 'mp2', 'mka', 'weba', 'voc', 'amr']);
+  const SHARP_EXT = { jpg: 'jpeg', jpeg: 'jpeg', png: 'png', apng: 'png', webp: 'webp', gif: 'gif', tif: 'tiff', tiff: 'tiff', avif: 'heif' };
+  const MAGIC = { bmp: /^BM/, ico: /^\0\0\x01\0/, cur: /^\0\0\x02\0/, icns: /^icns/, jxl: /^(\xff\x0a|\0\0\0\x0cJXL )/, jp2: /^\0\0\0\x0cjP {2}/, qoi: /^qoif/, dds: /^DDS /, pcx: /^\x0a/, ppm: /^P6/, pgm: /^P5/, pbm: /^P4/,
+    pam: /^P7/, pfm: /^P[Ff]/, sgi: /^\x01\xda/, ras: /^\x59\xa6\x6a\x95/, xpm: /^\/\* XPM \*\//, xbm: /^#define/, wbmp: /^\0\0/, psd: /^8BPS/, heic: /^[\s\S]{4}ftyp(heic|heix|mif1)/, woff: /^wOFF/, woff2: /^wOF2/,
+    ttf: /^(\0\x01\0\0|true)/, otf: /^(OTTO|\0\x01\0\0)/, zip: /^PK\x03\x04/, '7z': /^7z\xbc\xaf/, gz: /^\x1f\x8b/, bz2: /^BZh/, xz: /^\xfd7zXZ\0/ };
+  const MEDIA_FMT = { mp4: /mov,mp4/, m4v: /mov,mp4/, mov: /mov,mp4/, '3gp': /mov,mp4/, '3g2': /mov,mp4/, m4a: /mov,mp4/, m4b: /mov,mp4/, mkv: /matroska/, mka: /matroska/, webm: /matroska/, weba: /matroska/,
+    wmv: /^asf$/, wma: /^asf$/, mpg: /^mpeg$/, vob: /^mpeg$/, ts: /^mpegts$/, m2ts: /^mpegts$/, ogv: /^ogg$/, ogg: /^ogg$/, opus: /^ogg$/, mp2: /^mp3$/ };
+  const PIXEL_EXT = new Set(['heic', 'heif', 'bmp', 'ico', 'icns', 'cur', 'jxl', 'jp2', 'tga', 'qoi', 'dds', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xpm', 'xbm', 'wbmp', 'psd']);
+  const TEXT_EXT = { csv: /\S/, tsv: /\S/, txt: /\S/, md: /\S/, html: /<(html|body|table|p|div|h1)\b/i, srt: /-->/, vtt: /^\ufeff?WEBVTT/, ass: /\[Script Info\]/, lrc: /\[\d\d:\d\d/, sub: /^\{\d+\}\{\d+\}/m,
+    smi: /<SAMI>/i, edl: /^(TITLE|001)/m, rtf: /^\{\\rtf/, eml: /^[\w-]+: /m, vcf: /BEGIN:VCARD/, obj: /^v /m, dxf: /SECTION[\s\S]*EOF/ };
+  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2']);
+  const ZIP_MAIN = { docx: 'word/document.xml', xlsx: 'xl/workbook.xml', pptx: 'ppt/presentation.xml', odt: 'content.xml', ods: 'content.xml', epub: 'META-INF/container.xml', htmlz: 'index.html', txtz: 'index.txt',
+    '3mf': '3D/3dmodel.model', idml: 'designmap.xml' };
+  const utf8 = (b) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch (_) { return null; } };
+  const deep = (o) => (fs.statSync(o).isDirectory() ? walk(o).map((f) => path.join(o, f)).filter((f) => fs.statSync(f).isFile()) : [o]);
+  const validOne = async (o, opts) => {
+    const b = read(o), name = path.basename(o), e = U.ext(o), head = b.toString('latin1', 0, 64), text = () => { const t = utf8(b); ok(t != null, `${name} is not UTF-8`); return t.replace(/^\ufeff/, ''); };
+    ok(b.length, `${name} is empty`);
+    if (MAGIC[e]) ok(MAGIC[e].test(head), `${name} is not ${e.toUpperCase()} inside: ${JSON.stringify(head.slice(0, 8))}`);
+    if (e === 'pdf' || (e === 'ai' && head.startsWith('%PDF'))) return ok((await E('pdf').pageCount(o, opts.userPassword || opts.password)) >= 1, `${name} has no pages`);
+    if (ZIP_MAIN[e]) { const z = require('fflate').unzipSync(new Uint8Array(b)); ok(z[ZIP_MAIN[e]], `${name} lacks ${ZIP_MAIN[e]}`); if (e === 'xlsx' || e === 'ods') ok(XLSX.read(b).SheetNames.length, `${name} has no sheets`); return; }
+    if (e === 'cbz') { const z = require('fflate').unzipSync(new Uint8Array(b)), pics = Object.keys(z).filter((k) => /\.(png|jpe?g|webp|gif)$/i.test(k)); ok(pics.length, `${name} has no pictures`); return ok((await sharp(Buffer.from(z[pics[0]])).metadata()).width > 0, `${pics[0]} does not decode`); }
+    if (['zip', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(e)) return ok(/Everything is Ok/.test(sevenZip(['t', o]).toString()), `${name} fails the archive test`);
+    if (VIDEO_EXT.has(e) || AUDIO_EXT.has(e)) {
+      const j = await ffp(o, ['-count_packets']), v = of(j, 'video').filter((x) => x.disposition?.attached_pic !== 1 && +x.nb_read_packets > 0), a = of(j, 'audio').filter((x) => +x.nb_read_packets > 0);
+      const codec = { hevc: 'hevc', av1: 'av1', alac: 'alac' }[opts.to];
+      ok(Number(j.format.duration) > 0, `${name} has no duration`);
+      ok((MEDIA_FMT[e] || new RegExp(`^${e}$`)).test(j.format.format_name), `${name} is ${j.format.format_name} inside`);
+      ok(!codec || j.streams.some((x) => x.codec_name === codec), `${name} holds ${j.streams.map((x) => x.codec_name)}, not ${codec}`);
+      return ok(VIDEO_EXT.has(e) ? v.length : a.length, `${name} has no ${VIDEO_EXT.has(e) ? 'video frames' : 'audio'}`);
+    }
+    if (SHARP_EXT[e]) { const m = await sharp(o, { animated: true, limitInputPixels: false }).metadata(); return ok(m.width > 0 && m.height > 0 && m.format === SHARP_EXT[e], `${name}: ${m.format} ${m.width}x${m.height}`); }
+    if (PIXEL_EXT.has(e)) { const m = await (await E('image').open(o)).metadata(); return ok(m.width > 0 && m.height > 0, `${name} does not decode`); }
+    if (['ttf', 'otf', 'woff', 'woff2', 'eot'].includes(e)) {
+      const f = E('fonts').load(b);
+      ok(e !== 'eot' || b.readUInt16LE(34) === 0x504c, `${name} lacks the EOT magic number`);
+      return ok(f.tables.has('head') && f.tables.has('cmap') && (!['ttf', 'eot'].includes(e) || f.tables.has('glyf')), `${name} lacks font tables or TrueType outlines`);
+    }
+    if (['json', 'gltf', 'otio'].includes(e)) return JSON.parse(text());
+    if (e === 'jsonl') return text().split('\n').filter((l) => l.trim()).forEach((l) => JSON.parse(l));
+    if (e === 'yaml' || e === 'yml') return require('yaml').parse(text());
+    if (e === 'toml') return require('smol-toml').parse(text());
+    if (XML_EXT.has(e)) { const d = xmlDoc(text(), name); return ok(e !== 'svg' || d.documentElement.localName === 'svg', `${name} is not an SVG`); }
+    if (TEXT_EXT[e]) return ok(TEXT_EXT[e].test(text()), `${name} does not look like ${e.toUpperCase()}`);
+    if (e === 'stl') return ok((b.length > 84 && b.length === 84 + 50 * b.readUInt32LE(80)) || /^solid[\s\S]*facet/.test(text()), `${name} is not an STL`);
+    if (e === 'glb') return ok(head.startsWith('glTF') && b.readUInt32LE(8) === b.length, `${name} is not a GLB`);
+    if (e === 'ply') return ok(head.startsWith('ply'), `${name} is not a PLY`);
+    if (e === 'eps' || e === 'ai') return ok(head.startsWith('%!PS') || b.readUInt32BE(0) === 0xc5d0d3c6, `${name} is not PostScript`);
+    if (e === 'emf') return ok(b.readUInt32LE(0) === 1 && head.slice(40, 44) === ' EMF', `${name} is not an EMF`);
+    if (e === 'dng') return ok(/^(II\*\0|MM\0\*)/.test(head), `${name} is not a DNG`);
+    if (e === 'xls' || e === 'aaf') { ok(b.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1', `${name} is not a compound file`); return ok(e !== 'xls' || XLSX.read(b).SheetNames.length, `${name} has no sheets`); }
+    throw new Error(`no check for .${e} files`);
+  };
+  const valid = async (o, opts) => { const all = deep(o); ok(all.length, `${path.basename(o)} is empty`); for (const f of all.slice(0, 8)) await validOne(f, opts); };
+  const sha = (b) => require('crypto').createHash('sha1').update(b).digest('hex');
+  const STAMP = /\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?|D:\d{14}[^)>\s]*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const textSig = (b) => { const t = utf8(b); return sha(t == null ? b : t.replace(STAMP, '')); };
+  const sigOne = async (o, opts) => {
+    const b = read(o), e = U.ext(o);
+    if (b.toString('latin1', 0, 5) === '%PDF-') {
+      try {
+        const { doc, m } = await E('pdf').readPdf(o, opts.userPassword || opts.password), parts = [doc.getMetaData('encryption'), doc.getMetaData('format')];
+        for (const p of ['print', 'copy', 'edit', 'annotate']) { try { parts.push(doc.hasPermission(p)); } catch (_) {} }
+        try { parts.push(textSig(Buffer.from(doc.getTrailer().get('Root').get('Metadata').readStream().asUint8Array()))); } catch (_) {}
+        for (let i = 0; i < doc.countPages(); i++) { const p = doc.loadPage(i); parts.push(JSON.stringify(p.getBounds()), p.toStructuredText('').asText(), sha(Buffer.from(p.toPixmap(m.Matrix.scale(0.25, 0.25), m.ColorSpace.DeviceRGB, false, true).getPixels()))); }
+        return sha(parts.join('\n'));
+      } catch (_) {}
+    }
+    if (ZIP_MAIN[e] || e === 'cbz') { const z = require('fflate').unzipSync(new Uint8Array(b)); return sha(Object.keys(z).sort().map((k) => `${k}:${textSig(Buffer.from(z[k]))}`).join('\n')); }
+    return textSig(b);
+  };
+  const sigOf = async (outs, results, opts) => sha([JSON.stringify(results.map((r) => [r.note, r.text])), ...(await Promise.all(outs.flatMap((o) => deep(o).map(async (f) => `${path.basename(o)}/${path.relative(o, f)}:${await sigOne(f, opts)}`))))].join('\n'));
+  const sweepSig = new Map(), sweepPairs = [];
+  const sweepCheck = (id, label, opts) => async (outs, results, { dest, kind, dir }) => {
+    const n = (o) => path.relative(dir, o);
+    const many = outs.length === 1 && outs[0] === dest.path.replace(/\.[^./\\]+$/, '') && fs.statSync(outs[0]).isDirectory();
+    if (kind === 'file') ok(outs.includes(dest.path) || many, `saved ${outs.map(n)} instead of ${n(dest.path)}`);
+    else if (kind === 'folder') ok(outs[0] === dest.path && fs.statSync(dest.path).isDirectory(), `saved ${outs.map(n)} instead of the folder ${n(dest.path)}`);
+    else if (kind === 'dir') ok(outs.length && outs.every((o) => path.dirname(o) === dir), `saved ${outs.map(n)}`);
+    else ok(outs.length || results.some((r) => r.note || r.text), 'no result');
+    const stray = files(dir).filter((f) => f !== 'in' && !outs.some((o) => path.relative(dir, o).split(path.sep)[0] === f));
+    ok(!stray.length, `also left ${stray.join(', ')}`);
+    // Attachments are saved byte for byte, whatever they hold.
+    for (const o of outs) if (id === 'email-attachments') ok(deep(o).length && deep(o).every((f) => fs.statSync(f).size > 0), `${path.basename(o)} holds empty files`); else await valid(o, opts);
+    sweepSig.set(`${id} ${label}`, await sigOf(outs, results, opts));
+  };
+  for (const t of tools.catalog()) {
+    if (t.editor || t.noFiles) continue;
+    const base = defaults(t), runs = new Map([[JSON.stringify(base), 'defaults']]), pairs = [];
+    for (const o of t.options || []) {
+      const vals = o.type === 'select' || o.type === 'choice' ? o.choices.map(([v]) => v) : o.type === 'toggle' ? [true, false] : o.type === 'range' ? [o.min, o.max]
+        : o.type === 'multi' ? [[], ...o.choices.map(([v]) => [v]), o.choices.map(([v]) => v)] : [];
+      for (const v of vals) {
+        const opts = { ...base, [o.key]: v };
+        for (const [k, w] of Object.entries(o.when || {})) if (![].concat(w).map(String).includes(String(opts[k]))) opts[k] = [].concat(w)[0];
+        if (t.id === 'convert-sheet' && opts.to === 'pdf') continue;
+        const key = JSON.stringify(opts);
+        if (!runs.has(key)) runs.set(key, `${o.key}=${Array.isArray(v) ? v.join('+') || 'none' : v}`);
+        pairs.push([key, JSON.stringify({ ...opts, [o.key]: o.default })]);
+      }
+    }
+    for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
+    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map(fx), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)) });
+  }
+  for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
+    const opts = { ...defaults(tools.get(id)), ...more }, check = sweepCheck(id, 'batch', opts);
+    C.push({ name: `sweep ${id} batch`, tool: id, inputs: ins.map(fx), opts, par: true, save: true, check: async (outs, r, d) => { ok(outs.length === ins.length && new Set(outs).size === ins.length, `${outs.length} results for ${ins.length} files`); await check(outs, r, d); } });
+  }
+
   const only = process.env.LIME_ONLY ? new RegExp(process.env.LIME_ONLY, 'i') : null;
   const results = [];
   let n = 0;
-  for (const c of C) {
-    if (only && !only.test(c.name)) continue;
+  const runCase = async (c) => {
     const missing = c.inputs.filter((f) => !fs.existsSync(f)).map((f) => path.basename(f));
-    if (missing.length) { console.log(`SKIP ${c.name.padEnd(34)} no ${missing.join(', ')} sample`); results.push({ name: c.name, status: 'SKIP', detail: missing.join(', ') }); continue; }
-    if (c.skip) { console.log(`SKIP ${c.name.padEnd(34)} ${c.skip}`); results.push({ name: c.name, status: 'SKIP', detail: c.skip }); continue; }
-    n++;
-    const dest = { kind: 'dir', path: path.join(OUT, String(n).padStart(3, '0')) };
-    fs.mkdirSync(dest.path, { recursive: true });
+    if (missing.length) { console.log(`SKIP ${c.name.padEnd(34)} no ${missing.join(', ')} sample`); results.push({ name: c.name, status: 'SKIP', detail: missing.join(', ') }); return; }
+    if (c.skip) { console.log(`SKIP ${c.name.padEnd(34)} ${c.skip}`); results.push({ name: c.name, status: 'SKIP', detail: c.skip }); return; }
+    const dir = path.join(OUT, String(++n).padStart(3, '0'));
+    fs.mkdirSync(dir, { recursive: true });
+    let inputs = c.inputs;
+    if (c.copy) { fs.mkdirSync(path.join(dir, 'in')); inputs = inputs.map((f) => { const to = path.join(dir, 'in', path.basename(f)); fs.copyFileSync(f, to); return to; }); }
+    // Sweep cases save where the Save dialog would point for these options; the others save into their own folder.
+    const s = c.save ? tools.suggest(c.tool, inputs, c.opts) : null;
+    const dest = s && (s.kind === 'file' || s.kind === 'folder') ? { kind: s.kind, path: path.join(dir, s.name) } : { kind: 'dir', path: dir };
     const t0 = Date.now();
     let status = 'PASS', detail = '';
     try {
-      const id = submit({ tool: c.tool, files: c.inputs, opts: c.opts, dest });
+      const id = submit({ tool: c.tool, files: inputs, opts: c.opts, dest });
       let j;
       for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); if (Date.now() - t0 > 240000) throw new Error('timeout'); }
       if (c.fail) {
         ok(j.status === 'error', `${j.status} instead of an error`);
         ok(c.fail.test(j.error || ''), `error was: ${j.error}`);
-        ok(!files(dest.path).length, `left ${files(dest.path).join(', ')} behind`);
+        ok(!files(dir).length, `left ${files(dir).join(', ')} behind`);
         detail = String(j.error).slice(0, 100);
         throw Object.assign(new Error(detail), { expected: true });
       }
@@ -1050,13 +1201,18 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       const outs = j.results.flatMap((r) => r.paths || (r.path ? [r.path] : []));
       ok(!outs.some((o) => / x(\.[^.]+)?$/.test(path.basename(o))), `duplicate name ${outs.map((o) => path.basename(o))}`);
       for (const o of outs) if (/\.pdf$/i.test(o) && fs.statSync(o).isFile()) magic(o, '%PDF-');
-      await c.check(outs, j.results);
+      await c.check(outs, j.results, { dest, kind: s?.kind, dir });
       detail = outs.map((o) => path.relative(OUT, o)).join(', ') || (j.results[0]?.note || '').split('\n')[0];
     } catch (e) { if (!e.expected) { status = 'FAIL'; detail = e.message; } }
     const line = `${status} ${c.name.padEnd(34)} ${String(Date.now() - t0).padStart(6)}ms  ${detail}`.slice(0, 220);
     console.log(line);
     results.push({ name: c.name, status, detail });
-  }
+  };
+  const picked = C.filter((c) => !only || only.test(c.name));
+  for (const c of picked.filter((x) => !x.par)) await runCase(c);
+  const par = picked.filter((x) => x.par), t1 = Date.now();
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(3, require('os').cpus().length - 1)) }, async () => { while (par.length) await runCase(par.shift()); }));
+  if (picked.some((x) => x.par)) console.log(`     option sweep: ${picked.filter((x) => x.par).length} jobs in ${((Date.now() - t1) / 1000).toFixed(0)} s`);
   if (!only || only.test('failed extract keeps folder')) {
     const keep = path.join(OUT, 'existing folder'), bad = path.join(OUT, 'broken.zip');
     fs.mkdirSync(keep, { recursive: true });
@@ -1114,6 +1270,99 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(txt(path.join(into, 'keep.txt')) === 'mine' && txt(path.join(into, 'a.txt')) === 'alpha', 'files not merged');
     ok(!files(OUT).some((f) => f.startsWith('.')), `staging left: ${files(OUT)}`);
     return walk(into).join(', ');
+  });
+  await check('several pages keep the chosen name', async () => {
+    const d = path.join(OUT, 'chosen');
+    fs.mkdirSync(d, { recursive: true });
+    const id = submit({ tool: 'convert-image', files: [fx('pages.tiff')], opts: { to: 'png' }, dest: { kind: 'file', path: path.join(d, 'my pages.png') } });
+    let j;
+    for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); }
+    ok(j.status === 'done', `${j.status}: ${j.error}`);
+    same(walk(d).join(','), 'my pages,my pages/pages - page 1.png,my pages/pages - page 2.png,my pages/pages - page 3.png', 'saved');
+    return walk(d).join(', ');
+  });
+  const CHOICES = ['select', 'choice', 'multi'], has1 = (o, v) => (o.choices || []).some(([x]) => String(x) === String(v));
+  await check('catalog options are consistent', () => {
+    const bad = [], raw = Object.fromEntries(tools.TOOLS.map((t) => [t.id, t]));
+    for (const t of tools.catalog()) {
+      const keys = new Set();
+      for (const o of t.options || []) {
+        const at = `${t.id}.${o.key}`;
+        if (keys.has(o.key)) bad.push(`${at} appears twice`);
+        keys.add(o.key);
+        if (CHOICES.includes(o.type) && (!o.choices.length || new Set(o.choices.map(([v]) => String(v))).size !== o.choices.length)) bad.push(`${at} has empty or repeated choices`);
+        if (o.type === 'multi' ? !Array.isArray(o.default) || !o.default.every((v) => has1(o, v)) : CHOICES.includes(o.type) && !has1(o, o.default)) bad.push(`${at} defaults to ${o.default}, not a choice`);
+        if (o.type === 'range' && !(o.min < o.max && o.default >= o.min && o.default <= o.max)) bad.push(`${at} defaults to ${o.default} outside ${o.min}..${o.max}`);
+        if (o.type === 'number' && o.min != null && o.default !== '' && o.default < o.min) bad.push(`${at} defaults below ${o.min}`);
+        if (o.type === 'toggle' && typeof o.default !== 'boolean') bad.push(`${at} toggle defaults to ${o.default}`);
+      }
+      for (const o of raw[t.id].options || []) for (const [k, w] of Object.entries(o.when || {})) {
+        const c = (raw[t.id].options || []).find((x) => x.key === k);
+        if (!c || c === o) { bad.push(`${t.id}.${o.key} shows when ${k}, which it does not have`); continue; }
+        for (const v of [].concat(w)) if (c.type === 'toggle' ? typeof v !== 'boolean' : !has1(c, v)) bad.push(`${t.id}.${o.key} shows when ${k}=${v}, not a choice`);
+      }
+    }
+    // Convert spreadsheet is being reworked separately; its TSV condition is harmless (TSV is not offered there).
+    const known = bad.filter((b) => b === 'convert-sheet.allSheets shows when to=tsv, not a choice');
+    ok(bad.length === known.length, bad.filter((b) => !known.includes(b)).join('; '));
+    return `${tools.catalog().reduce((s, t) => s + (t.options || []).length, 0)} options in ${tools.catalog().length} tools${known.length ? `; known: ${known.join('; ')}` : ''}`;
+  });
+  await check('catalog extensions resolve', () => {
+    const bad = [];
+    for (const t of tools.TOOLS.filter((x) => x.run && !x.noFiles)) {
+      const ins = sweepIn(t).map(fx), base = defaults(t);
+      for (const o of [null, ...(t.options || []).filter((x) => ['to', 'format'].includes(x.key))]) for (const v of o ? o.choices.map(([x]) => x) : [null]) {
+        const opts = o ? { ...base, [o.key]: v } : base, s = tools.suggest(t.id, ins, opts), e = typeof t.ext === 'function' ? t.ext(opts, ins) : t.ext, at = `${t.id}${o ? ` ${o.key}=${v}` : ''}`;
+        if (t.ext !== undefined && !(typeof e === 'string' && /^[a-z0-9]+(\.[a-z0-9]+)?$/.test(e))) bad.push(`${at} has extension ${JSON.stringify(e)}`);
+        if (s.kind === 'file' && !(s.ext && s.name.endsWith(`.${s.ext}`) && s.name.length > s.ext.length + 1)) bad.push(`${at} suggests ${s.name}`);
+        if ((s.kind === 'folder' || s.kind === 'file') && !s.name) bad.push(`${at} suggests no name`);
+      }
+    }
+    ok(!bad.length, bad.join('; '));
+  });
+  await check('wheel entries point at tools', () => {
+    const bad = [], HIDDEN = { 'convert-image': ['develop'] }, seen = new Set();
+    const entry = (w, where) => {
+      const t = tools.get(w.tool);
+      if (!t || (!t.run && !t.editor)) return bad.push(`${where} ${w.label}: no tool ${w.tool}`);
+      for (const [k, v] of Object.entries(w.opts || {})) {
+        const o = (t.options || []).find((x) => x.key === k);
+        if (!o) { if (!HIDDEN[t.id]?.includes(k)) bad.push(`${where} ${w.label}: ${t.id} has no option ${k}`); continue; }
+        if ((['select', 'choice'].includes(o.type) && !has1(o, v)) || (o.type === 'range' && !(v >= o.min && v <= o.max)) || (o.type === 'toggle' && typeof v !== 'boolean')) bad.push(`${where} ${w.label}: ${k}=${v} is not allowed`);
+      }
+    };
+    for (const [g, ring] of Object.entries(tools.WHEELS)) for (const w of [...(ring.convert || []), ...ring.tools]) entry(w, g);
+    for (const [g, list] of Object.entries(tools.MULTI)) for (const w of list) entry(w, `${g} (several)`);
+    const mixes = [...Object.values(SWEEP_IN).map((f) => [f]), ['folder'], ['photo.png'], ['frames.gif'], ['cursor.cur'], ['sheet.csv'], ['config.toml'], ['notes.txt.gz'], ['kobo.kepub.epub'], ['meeting.msg'], ['photo2.jpg', 'photo.webp'],
+      ['raw.dng', 'photo2.jpg'], ['doc.pdf', 'v1.pdf'], ['clip2.mp4', 'clip.webm'], ['tone.mp3', 'tone.wav'], ['clip2.mp4', 'tone.wav'], ['sheet.xlsx', 'sheet.csv'], ['doc.docx', 'doc.pdf', 'photo2.jpg'], ['doc.txt', 'photo2.jpg', 'tone.mp3']];
+    for (const m of mixes) {
+      const files = m.map(fx), r = tools.wheelsFor(files), all = [...r.convert, ...r.tools];
+      if (!all.length) bad.push(`${m.join('+')} gets an empty wheel`);
+      for (const w of all) { seen.add(w.tool); entry(w, m.join('+')); if (!tools.accepts(tools.get(w.tool), files) && !tools.get(w.tool)?.editor) bad.push(`${m.join('+')} ${w.label}: ${w.tool} does not take these files`); }
+    }
+    ok(!bad.length, bad.join('; '));
+    return `${seen.size} tools reachable from ${mixes.length} drops`;
+  });
+  // Option values that leave these inputs unchanged by design; anything else that matches its default run is listed as suspect.
+  const QUIET = [
+    [/^jpg-to-pdf orientation=landscape$/, 'both photos are landscape, which Auto picks too'], [/^redact-pdf patterns=(card|iban)$/, 'the PDF has no card numbers or IBANs'],
+    [/^(ocr-pdf|scan-to-pdf|image-to-text) lang=(spa|fra|deu|ita|por|nld)$/, 'Latin-script models read the English sentence alike'], [/^ocr-pdf skipText=false$/, 'the scan has no text layer to skip'],
+    [/^scan-to-pdf mode=colour$/, 'the page is grey already'], [/^convert-video quality=high$/, 'H.264 into MP4 is rewrapped, not re-encoded'],
+    [/^(convert-video|compress-video) height=(2160|1080|720)$/, 'the 540p clip is never enlarged'], [/^(extract-audio|convert-audio) rate=48000$/, 'the source is 48 kHz already'],
+    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
+  ];
+  await check('option sweep covers the catalogue', () => {
+    const names = new Set(C.filter((c) => c.par).map((c) => c.name.replace(/^sweep /, ''))), runnable = tools.catalog().filter((t) => !t.editor && !t.noFiles);
+    const bad = [...runnable.filter((t) => !names.has(`${t.id} defaults`)).map((t) => `${t.id} has no run`), ...Object.keys(SWEEP).filter((id) => !tools.get(id)).map((id) => `no tool ${id}`),
+      ...Object.keys(SWEEP_REFUSE).filter((k) => !names.has(k)).map((k) => `no case ${k}`)];
+    ok(!bad.length, bad.join('; '));
+    return `${names.size} runs over ${runnable.length} tools; not swept: ${tools.catalog().filter((t) => t.editor || t.noFiles).map((t) => t.id).join(', ')}`;
+  });
+  await check('option sweep: options with no effect', () => {
+    const quiet = sweepPairs.filter(([a, b]) => sweepSig.has(a) && sweepSig.has(b) && sweepSig.get(a) === sweepSig.get(b)), why = (a) => QUIET.find(([re]) => re.test(a))?.[1];
+    for (const [a, b] of quiet) console.log(`     no effect: ${a} (same as ${b.replace(/^\S+ /, '')})${why(a) ? `: ${why(a)}` : ', SUSPECT'}`);
+    const odd = quiet.filter(([a]) => !why(a)).map(([a]) => a);
+    return `${quiet.length} of ${sweepPairs.filter(([a, b]) => sweepSig.has(a) && sweepSig.has(b)).length} option values match their default run${odd.length ? `; unexplained: ${odd.join(', ')}` : ', all explained'}`;
   });
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
