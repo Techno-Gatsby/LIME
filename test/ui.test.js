@@ -231,7 +231,12 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     const w = watcher();
     if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('only on Mac and Windows'), { skip: true });
     if (!w) throw new Error('drag watcher did not start');
-    const want = fx('photo.jpg');
+    // A folder of its own, where the file isn't the first item, so the selection can't be mistaken for the first item.
+    const dir = path.join(OUT, 'drag-selection');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a first.txt'), 'first');
+    const want = path.join(dir, 'photo.jpg');
+    fs.copyFileSync(fx('photo.jpg'), want);
     if (process.platform === 'darwin') {
       const koffi = require('koffi'), objc = koffi.load('/usr/lib/libobjc.A.dylib');
       const cls = objc.func('void *objc_getClass(const char *name)'), sel = objc.func('void *sel_registerName(const char *name)');
@@ -455,12 +460,9 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     const picked = await pjs('document.querySelector("#range").value');
     if (picked !== 'Budget!B3:C6') throw new Error(`the picker shows ${picked}`);
     const u = await pos('[data-a="use"]');
-    if (!(await pjs(`!!document.elementFromPoint(${u.x}, ${u.y})?.closest('[data-a="use"]')`))) throw new Error('something covers Use Selection');
+    const cover = await pjs(`(() => { const el = document.elementFromPoint(${u.x}, ${u.y}); return el?.closest('[data-a="use"]') ? '' : (el ? el.tagName + '.' + el.className : 'nothing') + ' at ${u.x},${u.y} in ' + innerWidth + '×' + innerHeight; })()`);
+    if (cover) throw new Error(`Use Selection is covered or off-screen: ${cover}`);
     await press(u, 'mouseMove'); await press(u, 'mouseDown'); await press(u, 'mouseUp');
-    for (let t = 0; t < 30 && !pk.isDestroyed(); t++) await sleep(100);
-    // Windows CI sometimes drops a synthetic click on a button; nothing covers it (checked above), so press it directly.
-    let scripted = false;
-    if (!pk.isDestroyed()) { scripted = true; await pjs(`document.querySelector('[data-a="use"]').click()`); }
     for (let t = 0; t < 40 && !pk.isDestroyed(); t++) await sleep(100);
     if (!pk.isDestroyed()) throw new Error('the picker stayed open');
     const val = await js('document.querySelector(".card #o-cells").value');
@@ -473,7 +475,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     const { doc } = await require(path.join(__dirname, '..', 'src', 'main', 'engines', 'pdf')).readPdf(o);
     const t = doc.loadPage(0).toStructuredText('').asText();
     if (doc.countPages() !== 1 || !t.includes('3,703.50') || !t.includes('12.50%') || t.includes('Item 1')) throw new Error(`printed ${doc.countPages()} pages: ${t.slice(0, 120)}`);
-    return `${picked} → ${path.relative(OUT, o)}${scripted ? ' (Use Selection pressed by script)' : ''}`;
+    return `${picked} → ${path.relative(OUT, o)}`;
   });
 
   const ed = { name: 'edit pdf · save', status: 'PASS', detail: '' };
