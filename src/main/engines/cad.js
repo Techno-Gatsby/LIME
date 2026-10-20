@@ -636,7 +636,7 @@ function readGltf(buf, p) {
       const I = prim.indices != null ? acc(prim.indices) : Array.from({ length: P3.length / 3 }, (_, k) => k);
       const mat = json.materials?.[prim.material];
       const c = mat?.pbrMetallicRoughness?.baseColorFactor;
-      parts.push({ start: idx.length, color: c ? (Math.round(c[0] * 255) << 16) | (Math.round(c[1] * 255) << 8) | Math.round(c[2] * 255) : null });
+      parts.push({ start: idx.length, color: c ? (toSrgb(c[0]) << 16) | (toSrgb(c[1]) << 8) | toSrgb(c[2]) : null });
       for (const k of I) idx.push(start + k);
     }
     for (const c of node.children || []) visit(c, m);
@@ -695,18 +695,6 @@ async function readOcct(buf, e) {
   return mesh(pos, idx, parts.some((p) => p.color != null) ? parts : null);
 }
 
-function normals(m) {
-  const n = new Float32Array(m.pos.length);
-  for (let i = 0; i < m.idx.length; i += 3) {
-    const a = m.idx[i] * 3, b = m.idx[i + 1] * 3, c = m.idx[i + 2] * 3;
-    const ux = m.pos[b] - m.pos[a], uy = m.pos[b + 1] - m.pos[a + 1], uz = m.pos[b + 2] - m.pos[a + 2];
-    const vx = m.pos[c] - m.pos[a], vy = m.pos[c + 1] - m.pos[a + 1], vz = m.pos[c + 2] - m.pos[a + 2];
-    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    for (const k of [a, b, c]) { n[k] += nx; n[k + 1] += ny; n[k + 2] += nz; }
-  }
-  for (let i = 0; i < n.length; i += 3) { const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1; n[i] /= l; n[i + 1] /= l; n[i + 2] /= l; }
-  return n;
-}
 function meshInfo(m) {
   let area = 0, vol = 0;
   const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
@@ -756,23 +744,29 @@ function writePly(m) {
   for (let i = 0; i < nf; i++) { b.writeUInt8(3, o); b.writeUInt32LE(m.idx[i * 3], o + 1); b.writeUInt32LE(m.idx[i * 3 + 1], o + 5); b.writeUInt32LE(m.idx[i * 3 + 2], o + 9); o += 13; }
   return Buffer.concat([head, b]);
 }
-function writeGlb(src) {
-  const m = { ...src, pos: toYUp(src.pos, 0.001) };
-  const n = normals(m);
-  const info = meshInfo(m);
-  const pos = Buffer.from(m.pos.buffer, m.pos.byteOffset, m.pos.byteLength);
-  const nor = Buffer.from(n.buffer);
-  const idx = Buffer.from(m.idx.buffer, m.idx.byteOffset, m.idx.byteLength);
+const toLinear = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const toSrgb = (v) => Math.round(255 * Math.min(1, Math.max(0, v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055)));
+function writeGltf(src, embed) {
+  const m = { ...src, pos: toYUp(src.pos, 0.001) }, info = meshInfo(m), nv = m.pos.length / 3, small = nv <= 65535;
+  const idx = small ? Uint16Array.from(m.idx) : m.idx;
   const pad = (b) => Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4)]);
-  const bin = Buffer.concat([pad(pos), pad(nor), pad(idx)]);
+  const pos = pad(Buffer.from(m.pos.buffer, m.pos.byteOffset, m.pos.byteLength)), bin = Buffer.concat([pos, pad(Buffer.from(idx.buffer, idx.byteOffset, idx.byteLength))]);
+  const parts = m.parts?.length ? m.parts : [{ start: 0, color: null }], colors = [...new Set(parts.map((p) => p.color ?? -1))];
+  const accessors = [{ bufferView: 0, componentType: 5126, count: nv, type: 'VEC3', min: info.min, max: info.max }], primitives = [];
+  parts.forEach((p, k) => {
+    const count = (k + 1 < parts.length ? parts[k + 1].start : m.idx.length) - p.start;
+    if (count <= 0) return;
+    accessors.push({ bufferView: 1, byteOffset: p.start * (small ? 2 : 4), componentType: small ? 5123 : 5125, count, type: 'SCALAR' });
+    primitives.push({ attributes: { POSITION: 0 }, indices: accessors.length - 1, material: colors.indexOf(p.color ?? -1) });
+  });
   const json = {
-    asset: { version: '2.0', generator: 'Lime' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
-    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 2, material: 0 }] }],
-    materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.85, 0.87, 0.82, 1], metallicFactor: 0, roughnessFactor: 0.6 } }],
-    buffers: [{ byteLength: bin.length }],
-    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: pos.length, target: 34962 }, { buffer: 0, byteOffset: pad(pos).length, byteLength: nor.length, target: 34962 }, { buffer: 0, byteOffset: pad(pos).length + pad(nor).length, byteLength: idx.length, target: 34963 }],
-    accessors: [{ bufferView: 0, componentType: 5126, count: m.pos.length / 3, type: 'VEC3', min: info.min, max: info.max }, { bufferView: 1, componentType: 5126, count: m.pos.length / 3, type: 'VEC3' }, { bufferView: 2, componentType: 5125, count: m.idx.length, type: 'SCALAR' }],
+    asset: { version: '2.0', generator: 'Lime' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }], meshes: [{ primitives }],
+    materials: colors.map((c) => ({ pbrMetallicRoughness: { baseColorFactor: c < 0 ? [0.62, 0.65, 0.6, 1] : [toLinear((c >> 16) & 255), toLinear((c >> 8) & 255), toLinear(c & 255), 1], metallicFactor: 0, roughnessFactor: 0.8 }, doubleSided: true })),
+    buffers: [{ byteLength: bin.length, ...(embed ? { uri: `data:application/octet-stream;base64,${bin.toString('base64')}` } : {}) }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: m.pos.byteLength, target: 34962 }, { buffer: 0, byteOffset: pos.length, byteLength: idx.byteLength, target: 34963 }],
+    accessors,
   };
+  if (embed) return Buffer.from(JSON.stringify(json, null, 1));
   let js = Buffer.from(JSON.stringify(json), 'utf8');
   js = Buffer.concat([js, Buffer.alloc((4 - (js.length % 4)) % 4, 0x20)]);
   const h = Buffer.alloc(12);
@@ -780,6 +774,7 @@ function writeGlb(src) {
   const c = (len, type) => { const b = Buffer.alloc(8); b.writeUInt32LE(len, 0); b.writeUInt32LE(type, 4); return b; };
   return Buffer.concat([h, c(js.length, 0x4e4f534a), js, c(bin.length, 0x004e4942), bin]);
 }
+const writeGlb = (m) => writeGltf(m, false);
 function write3mf(m) {
   const { zipSync, strToU8 } = require('fflate');
   const v = [], t = [];
@@ -905,14 +900,14 @@ async function convert(p, opts, ctx) {
   if (to === 'stl') await fsp.writeFile(out, writeStl(m));
   else if (to === 'obj') await fsp.writeFile(out, writeObj(m));
   else if (to === 'ply') await fsp.writeFile(out, writePly(m));
-  else if (to === 'glb') await fsp.writeFile(out, writeGlb(m));
+  else if (to === 'glb' || to === 'gltf') await fsp.writeFile(out, writeGltf(m, to === 'gltf'));
   else if (to === '3mf') await fsp.writeFile(out, write3mf(m));
   else if (to === 'png' || to === 'jpg') { await renderPng(m, out, { ...opts, background: to === 'jpg' ? '#ffffff' : opts.background }); if (to === 'jpg') { const b = await require('sharp')(out).jpeg({ quality: 92 }).toBuffer(); await fsp.writeFile(out, b); } }
   else if (to === 'pdf') {
     const tmp = path.join(await U.tmpDir('cad'), 'view.png');
     await renderPng(m, tmp, opts);
     await require('./pdf').imagesToPdf([tmp], { pageSize: 'fit' }, out);
-  } else throw new Error(`Models can be saved as STL, OBJ, PLY, GLB, 3MF, PNG or PDF, not ${to.toUpperCase()}.`);
+  } else throw new Error(`Models can be saved as STL, OBJ, PLY, GLB, glTF, 3MF, PNG or PDF, not ${to.toUpperCase()}.`);
   return out;
 }
 async function render(p, opts, ctx) { return convert(p, { ...opts, to: 'png' }, ctx); }

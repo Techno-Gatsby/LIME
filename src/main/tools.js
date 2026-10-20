@@ -30,7 +30,7 @@ const outFile = (suffix, e) => (f, ctx) => ctx.out.file(f, `${U.base(f)}${suffix
 const IMAGE_IN = ['image', 'raw'];
 const LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
 const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF (R12)'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
-const CAD3D_OUT = [['stl', 'STL'], ['obj', 'OBJ'], ['glb', 'GLB'], ['3mf', '3MF'], ['ply', 'PLY'], ['png', 'PNG render'], ['pdf', 'PDF render']];
+const CAD3D_OUT = [['stl', 'STL'], ['obj', 'OBJ'], ['glb', 'GLB'], ['gltf', 'glTF (one file)'], ['3mf', '3MF'], ['ply', 'PLY'], ['png', 'PNG render'], ['pdf', 'PDF render']];
 
 const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
