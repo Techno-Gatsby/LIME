@@ -15,6 +15,10 @@ Bundled engines
   Open CASCADE (occt-import-js) LGPL-2.1     Open Cascade SAS, kovacsv
   dxf-parser ............... MIT ; fflate ... MIT
   ag-psd ................... MIT ; docx ... MIT ; pptxgenjs ... MIT ; mammoth ... BSD-2 ; marked ... MIT ; SheetJS CE ... Apache-2.0
+  @kenjiuno/msgreader ...... Apache-2.0      HiraokaHyperTools      https://github.com/HiraokaHyperTools/msgreader
+  @kenjiuno/decompressrtf .. BSD-2-Clause ; iconv-lite ... MIT ; safer-buffer ... MIT ; @xmldom/xmldom ... MIT
+  Cubic-to-quadratic font outlines follow the approach of cu2qu (fontTools, Google) ... Apache-2.0
+  Test suite only (not shipped): wawoff2 ... MIT (Google's WOFF2 reference build) ; cfb ... Apache-2.0
   Electron / Chromium ...... MIT / BSD
   Noto Sans/Serif/Mono, Caveat, Dancing Script fonts ... SIL Open Font License 1.1
   Tesseract trained data (tessdata_best, tessdata_fast) ... Apache-2.0
@@ -26,3 +30,5 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
 
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil
+
+Portions of the format conversion logic are adapted from Filee by KnifeLemon (https://github.com/KnifeLemon/Filee), MIT License.
