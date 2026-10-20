@@ -32,8 +32,137 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const [src, to, f] of [['photo.heic', 'jpg', 'jpeg'], ['photo.jpg', 'png', 'png'], ['photo.jpg', 'webp', 'webp'], ['photo.jpg', 'avif', 'heif'], ['photo.jpg', 'tiff', 'tiff'], ['photo.jpg', 'gif', 'gif'], ['photo.webp', 'jpg', 'jpeg'], ['alpha.png', 'jpg', 'jpeg'], ['layers.psd', 'png', 'png'], ['raw.dng', 'jpg', 'jpeg'], ['photo.jxl', 'png', 'png']]) {
     T(`image ${src}→${to}`, 'convert-image', [src], { to, quality: 88 }, async ([o]) => { const m = await fmt(o, f); ok(m.width > 100, 'tiny'); });
   }
-  T('image→bmp', 'convert-image', ['photo.jpg'], { to: 'bmp' }, ([o]) => magic(o, 'BM'));
-  T('image→ico', 'convert-image', ['photo.png'], { to: 'ico' }, ([o]) => ok(read(o).readUInt16LE(2) === 1 && read(o).readUInt16LE(4) >= 5, 'not ico'));
+  const ffbin = (n) => E('util').binPath(n);
+  let decoded = 0;
+  const ffpng = (p, pre = []) => { const o = path.join(OUT, `decoded-${decoded++}.png`); require('child_process').execFileSync(ffbin('ffmpeg'), ['-v', 'error', '-y', ...pre, '-i', p, '-frames:v', '1', o]); return o; };
+  const ffframes = (p) => { const d = path.join(OUT, `frames-${decoded++}`); fs.mkdirSync(d); require('child_process').execFileSync(ffbin('ffmpeg'), ['-v', 'error', '-y', '-i', p, '-fps_mode', 'passthrough', path.join(d, 'f%03d.png')]); return files(d).sort().map((f) => path.join(d, f)); };
+  const pixels = async (input) => { const { data, info } = await sharp(input, { limitInputPixels: false, animated: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }); return { w: info.width, h: info.height, data, at: (x, y) => [...data.subarray((y * info.width + x) * 4, (y * info.width + x) * 4 + 4)] }; };
+  const near = (a, b, tol = 14) => b.every((v, i) => Math.abs(a[i] - v) <= tol);
+  const psnr = (a, b) => { let se = 0, n = 0; for (let i = 0; i < a.length; i += 4) for (let c = 0; c < 3; c++) { se += (a[i + c] - b[i + c]) ** 2; n++; } return 10 * Math.log10(65025 / Math.max(se / n, 1e-9)); };
+  const heicDecode = async (p) => { const d = await require('heic-decode')({ buffer: read(p) }); return { w: d.width, h: d.height, data: Buffer.from(d.data.buffer, d.data.byteOffset, d.data.byteLength), at: (x, y) => [...d.data.subarray((y * d.width + x) * 4, (y * d.width + x) * 4 + 4)] }; };
+  const pngChunks = (p) => { const b = read(p), c = []; for (let i = 8; i + 8 <= b.length; i += 12 + b.readUInt32BE(i)) c.push({ type: b.toString('latin1', i + 4, i + 8), data: b.subarray(i + 8, i + 8 + b.readUInt32BE(i)) }); return c; };
+  const icnsEntries = (b) => { const e = []; for (let i = 8; i + 8 <= b.length; i += b.readUInt32BE(i + 4)) e.push({ type: b.toString('latin1', i, i + 4), data: b.subarray(i + 8, i + b.readUInt32BE(i + 4)) }); return e; };
+  const brand = (p) => read(p).toString('latin1', 8, 12);
+  const isP3 = (icc) => !!icc && icc.toString('latin1').replace(/\0/g, '').includes('P3');
+
+  T('image→bmp', 'convert-image', ['alpha.png'], { to: 'bmp' }, async ([o]) => { magic(o, 'BM'); ok(read(o).readUInt16LE(28) === 24, 'not 24-bit'); const px = await pixels(ffpng(o)); ok(near(px.at(2, 2), [255, 255, 255, 255]), `transparent corner became ${px.at(2, 2)}`); ok(near(px.at(300, 300), [134, 194, 58, 255]), `centre ${px.at(300, 300)}`); });
+  T('image→ico', 'convert-image', ['photo.png'], { to: 'ico' }, async ([o]) => {
+    const b = read(o), n = b.readUInt16LE(4), entry = (i) => b.subarray(b.readUInt32LE(6 + 16 * i + 12), b.readUInt32LE(6 + 16 * i + 12) + b.readUInt32LE(6 + 16 * i + 8));
+    ok(b.readUInt16LE(2) === 1 && n === 7, `type ${b.readUInt16LE(2)}, ${n} sizes`);
+    ok(b[6] === 0 && entry(0).subarray(1, 4).toString() === 'PNG' && (await sharp(entry(0)).metadata()).width === 256, '256 px entry is not PNG');
+    const small = entry(n - 1);
+    ok(b[6 + 16 * (n - 1)] === 16 && small.readUInt32LE(0) === 40 && small.readInt32LE(8) === 32 && small.readUInt16LE(14) === 32, '16 px entry is not a 32-bit DIB');
+    const px = await pixels(ffpng(o)); ok(px.w === 256 && px.at(128, 10)[3] === 0 && px.at(128, 128)[3] === 255, `ffmpeg sees ${px.w} px, ${px.at(128, 10)}`);
+  });
+  T('image→avif is AV1', 'convert-image', ['photo.jpg'], { to: 'avif', quality: 70 }, async ([o]) => { ok(brand(o) === 'avif', `brand ${brand(o)}`); const m = await sharp(o).metadata(); ok(m.compression === 'av1' && m.width === 1600, `${m.compression} ${m.width}`); });
+  T('image→heic', 'convert-image', ['photo.jpg'], { to: 'heic', quality: 80 }, async ([o]) => {
+    ok(brand(o) === 'heic', `brand ${brand(o)}`);
+    const d = await heicDecode(o), ref = await pixels(fx('photo.jpg'));
+    ok(d.w === 1600 && d.h === 1067, `${d.w}x${d.h}`);
+    const q = psnr(d.data, ref.data); ok(q > 32, `PSNR ${q.toFixed(1)} dB`);
+    const m = await sharp(o).metadata(); ok(m.exif?.includes('LimeCam') && m.icc, 'EXIF or ICC profile lost');
+  });
+  T('image→heic odd size, flattened', 'convert-image', ['odd.png'], { to: 'heic' }, async ([o]) => { const d = await heicDecode(o); ok(d.w === 301 && d.h === 201, `${d.w}x${d.h}`); ok(near(d.at(3, 3), [255, 255, 255]) && near(d.at(150, 100), [44, 100, 19], 20), `corner ${d.at(3, 3)} centre ${d.at(150, 100)}`); });
+  T('image heic→jpg keeps profile and EXIF', 'convert-image', ['photo-p3.heic'], { to: 'jpg' }, async ([o]) => { const m = await sharp(o).metadata(); ok(isP3(m.icc), 'Display P3 profile lost'); ok(m.exif?.includes('LimeCam'), 'EXIF lost'); ok(m.width === 400 && (m.orientation || 1) === 1, `${m.width}x${m.height}, orientation ${m.orientation}`); });
+  T('image keeps EXIF and profile', 'convert-image', ['photo.jpg'], { to: 'webp' }, async ([o]) => { const m = await fmt(o, 'webp'); ok(m.exif?.includes('LimeCam') && m.icc, 'metadata dropped'); });
+  T('image strip option', 'convert-image', ['photo.jpg'], { to: 'jpg', strip: true }, async ([o]) => { const m = await sharp(o).metadata(); ok(!m.exif && m.icc, `exif ${!!m.exif}, icc ${!!m.icc}`); });
+  const frameCheck = (f) => async ([o]) => { const m = await fmt(o, f); ok(m.pages === 3 && String(m.delay) === '100,200,300' && m.loop === 0, `${m.pages} frames, ${m.delay}, loop ${m.loop}`); const px = await pixels(o); ok(near(px.at(60, 90 + 45), [40, 200, 60, 255], 20), `frame 2 ${px.at(60, 135)}`); };
+  T('image gif→webp keeps frames', 'convert-image', ['frames.gif'], { to: 'webp' }, frameCheck('webp'));
+  T('image webp→gif keeps frames', 'convert-image', ['frames.webp'], { to: 'gif' }, frameCheck('gif'));
+  T('image gif→apng keeps frames', 'convert-image', ['frames.gif'], { to: 'apng' }, async ([o]) => {
+    const c = pngChunks(o), ac = c.find((x) => x.type === 'acTL'), fc = c.filter((x) => x.type === 'fcTL');
+    ok(ac && ac.data.readUInt32BE(0) === 3 && ac.data.readUInt32BE(4) === 0, 'acTL');
+    ok(fc.map((x) => x.data.readUInt16BE(20) / x.data.readUInt16BE(22)).join() === '0.1,0.2,0.3', 'delays');
+    const fr = ffframes(o); ok(fr.length === 3, `ffmpeg reads ${fr.length} frames`);
+    ok(near((await pixels(fr[2])).at(60, 45), [40, 60, 220, 255], 20), 'frame 3 colour');
+  });
+  T('image apng→gif keeps frames', 'convert-image', ['frames.apng'], { to: 'gif' }, async ([o]) => { const m = await fmt(o, 'gif'); ok(m.pages === 4 && m.delay.every((d) => d === 200), `${m.pages} frames, ${m.delay}`); });
+  T('image animated .png→webp', 'convert-image', ['frames-apng.png'], { to: 'webp' }, async ([o]) => { const m = await fmt(o, 'webp'); ok(m.pages === 4, `${m.pages} frames`); });
+  T('image apng compositing', 'convert-image', ['vectors.apng'], { to: 'webp', lossless: true }, async ([o]) => {
+    const m = await fmt(o, 'webp'); ok(m.pages === 4 && String(m.delay) === '50,100,100,1000' && m.loop === 2, `${m.pages} frames, ${m.delay}, loop ${m.loop}`);
+    const px = await pixels(o), at = (f, x, y) => px.at(x, 40 * f + y);
+    ok(at(1, 5, 5)[3] === 0 && near(at(1, 35, 35), [255, 0, 0, 255], 2), 'frame 2: SOURCE');
+    const b = at(2, 35, 35); ok(b[0] >= 100 && b[0] <= 160 && b[2] >= 100 && b[2] <= 160 && at(2, 5, 5)[3] === 0, `frame 3: OVER ${b}`);
+    ok(near(at(3, 35, 35), [255, 0, 0, 255], 2) && near(at(3, 20, 20), [0, 255, 0, 255], 2) && at(3, 5, 5)[3] === 0, 'frame 4: PREVIOUS');
+  });
+  T('image tiff pages→png', 'convert-image', ['pages.tiff'], { to: 'png' }, async ([o]) => { const fl = files(o).sort(); ok(fl.length === 3, `${fl.length} files`); for (let i = 0; i < 3; i++) { const px = await pixels(path.join(o, fl[i])); ok(near(px.at(150, 100), [[220, 40, 40], [40, 200, 60], [40, 60, 220]][i]), `page ${i + 1}`); } });
+  T('image tiff pages→pdf', 'convert-image', ['pages.tiff'], { to: 'pdf' }, async ([o]) => pages(o, 3));
+  T('image oversized→webp', 'convert-image', ['wide.png'], { to: 'webp' }, async ([o], r) => { const m = await fmt(o, 'webp'); ok(m.width === 16383 && m.height === 32, `${m.width}x${m.height}`); ok(/Reduced/.test(r[0].note), 'no note'); });
+  T('image oversized→jpg', 'convert-image', ['long.png'], { to: 'jpg' }, async ([o]) => { const m = await fmt(o, 'jpeg'); ok(m.width === 65500 && m.height === 7, `${m.width}x${m.height}`); });
+  T('image svg at its own size', 'convert-image', ['logo.svg'], { to: 'png' }, async ([o]) => { const m = await fmt(o, 'png'); ok(m.width === 240 && m.height === 160, `${m.width}x${m.height}`); });
+  T('image huge svg is capped', 'convert-image', ['huge.svg'], { to: 'png' }, async ([o]) => { const m = await fmt(o, 'png'); ok(Math.max(m.width, m.height) <= 16384 && m.width * m.height <= 1e8 && m.width > 10000, `${m.width}x${m.height}`); });
+  T('image hdr is tone-mapped', 'convert-image', ['glow.hdr'], { to: 'png' }, async ([o]) => { const px = await pixels(o); ok(px.at(50, 25)[0] > 100, `mid grey ${px.at(50, 25)} looks linear`); ok(px.at(2, 0)[0] > 240, `highlight ${px.at(2, 0)}`); });
+  T('image cur→png', 'convert-image', ['cursor.cur'], { to: 'png' }, async ([o]) => { const px = await pixels(o); ok(px.w === 48 && px.h === 48 && px.at(1, 1)[3] === 0 && near(px.at(24, 24), [134, 194, 58, 255]), `${px.w}x${px.h} ${px.at(24, 24)}`); });
+  T('image legacy icns→png', 'convert-image', ['legacy.icns'], { to: 'png' }, async ([o]) => { const px = await pixels(o); ok(px.w === 128 && px.at(64, 32)[1] > 170 && px.at(64, 32)[3] === 255 && px.at(64, 100)[3] === 0, `${px.w} ${px.at(64, 32)} ${px.at(64, 100)}`); });
+  T('image icns→png', 'convert-image', ['modern.icns'], { to: 'png' }, async ([o]) => { const px = await pixels(o); ok(px.w === 512 && px.at(2, 2)[3] === 0 && px.at(256, 256)[3] === 255, `${px.w}`); });
+  T('image→apng', 'convert-image', ['photo.png'], { to: 'apng' }, async ([o]) => { ok(pngChunks(o).some((c) => c.type === 'acTL'), 'no acTL'); const px = await pixels(ffpng(o)); ok(px.w === 800 && px.h === 534, `${px.w}x${px.h}`); });
+  T('image→jp2 is lossless', 'convert-image', ['photo.png'], { to: 'jp2' }, async ([o]) => { magic(o, 'jP'); const a = await sharp(ffpng(o)).removeAlpha().raw().toBuffer(), b = await sharp(fx('photo.png')).removeAlpha().raw().toBuffer(); ok(a.equals(b), 'pixels changed'); });
+  T('image→icns', 'convert-image', ['photo.png'], { to: 'icns' }, async ([o]) => {
+    const b = read(o), e = icnsEntries(b);
+    ok(b.toString('latin1', 0, 4) === 'icns' && b.readUInt32BE(4) === b.length, 'header');
+    ok(e.map((x) => x.type).join() === 'TOC ,icp4,ic11,icp5,ic12,ic07,ic13,ic08,ic14,ic09,ic10', e.map((x) => x.type).join());
+    for (const [t, s] of [['icp4', 16], ['ic12', 64], ['ic14', 512]]) ok((await sharp(e.find((x) => x.type === t).data).metadata()).width === s, `${t} size`);
+    const big = await pixels(e.find((x) => x.type === 'ic10').data); ok(big.w === 1024 && big.at(512, 20)[3] === 0 && big.at(512, 512)[3] === 255, 'ic10 padding');
+  });
+  T('image svg→icns renders crisp', 'convert-image', ['icon.svg'], { to: 'icns' }, async ([o]) => { const big = await pixels(icnsEntries(read(o)).find((x) => x.type === 'ic10').data); ok(big.at(512 + 415, 512)[3] === 255 && big.at(512 + 440, 512)[3] === 0, `edge ${big.at(512 + 415, 512)} ${big.at(512 + 440, 512)}`); });
+  T('image→cur', 'convert-image', ['alpha.png'], { to: 'cur', hotspot: 'center' }, async ([o]) => {
+    const b = read(o); ok(b.readUInt16LE(2) === 2 && b.readUInt16LE(4) === 1 && b[6] === 0, 'not a 256 px cursor');
+    ok(b.readUInt16LE(10) === 128 && b.readUInt16LE(12) === 128, `hotspot ${b.readUInt16LE(10)},${b.readUInt16LE(12)}`);
+    const px = await pixels(ffpng(o, ['-f', 'ico'])); ok(px.w === 256 && px.at(2, 2)[3] === 0 && px.at(128, 128)[3] === 255, `ffmpeg sees ${px.w} ${px.at(128, 128)}`);
+  });
+  for (const [to, sig, kind] of [['tga', 'TRUEVISION', 'alpha'], ['qoi', 'qoif', 'alpha'], ['pam', 'P7', 'alpha'], ['sgi', '\x01\xda', 'alpha'], ['dds', 'DDS ', 'alpha'], ['xpm', '/* XPM */', 'alpha'], ['pcx', '\n', 'flat'], ['ppm', 'P6', 'flat'], ['pfm', 'PF', 'flat'], ['ras', '\x59\xa6\x6a\x95', 'flat'], ['pgm', 'P5', 'grey'], ['pbm', 'P4', 'mono'], ['xbm', '#define', 'mono'], ['wbmp', '\0\0', 'mono']]) {
+    T(`image→${to}`, 'convert-image', ['odd.png'], { to }, async ([o]) => {
+      const b = read(o); ok((to === 'tga' ? b.subarray(-18) : b).toString('latin1').startsWith(sig), `signature ${JSON.stringify(b.subarray(0, 8).toString('latin1'))}`);
+      const px = await pixels(ffpng(o)), c = px.at(3, 3), m = px.at(150, 100);
+      ok(px.w === 301 && px.h === 201, `${px.w}x${px.h}`);
+      ok(kind === 'alpha' ? c[3] === 0 : near(c, [255, 255, 255, 255]), `corner ${c}`);
+      ok(near(m, kind === 'mono' ? [0, 0, 0, 255] : kind === 'grey' ? [74, 74, 74, 255] : [44, 100, 19, 255]), `centre ${m}`);
+    });
+  }
+  for (const e of ['tga', 'qoi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xbm', 'wbmp', 'jp2']) {
+    T(`image ${e} in`, 'convert-image', [`sample.${e}`], { to: 'png' }, async ([o]) => { const px = await pixels(o); ok(px.w === 300 && px.h === 200, `${px.w}x${px.h}`); ok(['tga', 'qoi', 'pam', 'sgi', 'jp2'].includes(e) ? px.at(2, 2)[3] === 0 : px.at(2, 2)[3] === 255, `corner ${px.at(2, 2)}`); ok(px.at(150, 100)[3] === 255, 'centre'); });
+  }
+  const count = (px, x0, y0, x1, y1, test) => { let n = 0; for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (test(px.at(x, y))) n++; return n; };
+  const white = (c) => c[0] > 235 && c[1] > 235 && c[2] > 235, black = (c) => c[0] < 40 && c[1] < 40 && c[2] < 40;
+  T('image meme', 'meme', ['photo.jpg'], { top: 'When the tests pass', bottom: 'first try' }, async ([o]) => {
+    const px = await pixels(o), src = await pixels(fx('photo.jpg'));
+    ok(px.w === 1600 && px.h === 1067, `${px.w}x${px.h}`);
+    for (const [y0, y1] of [[0, 230], [837, 1067]]) {
+      const w = count(px, 0, y0, 1600, y1, white), b = count(px, 0, y0, 1600, y1, black);
+      ok(w > 20000 && b > 5000 && count(src, 0, y0, 1600, y1, black) === 0, `caption band ${y0}: ${w} white, ${b} black`);
+    }
+    ok(near(px.at(800, 533), src.at(800, 533), 6), 'middle changed');
+  });
+  T('image meme on a GIF', 'meme', ['frames.gif'], { top: 'Lime', bottom: 'Animated' }, async ([o]) => {
+    const m = await fmt(o, 'gif'); ok(m.pages === 3 && String(m.delay) === '100,200,300', `${m.pages} frames, ${m.delay}`);
+    const px = await pixels(o); for (let i = 0; i < 3; i++) ok(count(px, 0, 90 * i, 120, 90 * i + 22, white) > 40, `frame ${i + 1} has no caption`);
+  });
+  T('image border with corners and shadow', 'border-image', ['photo.jpg'], { color: '#ff0000', width: 5, radius: 20, shadow: true }, async ([o]) => {
+    const px = await pixels(o), pad = 81, b = 53, fw = 1706, fh = 1173;
+    ok(px.w === fw + 2 * pad && px.h === fh + 2 * pad && o.endsWith('.png'), `${px.w}x${px.h} ${path.extname(o)}`);
+    ok(px.at(0, 0)[3] === 0 && px.at(pad + 3, pad + 3)[3] <= 8, 'corners not rounded');
+    ok(near(px.at(pad + (b >> 1), pad + (fh >> 1)), [255, 0, 0, 255], 4), `border ${px.at(pad + (b >> 1), pad + (fh >> 1))}`);
+    const sh = px.at(pad + (fw >> 1), pad + fh + 20); ok(sh[3] > 30 && sh[0] < 60, `shadow ${sh}`);
+  });
+  T('image border', 'border-image', ['photo.jpg'], { color: '#2266ff', width: 5, radius: 0, shadow: false }, async ([o]) => { const m = await fmt(o, 'jpeg'); ok(m.width === 1706 && m.height === 1173, `${m.width}x${m.height}`); ok(near((await pixels(o)).at(20, 600), [34, 102, 255], 12), 'border colour'); });
+  for (const mode of ['pixelate', 'blur']) {
+    T(`image blur faces (${mode})`, 'blur-faces', ['faces.png'], { mode, strength: 60 }, async ([o], r) => {
+      ok(/^2 faces/.test(r[0].note), r[0].note);
+      const px = await pixels(o), src = await pixels(fx('faces.png'));
+      for (const [x, y] of [[171, 240], [229, 240], [450, 220], [490, 220]]) ok(!near(px.at(x, y), src.at(x, y), 25), `eye at ${x},${y} still sharp: ${px.at(x, y)}`);
+      ok(near(px.at(20, 20), src.at(20, 20), 0) && near(px.at(620, 460), src.at(620, 460), 0), 'background changed');
+    });
+  }
+  T('image animation speed', 'animation-speed', ['frames.gif'], { speed: '2', reverse: true }, async ([o]) => { const m = await fmt(o, 'gif'); ok(m.pages === 3 && String(m.delay) === '150,100,50', `${m.pages} frames, ${m.delay}`); ok(near((await pixels(o)).at(60, 45), [40, 60, 220, 255], 20), 'not reversed'); });
+  T('image animation speed apng', 'animation-speed', ['frames.apng'], { speed: '0.5' }, async ([o]) => { const fc = pngChunks(o).filter((c) => c.type === 'fcTL'); ok(fc.length === 4 && fc.every((c) => c.data.readUInt16BE(20) / c.data.readUInt16BE(22) === 0.4), `${fc.length} frames`); ok(ffframes(o).length === 4, 'ffmpeg frames'); });
+  T('image wheel rings', 'file-hash', ['photo.jpg'], { algos: ['md5'] }, () => {
+    for (const f of ['a.jpg', 'a.png', 'a.heic', 'a.gif', 'a.svg', 'a.ico', 'a.tga', 'a.cur']) {
+      const ring = tools.wheelsFor([f]).convert, tos = ring.map((w) => w.opts.to);
+      ok(ring.length >= 8 && ring.length <= 9 && !tos.includes(f.slice(2)) && ring.every((w) => w.tool === 'convert-image'), `${f}: ${tos}`);
+    }
+    ok(tools.wheelsFor(['a.gif']).convert.slice(0, 2).map((w) => w.opts.to).join() === 'webp,apng', 'animated targets first');
+    ok(tools.toolsFor(['a.icns']).includes('convert-image'), 'ICNS is not an image');
+  });
   T('image→psd', 'convert-image', ['photo.png'], { to: 'psd' }, ([o]) => magic(o, '8BPS'));
   T('image→pdf', 'convert-image', ['photo.jpg'], { to: 'pdf' }, async ([o]) => pages(o, 1));
   T('image→jxl', 'convert-image', ['photo.png'], { to: 'jxl' }, ([o]) => ok(read(o).length > 100 && (read(o)[0] === 0xff && read(o)[1] === 0x0a || read(o).subarray(4, 8).toString() === 'JXL '), 'not jxl'));

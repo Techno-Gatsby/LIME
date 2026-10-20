@@ -28,6 +28,13 @@ const each = (fn) => async (files, opts, ctx) => {
 };
 const outFile = (suffix, e) => (f, ctx) => ctx.out.file(f, `${U.base(f)}${suffix}.${e}`);
 const IMAGE_IN = ['image', 'raw'];
+const IMAGE_MORE = ['apng', 'cur', 'icns', 'hif', 'j2k', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'sun', 'xbm', 'xpm', 'wbmp'];
+const groupOf = (f) => { const g = U.groupOf(f); return g === 'any' && IMAGE_MORE.includes(U.ext(f)) ? 'image' : g; };
+const anyToPdf = (f, c, out) => (IMAGE_IN.includes(groupOf(f)) ? img().toPdf([f], { pageSize: 'fit' }, out || outFile('', 'pdf')(f, c), c) : office().anyToPdf(f, c, out));
+const NO_ALPHA_OUT = ['jpg', 'bmp', 'heic', 'pcx', 'ppm', 'pgm', 'pbm', 'pfm', 'ras', 'xbm', 'wbmp'];
+const IMAGE_OUT = [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['heic', 'HEIC'], ['avif', 'AVIF'], ['tiff', 'TIFF'], ['gif', 'GIF'], ['apng', 'Animated PNG (APNG)'], ['pdf', 'PDF'], ['psd', 'Photoshop (PSD)'],
+  ['ico', 'Windows icon (ICO)'], ['icns', 'Mac icon (ICNS)'], ['cur', 'Cursor (CUR)'], ['bmp', 'BMP'], ['jxl', 'JPEG XL'], ['jp2', 'JPEG 2000 (lossless)'], ['tga', 'TGA'], ['qoi', 'QOI'], ['dds', 'DDS texture'],
+  ['pcx', 'PCX'], ['ppm', 'PPM'], ['pgm', 'PGM (greyscale)'], ['pbm', 'PBM (black and white)'], ['pam', 'PAM'], ['pfm', 'PFM (float)'], ['sgi', 'SGI'], ['ras', 'Sun raster'], ['xpm', 'XPM'], ['xbm', 'XBM'], ['wbmp', 'WBMP']];
 const LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
 const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF (R12)'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
 const CAD3D_OUT = [['stl', 'STL'], ['obj', 'OBJ'], ['glb', 'GLB'], ['3mf', '3MF'], ['ply', 'PLY'], ['png', 'PNG render'], ['pdf', 'PDF render']];
@@ -40,7 +47,7 @@ const TOOLS = [
     run: async (files, opts, ctx) => {
       const tmp = await U.tmpDir('merge');
       const list = [];
-      for (const f of files) { if (U.groupOf(f) === 'pdf') list.push(f); else { const p = path.join(tmp, `${list.length}.pdf`); await pdf().imagesToPdf([f], { pageSize: 'fit' }, p); list.push(p); } }
+      for (const f of files) { if (U.groupOf(f) === 'pdf') list.push(f); else { const p = path.join(tmp, `${list.length}.pdf`); await img().toPdf([f], { pageSize: 'fit' }, p); list.push(p); } }
       const out = ctx.out.file(files[0], `${U.base(files[0])} - merged.pdf`);
       await pdf().merge(list, out, ctx);
       fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
@@ -67,10 +74,10 @@ const TOOLS = [
   { id: 'pdf-to-html', cat: 'pdf', name: 'PDF to HTML', desc: 'A web page that keeps the layout.', accepts: ['pdf'], ext: 'html', options: [pdfPassword], run: each((f, o, c) => pdf().toHtml(f, o, outFile('', 'html')(f, c))) },
   { id: 'pdf-to-svg', cat: 'pdf', name: 'PDF to SVG', desc: 'Vector artwork via VectorCraft.', accepts: ['pdf'], ext: 'svg', craft: 'vectorcraft', run: each((f, o, c) => craft().vector(f, { to: 'svg' }, c)) },
   { id: 'to-pdf', cat: 'pdf', name: 'Make PDF', desc: 'Documents, slides, sheets, drawings or images to PDF.', accepts: ['doc', 'sheet', 'slides', 'vector', 'cad2d', 'layout', 'image', 'raw'], ext: 'pdf',
-    run: each((f, o, c) => office().anyToPdf(f, c)) },
+    run: each((f, o, c) => anyToPdf(f, c)) },
   { id: 'jpg-to-pdf', cat: 'pdf', name: 'Images to PDF', desc: 'One PDF from photos, scans or screenshots.', accepts: IMAGE_IN, ordered: true, ext: 'pdf',
     options: [choice('combine', 'Output', [['one', 'One PDF'], ['each', 'One per image']]), select('pageSize', 'Page size', [['fit', 'Same as image'], ['a4', 'A4'], ['letter', 'Letter'], ['legal', 'Legal'], ['a3', 'A3']]), choice('orientation', 'Orientation', [['auto', 'Auto'], ['portrait', 'Portrait'], ['landscape', 'Landscape']], 'auto', { when: { pageSize: ['a4', 'letter', 'legal', 'a3'] } }), choice('margin', 'Margin', [['none', 'None'], ['small', 'Small'], ['large', 'Large']])],
-    run: async (files, o, c) => (o.combine === 'each' ? each((f, oo, cc) => pdf().imagesToPdf([f], oo, outFile('', 'pdf')(f, cc), cc))(files, o, c) : [await pdf().imagesToPdf(files, o, c.out.file(files[0], files.length > 1 ? `${U.base(files[0])} and ${files.length - 1} more.pdf` : `${U.base(files[0])}.pdf`), c)]) },
+    run: async (files, o, c) => (o.combine === 'each' ? each((f, oo, cc) => img().toPdf([f], oo, outFile('', 'pdf')(f, cc), cc))(files, o, c) : [await img().toPdf(files, o, c.out.file(files[0], files.length > 1 ? `${U.base(files[0])} and ${files.length - 1} more.pdf` : `${U.base(files[0])}.pdf`), c)]) },
   { id: 'html-to-pdf', cat: 'pdf', name: 'Web page to PDF', desc: 'Save a web address as a PDF.', accepts: [], noFiles: true, ext: 'pdf',
     options: [text('url', 'Web address', '', { placeholder: 'https://example.com', required: true }), select('pageSize', 'Page size', [['A4', 'A4'], ['Letter', 'Letter'], ['A3', 'A3']]), toggle('landscape', 'Landscape')],
     run: async (files, o, c) => [await office().urlToPdf(o.url, o, c)] },
@@ -106,13 +113,14 @@ const TOOLS = [
   { id: 'extract-images-pdf', cat: 'pdf', name: 'Extract images', desc: 'Every embedded picture at full quality.', accepts: ['pdf'], save: 'folder', suffix: ' - embedded images',
     options: [choice('format', 'Save as', [['png', 'PNG'], ['jpg', 'JPG']]), pdfPassword], run: each((f, o, c) => pdf().extractImages(f, o, c)) },
 
-  { id: 'convert-image', cat: 'image', name: 'Convert image', desc: 'JPG, PNG, WebP, AVIF, HEIC in, TIFF, GIF, BMP, ICO, PSD and more.', accepts: IMAGE_IN, ext: (o) => o.to,
-    options: [select('to', 'Convert to', [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['avif', 'AVIF'], ['tiff', 'TIFF'], ['gif', 'GIF'], ['bmp', 'BMP'], ['ico', 'ICO'], ['psd', 'Photoshop (PSD)'], ['pdf', 'PDF'], ['jxl', 'JPEG XL']]), range('quality', 'Quality', 88, 30, 100, { unit: '%', when: { to: ['jpg', 'webp', 'avif'] } })],
+  { id: 'convert-image', cat: 'image', name: 'Convert image', desc: 'JPG, PNG, WebP, HEIC, AVIF, GIF, APNG, ICO, ICNS, TIFF and 20 more.', accepts: IMAGE_IN, ext: (o) => o.to,
+    options: [select('to', 'Convert to', IMAGE_OUT), range('quality', 'Quality', 88, 30, 100, { unit: '%', when: { to: ['jpg', 'webp', 'avif', 'heic'] } }), choice('hotspot', 'Hotspot', [['topleft', 'Top left'], ['center', 'Centre']], 'topleft', { when: { to: 'cur' } }),
+      { ...color('background', 'Fill transparent areas with', '#ffffff'), when: { to: NO_ALPHA_OUT }, advanced: true }, toggle('strip', 'Remove EXIF and GPS', false, { advanced: true })],
     run: each((f, o, c) => {
-      if (o.to === 'pdf') return pdf().imagesToPdf([f], { pageSize: 'fit' }, outFile('', 'pdf')(f, c), c);
+      if (o.to === 'pdf') return img().toPdf([f], { pageSize: 'fit' }, outFile('', 'pdf')(f, c), c);
       const e = U.ext(f);
-      if (o.to === 'psd' || ['psb', 'pcraft', 'exr', 'dpx'].includes(e)) return craft().photo(f, { ...o, to: o.to === 'tiff' ? 'tif' : o.to }, c);
-      if (e === 'psd') return craft().photo(f, { ...o, to: o.to === 'tiff' ? 'tif' : o.to }, c).catch(() => img().convert(f, o, c));
+      if (o.to === 'psd' || ['psb', 'pcraft'].includes(e)) return craft().photo(f, { ...o, to: o.to === 'tiff' ? 'tif' : o.to }, c);
+      if (['psd', 'exr', 'dpx'].includes(e)) return craft().photo(f, { ...o, to: o.to === 'tiff' ? 'tif' : o.to }, c).catch(() => img().convert(f, o, c));
       if (U.groupOf(f) === 'raw' && o.develop !== false && ['jpg', 'png', 'tiff', 'avif', 'webp'].includes(o.to)) return craft().develop(f, { to: o.to === 'tiff' ? 'tif' : o.to, quality: o.quality }, c).catch(() => img().convert(f, o, c));
       return img().convert(f, o, c);
     }) },
@@ -144,6 +152,15 @@ const TOOLS = [
   { id: 'watermark-image', cat: 'image', name: 'Watermark image', desc: 'Text or logo on photos.', accepts: IMAGE_IN, suffix: '-watermarked', ext: (o, files) => keepExt(files[0]),
     options: [choice('kind', 'Watermark', [['text', 'Text'], ['image', 'Logo']]), text('text', 'Text', '© Your name', { when: { kind: 'text' } }), file('image', 'Logo', [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg'] }], { when: { kind: 'image' } }), choice('layout', 'Layout', [['single', 'Once'], ['tiled', 'Tiled']]), select('position', 'Position', [['bottom-right', 'Bottom right'], ['bottom-left', 'Bottom left'], ['top-right', 'Top right'], ['top-left', 'Top left'], ['center', 'Centre']], 'bottom-right', { when: { layout: 'single' } }), range('opacity', 'Opacity', 50, 5, 100, { unit: '%' }), color('color', 'Colour', '#ffffff')],
     run: each((f, o, c) => img().watermark(f, o, c)) },
+  { id: 'meme', cat: 'image', name: 'Meme', desc: 'Bold outlined captions top and bottom, on photos or animated GIFs.', accepts: IMAGE_IN, suffix: '-meme', ext: (o, files) => keepExt(files[0]),
+    options: [text('top', 'Top text', '', { placeholder: 'When the build passes' }), text('bottom', 'Bottom text', '', { placeholder: 'on the first try' })], run: each((f, o, c) => img().meme(f, o, c)) },
+  { id: 'border-image', cat: 'image', name: 'Add border', desc: 'A coloured frame, rounded corners and a drop shadow.', accepts: IMAGE_IN, suffix: '-framed',
+    ext: (o, files) => ((Number(o.radius) || o.shadow) && ['jpg', 'tiff'].includes(keepExt(files[0])) ? 'png' : keepExt(files[0])),
+    options: [color('color', 'Colour', '#ffffff'), range('width', 'Width', 4, 0, 25, { unit: '%' }), range('radius', 'Rounded corners', 0, 0, 100, { unit: '%' }), toggle('shadow', 'Drop shadow', false)], run: each((f, o, c) => img().border(f, o, c)) },
+  { id: 'blur-faces', cat: 'image', name: 'Blur faces', desc: 'Find faces on this computer and blur or pixelate them.', accepts: IMAGE_IN, suffix: '-faces-hidden', ext: (o, files) => keepExt(files[0]),
+    options: [choice('mode', 'Effect', [['blur', 'Blur'], ['pixelate', 'Pixelate']]), range('strength', 'Strength', 60, 10, 100, { unit: '%' })], run: each((f, o, c) => img().blurFaces(f, o, c)) },
+  { id: 'animation-speed', cat: 'image', name: 'Animation speed', desc: 'Play an animated GIF, WebP or APNG faster, slower or backwards.', accepts: [], extAccept: ['gif', 'webp', 'apng'], suffix: '-speed', ext: (o, files) => U.ext(files[0] || '') || 'gif',
+    options: [select('speed', 'Speed', [['0.25', '0.25×'], ['0.5', '0.5×'], ['0.75', '0.75×'], ['1', 'Unchanged'], ['1.5', '1.5×'], ['2', '2×'], ['4', '4×']], '2'), toggle('reverse', 'Play backwards', false)], run: each((f, o, c) => img().animationSpeed(f, o, c)) },
   { id: 'strip-metadata', cat: 'image', name: 'Remove photo info', desc: 'Strip EXIF, GPS and camera data.', accepts: IMAGE_IN, suffix: '-clean', ext: (o, files) => keepExt(files[0]), run: each((f, o, c) => img().strip(f, o, c)) },
   { id: 'collage', cat: 'image', name: 'Collage', desc: 'Photos in a neat grid.', accepts: IMAGE_IN, min: 2, ordered: true, ext: 'jpg', stem: 'Collage',
     options: [num('columns', 'Columns', '', { placeholder: 'Auto' }), range('gap', 'Spacing', 12, 0, 60, { unit: 'px' }), color('background', 'Background', '#ffffff')],
@@ -225,7 +242,7 @@ const TOOLS = [
     run: async (files, o, c) => {
       const tmp = await U.tmpDir('mergedocs');
       const list = [];
-      for (let i = 0; i < files.length; i++) { c.progress((i / files.length) * 0.85, `Converting ${path.basename(files[i])}`); list.push(await office().anyToPdf(files[i], { ...c, progress: () => {} }, path.join(tmp, `${i}.pdf`))); }
+      for (let i = 0; i < files.length; i++) { c.progress((i / files.length) * 0.85, `Converting ${path.basename(files[i])}`); list.push(await anyToPdf(files[i], { ...c, progress: () => {} }, path.join(tmp, `${i}.pdf`))); }
       const out = c.out.file(files[0], `${U.base(files[0])} - combined.pdf`);
       await pdf().merge(list, out, { progress: (f) => c.progress(0.85 + f * 0.15, 'Merging') });
       fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
@@ -297,7 +314,6 @@ const WHEELS = {
     tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Organize'), W('ocr-pdf', 'OCR', 'Searchable'), W('protect-pdf', 'Protect', 'Password'), W('optimize-pdf', 'Optimize', 'Rebuild'), W('split-pdf', 'Split', 'Pages')],
   },
   image: {
-    convert: [W('convert-image', 'JPG', 'Photo', { to: 'jpg' }), W('convert-image', 'PNG', 'Lossless', { to: 'png' }), W('convert-image', 'WebP', 'Web', { to: 'webp' }), W('convert-image', 'AVIF', 'Smallest', { to: 'avif' }), W('convert-image', 'PDF', 'Document', { to: 'pdf' }), W('convert-image', 'PSD', 'Layers', { to: 'psd' }), W('convert-image', 'TIFF', 'Print', { to: 'tiff' }), W('convert-image', 'GIF', 'Classic', { to: 'gif' }), W('convert-image', 'ICO', 'Icon', { to: 'ico' })],
     tools: [W('compress-image', 'Compress', 'Smaller'), W('remove-background', 'Cut out', 'Subject'), W('image-to-text', 'Text', 'Copy text'), W('enhance-photo', 'Enhance', 'Auto'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('upscale-image', 'Upscale', '2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('strip-metadata', 'Clean', 'No EXIF')],
   },
   raw: {
@@ -357,6 +373,20 @@ const WHEELS = {
   folder: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' }), W('create-archive', 'TAR.GZ', 'Archive', { format: 'tar.gz' })], tools: [] },
   any: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' })], tools: [HASH] },
 };
+// The image ring offers the nine likeliest targets for what was dropped; the rest are in Convert image's format list.
+const IMAGE_TARGETS = { jpg: ['JPG', 'Photo'], png: ['PNG', 'Lossless'], webp: ['WebP', 'Web'], heic: ['HEIC', 'iPhone'], avif: ['AVIF', 'Smallest'], pdf: ['PDF', 'Document'], tiff: ['TIFF', 'Print'], psd: ['PSD', 'Layers'], gif: ['GIF', 'Classic'], apng: ['APNG', 'Animated'], ico: ['ICO', 'Icon'], icns: ['ICNS', 'Mac icon'], cur: ['CUR', 'Cursor'] };
+const IMAGE_RINGS = {
+  photo: ['jpg', 'png', 'webp', 'heic', 'avif', 'pdf', 'tiff', 'psd', 'gif', 'ico'],
+  graphic: ['png', 'jpg', 'webp', 'ico', 'icns', 'pdf', 'avif', 'tiff', 'gif', 'heic'],
+  motion: ['gif', 'webp', 'apng', 'png', 'jpg', 'pdf', 'tiff', 'avif', 'heic', 'ico'],
+  icon: ['png', 'ico', 'icns', 'cur', 'jpg', 'webp', 'pdf', 'tiff', 'gif', 'avif'],
+};
+const RING_KIND = { png: 'graphic', svg: 'graphic', gif: 'motion', apng: 'motion', ico: 'icon', icns: 'icon', cur: 'icon' };
+const SAME = { jpeg: 'jpg', jfif: 'jpg', tif: 'tiff', heif: 'heic', hif: 'heic' };
+function imageRing(files) {
+  const exts = [...new Set(files.map((f) => SAME[U.ext(f)] || U.ext(f)))], kinds = [...new Set(exts.map((e) => RING_KIND[e] || 'photo'))];
+  return IMAGE_RINGS[kinds.length === 1 ? kinds[0] : 'photo'].filter((to) => to !== exts[0] || exts.length > 1).slice(0, 9).map((to) => W('convert-image', ...IMAGE_TARGETS[to], { to }));
+}
 const MULTI = {
   pdf: [W('merge-pdf', 'Merge', 'One PDF'), W('compress-pdf', 'Compress', 'Each')],
   image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch')],
@@ -368,7 +398,7 @@ const MULTI = {
 };
 const SINGLE_OUTPUT = new Set(['create-archive', 'merge-media', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
-const groupsOf = (files) => [...new Set(files.map(U.groupOf))];
+const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);
 function accepts(t, files) {
   if (!t || t.noFiles) return false;
@@ -383,7 +413,7 @@ const dedupe = (list) => list.filter((w, i) => list.findIndex((x) => x.tool === 
 function wheelsFor(files) {
   const gs = groupsOf(files);
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
-  const base = WHEELS[g] || WHEELS.any;
+  const base = g === 'image' ? { ...WHEELS.image, convert: imageRing(files) } : WHEELS[g] || WHEELS.any;
   const ok = (w) => accepts(get(w.tool), files);
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
   if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
@@ -413,4 +443,4 @@ function suggest(id, files, opts = {}) {
   return { kind: 'file', name: `${name}${suffix}.${e}`, ext: e };
 }
 
-module.exports = { TOOLS, catalog, get, toolsFor, wheelsFor, groupsOf, suggest, accepts };
+module.exports = { TOOLS, catalog, get, toolsFor, wheelsFor, groupOf, groupsOf, suggest, accepts };

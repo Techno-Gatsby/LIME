@@ -24,7 +24,7 @@ function normalise(res) {
 }
 const CALLS = {
   async thumbnail(p, size = 240) {
-    const g = U.groupOf(p);
+    const g = tools.groupOf(p);
     if (g === 'pdf') { const t = await require('./engines/pdf').thumbnail(p, size); return { png: t.png, pages: t.pages }; }
     if (g === 'image' || g === 'raw') return { png: await require('./engines/image').thumbnail(p, size) };
     if (g === 'video') { const b = await require('./engines/media').thumbnail(p); return b ? { png: b } : null; }
@@ -39,7 +39,7 @@ const CALLS = {
     return null;
   },
   async describe(p) {
-    const g = U.groupOf(p);
+    const g = tools.groupOf(p);
     const st = await U.fsp.stat(p);
     const out = { group: g, size: st.size, modified: st.mtimeMs, isDir: st.isDirectory() };
     try {

@@ -10,6 +10,7 @@ Bundled engines
   Tesseract / tesseract.js . Apache-2.0                              https://github.com/naptha/tesseract.js
   IMG.LY background removal  AGPL-3.0        IMG.LY                 https://github.com/imgly/background-removal-js
   ONNX Runtime ............. MIT             Microsoft
+  Face detector model ...... MIT             Linzaer                https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB  (version-RFB-320)
   heic-decode / libheif .... ISC / LGPL-3.0
   LibreDWG (libredwg-web) .. GPL-3.0         Free Software Foundation, mlightcad
   Open CASCADE (occt-import-js) LGPL-2.1     Open Cascade SAS, kovacsv
@@ -26,3 +27,5 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
 
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil
+
+Portions of the format conversion logic are adapted from Filee by KnifeLemon (https://github.com/KnifeLemon/Filee), MIT License.
