@@ -126,6 +126,13 @@ fs.writeFileSync(P('cube.stl'), cad.writeStl(cube));
   fs.writeFileSync(P('mixed.pdf'), await d.save());
 }
 fs.writeFileSync(P('unicode.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1021', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES', '0', 'LINE', '8', '0', '10', '0', '20', '0', '11', '200', '21', '0', '0', 'TEXT', '8', '0', '10', '10', '20', '20', '40', '8', '1', 'Größe Ω Привет', '0', 'ENDSEC', '0', 'EOF', ''].join('\n'));
+{
+  const sq = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const poly = (flags, pts) => ['92', flags, '72', '0', '73', '1', '93', pts.length, ...pts.flatMap(([x, y]) => ['10', x, '20', y]), '97', '0'];
+  const edges = (pts) => ['92', '1', '93', pts.length, ...pts.flatMap(([x, y], k) => { const [x2, y2] = pts[(k + 1) % pts.length]; return ['72', '1', '10', x, '20', y, '11', x2, '21', y2]; }), '97', '0'];
+  const hatch = (name, solid, paths) => ['0', 'HATCH', '8', '0', '62', '1', '10', '0', '20', '0', '30', '0', '210', '0', '220', '0', '230', '1', '2', name, '70', solid, '71', '0', '91', paths.length, ...paths.flat(), '75', '0', '76', '1', ...(solid === '1' ? [] : ['52', '45', '41', '1', '77', '0', '78', '1', '53', '45', '43', '0', '44', '0', '45', '-2.24', '46', '2.24', '79', '0']), '98', '0'];
+  fs.writeFileSync(P('hatch.dxf'), ['0', 'SECTION', '2', 'ENTITIES', ...hatch('SOLID', '1', [poly('3', sq(0, 0, 100, 100)), poly('2', sq(25, 25, 75, 75))]), ...hatch('ANSI31', '0', [edges(sq(200, 0, 300, 100))]), '0', 'ENDSEC', '0', 'EOF', ''].join('\n'));
+}
 const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
 fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));

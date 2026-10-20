@@ -33,7 +33,7 @@ function fromDxf(dxf) {
       case 'POINT': return { ...base, t: 'point', p: P(e.position) };
       case 'SOLID': case 'TRACE': return { ...base, t: 'solid', pts: (e.points || []).map(P) };
       case '3DFACE': return { ...base, t: 'face', pts: (e.vertices || []).map(P) };
-      case 'HATCH': return e.boundaryPaths ? { ...base, t: 'hatch', loops: [], solid: !!e.solidFill } : null;
+      case 'HATCH': return e.loops?.length ? { ...base, t: 'hatch', loops: e.loops, solid: e.solid } : null;
       default: return null;
     }
   };
@@ -85,6 +85,62 @@ function hatchLoop(bp) {
   }
   return out;
 }
+class DxfHatch {
+  constructor() { this.ForEntityName = 'HATCH'; }
+  parseEntity(scanner, curr) {
+    const g = [], e = { type: curr.value, loops: [], solid: false };
+    for (curr = scanner.next(); !scanner.isEOF() && curr.code !== 0; curr = scanner.next()) g.push([curr.code, curr.value]);
+    let i = 0;
+    const take = (c) => (g[i]?.[0] === c ? Number(g[i++][1]) : null);
+    const pt = (c) => { const x = take(c), y = take(c + 10); return { x: x || 0, y: y || 0 }; };
+    const skip = (...cs) => { while (g[i] && cs.includes(g[i][0])) i++; };
+    const sweep = (c, r, rx, ry, rot, a0, a1, ccw) => {
+      if (!ccw) [a0, a1] = [-a0, -a1];
+      let d = a1 - a0;
+      if (ccw) while (d <= 0) d += Math.PI * 2; else while (d >= 0) d -= Math.PI * 2;
+      const n = Math.max(8, Math.ceil((Math.abs(d) * 48) / Math.PI));
+      return Array.from({ length: n + 1 }, (_, k) => { const t = a0 + (d * k) / n, x = rx * Math.cos(t), y = ry * Math.sin(t); return { x: c.x + x * Math.cos(rot) - y * Math.sin(rot), y: c.y + x * Math.sin(rot) + y * Math.cos(rot) }; });
+    };
+    while (i < g.length) {
+      const [code, value] = g[i++];
+      if (code === 8) e.layer = value;
+      else if (code === 62) e.colorIndex = Number(value);
+      else if (code === 420) e.color = Number(value);
+      else if (code === 70) e.solid = (Number(value) & 1) === 1;
+      else if (code === 91) {
+        for (let n = Number(value); n > 0 && i < g.length; n--) {
+          const flags = take(92) || 0, pts = [];
+          if (flags & 2) {
+            const bulged = take(72), closed = take(73), count = take(93) || 0, vs = [];
+            for (let k = 0; k < count; k++) { const v = pt(10); v.b = bulged ? take(42) || 0 : 0; vs.push(v); }
+            vs.forEach((v, k) => { pts.push(v); const nx = vs[(k + 1) % vs.length]; if (v.b && (closed || k < vs.length - 1)) pts.push(...bulgePts(v, nx, v.b)); });
+          } else {
+            for (let edges = take(93) || 0; edges > 0; edges--) {
+              const type = take(72);
+              if (type === 1) pts.push(pt(10), pt(11));
+              else if (type === 2) { const c = pt(10), r = take(40), a0 = deg(take(50)), a1 = deg(take(51)); pts.push(...sweep(c, r, r, r, 0, a0, a1, take(73) !== 0)); }
+              else if (type === 3) { const c = pt(10), m = pt(11), ratio = take(40), a0 = deg(take(50)), a1 = deg(take(51)), R = Math.hypot(m.x, m.y); pts.push(...sweep(c, R, R, R * ratio, Math.atan2(m.y, m.x), a0, a1, take(73) !== 0)); }
+              else if (type === 4) {
+                const degree = take(94) || 3, rational = take(73); take(74);
+                const nk = take(95) || 0, nc = take(96) || 0, knots = [], ctrl = [];
+                for (let k = 0; k < nk; k++) knots.push(take(40));
+                for (let k = 0; k < nc; k++) { ctrl.push(pt(10)); if (rational) take(42); }
+                if (g[i]?.[0] === 97 && [11, 97].includes(g[i + 1]?.[0])) { const nf = take(97); for (let k = 0; k < nf; k++) pt(11); skip(12, 22, 13, 23); }
+                pts.push(...(ctrl.length > 1 ? bspline(ctrl, degree, knots) : ctrl));
+              } else break;
+            }
+          }
+          const src = take(97) || 0;
+          for (let k = 0; k < src; k++) take(330);
+          if (pts.length > 2) e.loops.push(pts);
+        }
+      }
+    }
+    return e;
+  }
+}
+const area = (l) => l.reduce((a, p, k) => { const q = l[(k + 1) % l.length]; return a + p.x * q.y - q.x * p.y; }, 0) / 2;
+const inside = (p, l) => { let c = false; for (let k = 0, j = l.length - 1; k < l.length; j = k++) if ((l[k].y > p.y) !== (l[j].y > p.y) && p.x < ((l[j].x - l[k].x) * (p.y - l[k].y)) / (l[j].y - l[k].y) + l[k].x) c = !c; return c; };
 function mtext(s) {
   return s.replace(/\\P/g, '\n').replace(/\\[ACcFfHhLlOoQqTtWw][^;\\]*;?/g, '').replace(/\\S([^^;]*)\^([^;]*);/g, '$1/$2').replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/\\\\/g, '\\');
 }
@@ -189,7 +245,12 @@ function flatten(model) {
         case 'point': out.push({ k: 'point', p: ap(m, e.p), rgb, layer: e.layer }); break;
         case 'solid': { const [a, b, c, d] = e.pts; push(d && (d.x !== c.x || d.y !== c.y) ? [a, b, d, c] : [a, b, c], true, true); break; }
         case 'face': push(e.pts, true); break;
-        case 'hatch': for (const l of e.loops) push(l, true, e.solid); break;
+        case 'hatch': {
+          const loops = e.loops.filter((l) => l.length > 2).map((l) => l.map((p) => ap(m, p)));
+          const sub = loops.map((l, k) => ((area(l) > 0) === (loops.filter((o, j) => j !== k && inside(l[0], o)).length % 2 === 0) ? l : l.slice().reverse()));
+          if (sub.length) out.push({ k: 'path', pts: sub.flat(), sub, closed: true, fill: true, tint: !e.solid, rgb, aci: typeof col === 'number' ? col : null, layer: e.layer });
+          break;
+        }
         case 'text': {
           if (!e.text.trim()) break;
           const p = ap(m, e.p);
@@ -267,10 +328,13 @@ async function readDrawing(p) {
   const Parser = require('dxf-parser');
   const text = await fsp.readFile(p, 'utf8');
   if (/^AutoCAD Binary DXF/.test(text)) throw new Error('Binary DXF isn’t supported. Save it as ASCII DXF.');
-  try { return fromDxf(new Parser().parseSync(text)); } catch (e) { throw new Error(`This DXF couldn’t be read: ${e.message}`); }
+  const parser = new Parser();
+  parser.registerEntityHandler(DxfHatch);
+  try { return fromDxf(parser.parseSync(text)); } catch (e) { throw new Error(`This DXF couldn’t be read: ${e.message}`); }
 }
 
 const fmt = (n) => (Math.round(n * 1000) / 1000).toString();
+const mix = (a, b, t) => `#${[1, 3, 5].map((k) => Math.round(parseInt(a.slice(k, k + 2), 16) * (1 - t) + parseInt(b.slice(k, k + 2), 16) * t).toString(16).padStart(2, '0')).join('')}`;
 function drawingSvg(items, opts = {}) {
   const ext = extents(items);
   const w = ext.x1 - ext.x0, h = ext.y1 - ext.y0;
@@ -282,8 +346,9 @@ function drawingSvg(items, opts = {}) {
   const parts = [];
   for (const it of items) {
     if (it.k === 'path') {
-      const d = `M${it.pts.map(tx).join('L')}${it.closed ? 'Z' : ''}`;
-      parts.push(`<path d="${d}" ${it.fill ? `fill="${ink(it)}" stroke="none"` : `fill="none" stroke="${ink(it)}"`}/>`);
+      const d = it.sub ? it.sub.map((l) => `M${l.map(tx).join('L')}Z`).join('') : `M${it.pts.map(tx).join('L')}${it.closed ? 'Z' : ''}`;
+      const fill = it.tint ? mix(ink(it), dark ? '#151913' : '#ffffff', 0.75) : ink(it);
+      parts.push(`<path d="${d}" ${it.fill ? `fill="${fill}" stroke="none"` : `fill="none" stroke="${ink(it)}"`}/>`);
     } else if (it.k === 'point') {
       const [x, y] = tx(it.p).split(',');
       parts.push(`<circle cx="${x}" cy="${y}" r="${fmt(stroke * 1.5)}" fill="${ink(it)}"/>`);
@@ -329,11 +394,11 @@ async function drawingPdf(items, out, opts = {}) {
   doc.setCreator('Lime');
   const page = doc.addPage([PW, PH]);
   const fontFor = items.some((it) => it.k === 'text') ? await textFonts(doc) : null;
-  const col = (it) => { const v = onLight(it.rgb ?? 0); return rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255); };
+  const col = (it) => { const v = onLight(it.rgb ?? 0), t = it.tint ? 0.75 : 0; return rgb(...[16, 8, 0].map((sh) => (((v >> sh) & 255) / 255) * (1 - t) + t)); };
   const X = (p) => ox + (p.x - ext.x0) * s, Y = (p) => oy + (p.y - ext.y0) * s;
   for (const it of items) {
     if (it.k === 'path') {
-      const d = `M${it.pts.map((p) => `${fmt(X(p))} ${fmt(PH - Y(p))}`).join(' L')}${it.closed ? ' Z' : ''}`;
+      const d = (it.sub || [it.pts]).map((l) => `M${l.map((p) => `${fmt(X(p))} ${fmt(PH - Y(p))}`).join(' L')}${it.closed ? ' Z' : ''}`).join(' ');
       page.drawSvgPath(d, { x: 0, y: PH, ...(it.fill ? { color: col(it) } : { borderColor: col(it), borderWidth: 0.5 }) });
     } else if (it.k === 'point') page.drawCircle({ x: X(it.p), y: Y(it.p), size: 0.8, color: col(it) });
     else if (it.k === 'text') {
@@ -373,9 +438,11 @@ function drawingDxf(items, layers) {
   for (const it of items) {
     if (it.k === 'path') {
       if (it.pts.length === 2 && !it.closed && !it.fill) { g(0, 'LINE'); g(8, it.layer); color(it); g(10, fmt(it.pts[0].x)); g(20, fmt(it.pts[0].y)); g(30, 0); g(11, fmt(it.pts[1].x)); g(21, fmt(it.pts[1].y)); g(31, 0); continue; }
-      g(0, 'POLYLINE'); g(8, it.layer); color(it); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, it.closed ? 1 : 0);
-      for (const p of it.pts) { g(0, 'VERTEX'); g(8, it.layer); g(10, fmt(p.x)); g(20, fmt(p.y)); g(30, 0); }
-      g(0, 'SEQEND'); g(8, it.layer);
+      for (const l of it.sub || [it.pts]) {
+        g(0, 'POLYLINE'); g(8, it.layer); color(it); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, it.closed ? 1 : 0);
+        for (const p of l) { g(0, 'VERTEX'); g(8, it.layer); g(10, fmt(p.x)); g(20, fmt(p.y)); g(30, 0); }
+        g(0, 'SEQEND'); g(8, it.layer);
+      }
     } else if (it.k === 'point') { g(0, 'POINT'); g(8, it.layer); g(10, fmt(it.p.x)); g(20, fmt(it.p.y)); g(30, 0); }
     else if (it.k === 'text') {
       it.text.split('\n').forEach((line, i) => { g(0, 'TEXT'); g(8, it.layer); color(it); g(10, fmt(it.p.x + Math.sin(it.rot) * i * it.h * 1.4)); g(20, fmt(it.p.y - Math.cos(it.rot) * i * it.h * 1.4)); g(30, 0); g(40, fmt(it.h)); g(1, line); if (it.rot) g(50, fmt((it.rot * 180) / Math.PI)); });
