@@ -251,19 +251,30 @@ async function strip(p, opts, ctx) {
   return { path: out, note: 'Removed EXIF, GPS location and camera data' };
 }
 async function removeBackground(p, opts, ctx) {
-  const { removeBackground: rb } = require('@imgly/background-removal-node');
   ctx.progress(0.1, 'Loading the cut-out model');
-  const png = await (await open(p)).rotate().png().toBuffer();
-  const blob = await rb(new Blob([png], { type: 'image/png' }), {
-    model: opts.quality === 'fast' ? 'small' : 'medium',
-    output: { format: 'image/png', quality: 1 },
-    progress: (key, cur, total) => { if (total) ctx.progress(0.1 + 0.8 * (cur / total), 'Cutting out the subject'); },
-  });
-  let out = Buffer.from(await blob.arrayBuffer());
-  if (opts.background && opts.background !== 'transparent') out = await sharp()(out).flatten({ background: opts.background }).png().toBuffer();
-  const dest = ctx.out.file(p, `${U.base(p)}-cutout.png`);
-  await fsp.writeFile(dest, out);
-  return dest;
+  const dir = await U.tmpDir('cutout'), src = path.join(dir, 'in.png'), made = path.join(dir, 'out.png');
+  try {
+    await (await open(p)).rotate().png().toFile(src);
+    await new Promise((resolve, reject) => {
+      const child = require('child_process').fork(path.join(__dirname, 'cutout.js'), [], { execPath: process.execPath, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+      let err = '', said = null;
+      const stop = () => child.kill();
+      ctx.signal?.addEventListener('abort', stop);
+      child.stderr.on('data', (d) => { err = (err + d).slice(-4000); });
+      child.on('message', (m) => { if (m.progress != null) ctx.progress(0.1 + 0.8 * m.progress, 'Cutting out the subject'); if (m.error) said = m.error; });
+      child.on('exit', (code, signal) => {
+        ctx.signal?.removeEventListener('abort', stop);
+        if (code === 0) resolve();
+        else reject(new Error(said || `The cut-out engine stopped${signal ? ` (${signal})` : ''}${err.trim() ? `: ${err.trim().split('\n').slice(-3).join(' ')}` : ''}`));
+      });
+      child.send({ input: src, out: made, model: opts.quality === 'fast' ? 'small' : 'medium' });
+    });
+    let out = await fsp.readFile(made);
+    if (opts.background && opts.background !== 'transparent') out = await sharp()(out).flatten({ background: opts.background }).png().toBuffer();
+    const dest = ctx.out.file(p, `${U.base(p)}-cutout.png`);
+    await fsp.writeFile(dest, out);
+    return dest;
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
 async function upscale(p, opts, ctx) {
   const factor = Number(opts.factor) || 2;
