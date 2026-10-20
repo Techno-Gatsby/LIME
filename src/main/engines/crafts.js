@@ -182,6 +182,45 @@ async function optimizePdf(p, opts, ctx) {
     return { path: out, note: b < a ? `${U.fmtBytes(a)} → ${U.fmtBytes(b)} (${Math.round((1 - b / a) * 100)}% smaller)` : 'Already optimized' };
   } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
+async function pdfScript(steps, ctx, label) {
+  const dir = await U.tmpDir('pdfrun');
+  try {
+    const file = path.join(dir, 'steps.json');
+    await fsp.writeFile(file, JSON.stringify(steps));
+    const rep = lastJson((await run('pdfcraft', ['run', '--script', file, '--report'], ctx, label, { okCodes: [1] })).stdout);
+    const bad = rep?.steps?.find((st) => st.status === 'error');
+    if (!rep?.steps || bad) throw new Error(String(bad?.error || 'PdfCraft couldn’t finish.').replace(/^step \d+ \([a-z_]+\): /, ''));
+    return rep.steps.map((st) => st.result?.[0]);
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+const openDoc = (p, password) => ({ tool: 'doc_open', args: { path: p, ...(password ? { password } : {}) } });
+async function toPdfA(p, opts, ctx) {
+  const level = opts.level === '3b' ? '3b' : '2b', out = ctx.out.file(p, `${U.base(p)}-pdfa.pdf`);
+  const [, , , v] = await pdfScript([openDoc(p, opts.password), { tool: 'pdfa_convert', args: { doc: 1, level } }, { tool: 'doc_save', args: { doc: 1, path: out, full: true } }, { tool: 'pdfa_verify', args: { doc: 1, level } }], ctx, 'Saving as PDF/A');
+  const issues = [...new Set((v?.issues || []).map((i) => i.message))];
+  return { path: out, note: v?.compliant ? `PDF/A-${level}, checked: no issues` : `Saved as PDF/A-${level}, but ${issues.length === 1 ? 'one thing still breaks' : `${issues.length} things still break`} the standard: ${issues.slice(0, 3).join('; ')}` };
+}
+async function comparePdf([older, newer], opts, ctx) {
+  const report = opts.output === 'report', out = ctx.out.file(newer, `${U.base(newer)} - ${report ? 'changes' : 'compared'}.pdf`);
+  const res = await pdfScript([openDoc(older), openDoc(newer), { tool: 'doc_compare', args: { doc: 2, other: 1, limit: 1 } }, report ? { tool: 'doc_compare_report', args: { doc: 2, other: 1, path: out } } : { tool: 'doc_compare_mark', args: { doc: 2, other: 1 } }, ...(report ? [] : [{ tool: 'doc_save', args: { doc: 2, path: out, full: true } }])], ctx, 'Comparing');
+  const c = res[2] || {}, n = (k, w) => (c[k] ? `${c[k]} ${w}` : '');
+  return { path: out, note: c.identical ? 'The text is identical' : [n('replaced', 'changed'), n('inserted', 'added'), n('deleted', 'removed')].filter(Boolean).join(', ') || 'Compared' };
+}
+async function makeFillable(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-fillable.pdf`);
+  const [, found] = await pdfScript([openDoc(p, opts.password), { tool: 'form_detect_fields', args: { doc: 1, add: true } }, { tool: 'doc_save', args: { doc: 1, path: out, full: true } }], ctx, 'Finding form fields');
+  const k = found?.fields?.length || 0;
+  if (!k) { await fsp.rm(out, { force: true }); throw new Error('No blanks, lines or boxes to turn into fields were found.'); }
+  return { path: out, note: `Added ${k} field${k === 1 ? '' : 's'}` };
+}
+async function enhanceScan(pdfIn, opts, ctx) {
+  const pages = (await pdfInfo(pdfIn))?.pages || 1;
+  let straight = 0;
+  for (let i = 1; i <= pages; i++) {
+    try { await pdfScript([openDoc(pdfIn), { tool: 'page_enhance_camera', args: { doc: 1, page: i, mode: opts.mode || 'greyscale' } }, { tool: 'doc_save', args: { doc: 1 } }], ctx, `Straightening page ${i} of ${pages}`); straight++; } catch (_) {}
+  }
+  return straight;
+}
 async function auditPdf(p, opts, ctx) {
   const r = await run('pdfcraft', ['audit', p], ctx, 'Checking redactions', { okCodes: [1] });
   const j = lastJson(r.stdout) || { count: 0 };
@@ -255,4 +294,4 @@ function status() {
   return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
-module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, appFor, openApp, bundledApp, status };
+module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, openApp, bundledApp, status };

@@ -106,6 +106,21 @@ const TOOLS = [
   { id: 'ocr-pdf', cat: 'pdf', name: 'Searchable PDF', desc: 'Recognise text in scans so you can search and copy it.', accepts: ['pdf'], ext: 'pdf', suffix: '-searchable',
     options: [select('lang', 'Language', LANGS), toggle('skipText', 'Skip pages that already have text', true), choice('dpi', 'Quality', [['200', 'Fast'], ['300', 'Accurate']], '300'), pdfPassword],
     run: each((f, o, c) => pdf().ocr(f, o, outFile('-searchable', 'pdf')(f, c), c)) },
+  { id: 'pdf-to-pdfa', cat: 'pdf', name: 'PDF to PDF/A', desc: 'Archive-safe PDF/A, checked against the standard.', accepts: ['pdf'], ext: 'pdf', suffix: '-pdfa', craft: 'pdfcraft',
+    options: [choice('level', 'Standard', [['2b', 'PDF/A-2b'], ['3b', 'PDF/A-3b']]), pdfPassword], run: each((f, o, c) => craft().toPdfA(f, o, c)) },
+  { id: 'compare-pdf', cat: 'pdf', name: 'Compare PDF', desc: 'Show what changed between two versions. Put the older one first.', accepts: ['pdf'], min: 2, max: 2, ordered: true, ext: 'pdf', suffix: ' - compared', craft: 'pdfcraft',
+    options: [choice('output', 'Result', [['marked', 'Marked-up copy'], ['report', 'List of changes']])], run: async (files, o, c) => [await craft().comparePdf(files, o, c)] },
+  { id: 'make-fillable', cat: 'pdf', name: 'Make PDF fillable', desc: 'Turn blank lines and boxes into form fields.', accepts: ['pdf'], ext: 'pdf', suffix: '-fillable', craft: 'pdfcraft', options: [pdfPassword], run: each((f, o, c) => craft().makeFillable(f, o, c)) },
+  { id: 'scan-to-pdf', cat: 'pdf', name: 'Scan to PDF', desc: 'Straighten photos of documents into a clean, searchable PDF.', accepts: IMAGE_IN, ordered: true, ext: 'pdf', craft: 'pdfcraft',
+    options: [choice('mode', 'Look', [['greyscale', 'Greyscale'], ['colour', 'Colour'], ['bw', 'Black & white']]), toggle('ocr', 'Make text searchable', true), select('lang', 'Language', LANGS, 'eng', { when: { ocr: true } })],
+    run: async (files, o, c) => {
+      const out = c.out.file(files[0], `${U.base(files[0])}${files.length > 1 ? ` and ${files.length - 1} more` : ''} - scan.pdf`);
+      const tmp = path.join(await U.tmpDir('scan'), 'scan.pdf');
+      await pdf().imagesToPdf(files, { pageSize: 'fit', margin: 'none' }, tmp, c);
+      const straight = await craft().enhanceScan(tmp, o, c);
+      if (o.ocr) await pdf().ocr(tmp, { lang: o.lang || 'eng', dpi: '300', skipText: false }, out, c); else await fsp.copyFile(tmp, out);
+      return [{ path: out, note: `${straight} of ${files.length} page${files.length === 1 ? '' : 's'} straightened${o.ocr ? ', text recognised' : ''}` }];
+    } },
   { id: 'repair-pdf', cat: 'pdf', name: 'Repair PDF', desc: 'Rebuild damaged PDFs.', accepts: ['pdf'], ext: 'pdf', suffix: '-repaired', run: each((f, o, c) => pdf().repair(f, outFile('-repaired', 'pdf')(f, c))) },
   { id: 'flatten-pdf', cat: 'pdf', name: 'Flatten PDF', desc: 'Lock forms and annotations into the page.', accepts: ['pdf'], ext: 'pdf', suffix: '-flattened', run: each((f, o, c) => pdf().flatten(f, outFile('-flattened', 'pdf')(f, c))) },
   { id: 'extract-images-pdf', cat: 'pdf', name: 'Extract images', desc: 'Every embedded picture at full quality.', accepts: ['pdf'], save: 'folder', suffix: ' - embedded images',
@@ -303,7 +318,7 @@ const WHEELS = {
   },
   image: {
     convert: [W('convert-image', 'JPG', 'Photo', { to: 'jpg' }), W('convert-image', 'PNG', 'Lossless', { to: 'png' }), W('convert-image', 'WebP', 'Web', { to: 'webp' }), W('convert-image', 'AVIF', 'Smallest', { to: 'avif' }), W('convert-image', 'PDF', 'Document', { to: 'pdf' }), W('convert-image', 'PSD', 'Layers', { to: 'psd' }), W('convert-image', 'TIFF', 'Print', { to: 'tiff' }), W('convert-image', 'GIF', 'Classic', { to: 'gif' }), W('convert-image', 'ICO', 'Icon', { to: 'ico' })],
-    tools: [W('compress-image', 'Compress', 'Smaller'), W('remove-background', 'Cut out', 'Subject'), W('image-to-text', 'Text', 'Copy text'), W('enhance-photo', 'Enhance', 'Auto'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('upscale-image', 'Upscale', '2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('strip-metadata', 'Clean', 'No EXIF')],
+    tools: [W('compress-image', 'Compress', 'Smaller'), W('remove-background', 'Cut out', 'Subject'), W('image-to-text', 'Text', 'Copy text'), W('enhance-photo', 'Enhance', 'Auto'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('upscale-image', 'Upscale', '2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('strip-metadata', 'Clean', 'No EXIF'), W('scan-to-pdf', 'Scan', 'Clean PDF')],
   },
   raw: {
     convert: [W('develop-raw', 'JPG', 'Develop', { to: 'jpg', auto: false }), W('develop-raw', 'TIFF', '16-bit', { to: 'tif', auto: false }), W('develop-raw', 'PNG', 'Lossless', { to: 'png', auto: false }), W('develop-raw', 'AVIF', 'Small', { to: 'avif', auto: false }), W('develop-raw', 'DNG', 'Raw', { to: 'dng', auto: false }), W('convert-image', 'Preview', 'Built-in', { to: 'jpg', develop: false })],
@@ -363,15 +378,15 @@ const WHEELS = {
   any: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' })], tools: [HASH] },
 };
 const MULTI = {
-  pdf: [W('merge-pdf', 'Merge', 'One PDF'), W('compress-pdf', 'Compress', 'Each')],
-  image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch')],
+  pdf: [W('merge-pdf', 'Merge', 'One PDF'), W('compare-pdf', 'Compare', 'Changes'), W('compress-pdf', 'Compress', 'Each')],
+  image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch')],
   raw: [W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' })],
   video: [W('merge-media', 'Merge', 'One video')],
   audio: [W('merge-media', 'Merge', 'One track')],
   sheet: [W('merge-sheets', 'Merge', 'One workbook')],
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
 };
-const SINGLE_OUTPUT = new Set(['create-archive', 'merge-media', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
+const SINGLE_OUTPUT = new Set(['scan-to-pdf', 'compare-pdf', 'create-archive', 'merge-media', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
 const groupsOf = (files) => [...new Set(files.map(U.groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);

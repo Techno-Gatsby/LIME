@@ -152,6 +152,30 @@ for (const [src, dst, main, mainDir] of [['doc.docx', 'macro.docm', 'application
   z[`${mainDir}/vbaProject.bin`] = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3, 4]);
   fs.writeFileSync(P(dst), zipSync(z));
 }
+{
+  const { PDFDocument, rgb } = require('pdf-lib');
+  const fontkit = require('@pdf-lib/fontkit');
+  const make = async (lines, extra) => {
+    const d = await PDFDocument.create();
+    d.registerFontkit(fontkit);
+    const f = await d.embedFont(fs.readFileSync(NOTO), { subset: true }), page = d.addPage([595, 842]);
+    lines.forEach((t, i) => page.drawText(t, { x: 60, y: 760 - i * 28, size: 14, font: f }));
+    await extra?.(page, f);
+    return d.save();
+  };
+  fs.writeFileSync(P('v1.pdf'), await make(['Quarterly report', 'The quick brown fox jumps over the lazy dog.', 'Total: 100 dollars.']));
+  fs.writeFileSync(P('v2.pdf'), await make(['Quarterly report', 'The quick red fox jumps over the lazy dog.', 'Total: 120 dollars.', 'A new closing line was added.']));
+  fs.writeFileSync(P('form.pdf'), await make(['Application form'], (page, f) => {
+    page.drawText('Full name:', { x: 60, y: 690, size: 12, font: f });
+    page.drawLine({ start: { x: 140, y: 688 }, end: { x: 500, y: 688 }, thickness: 0.8 });
+    page.drawText('Date of birth:', { x: 60, y: 650, size: 12, font: f });
+    page.drawLine({ start: { x: 150, y: 648 }, end: { x: 330, y: 648 }, thickness: 0.8 });
+    for (const [k, label] of [[0, 'Yes'], [1, 'No']]) { page.drawRectangle({ x: 60 + k * 90, y: 600, width: 11, height: 11, borderWidth: 0.8, borderColor: rgb(0, 0, 0) }); page.drawText(label, { x: 76 + k * 90, y: 601, size: 12, font: f }); }
+  }));
+  const pageImg = await sharp({ create: { width: 600, height: 848, channels: 3, background: '#fbfbf7' } }).composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="848"><text x="50" y="110" font-family="Noto Sans" font-size="44" font-weight="bold">Invoice 2041</text>${Array.from({ length: 12 }, (_, i) => `<text x="50" y="${200 + i * 48}" font-family="Noto Sans" font-size="26">Line item ${i + 1} costs ${(i + 3) * 7} dollars</text>`).join('')}</svg>`) }]).png().toBuffer();
+  const tilted = await sharp(pageImg).rotate(7, { background: '#00000000' }).png().toBuffer();
+  const desk = await sharp({ create: { width: 1300, height: 1500, channels: 3, background: '#3b3631' }, }).composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="1500"><filter id="n"><feTurbulence baseFrequency="0.9" numOctaves="2"/></filter><rect width="1300" height="1500" filter="url(#n)" opacity="0.18"/></svg>') }, { input: tilted, left: 300, top: 260 }]).jpeg({ quality: 90 }).toFile(P('doc-photo.jpg'));
+}
 const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
 fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));
