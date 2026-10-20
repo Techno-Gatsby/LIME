@@ -133,6 +133,25 @@ fs.writeFileSync(P('unicode.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVE
   const hatch = (name, solid, paths) => ['0', 'HATCH', '8', '0', '62', '1', '10', '0', '20', '0', '30', '0', '210', '0', '220', '0', '230', '1', '2', name, '70', solid, '71', '0', '91', paths.length, ...paths.flat(), '75', '0', '76', '1', ...(solid === '1' ? [] : ['52', '45', '41', '1', '77', '0', '78', '1', '53', '45', '43', '0', '44', '0', '45', '-2.24', '46', '2.24', '79', '0']), '98', '0'];
   fs.writeFileSync(P('hatch.dxf'), ['0', 'SECTION', '2', 'ENTITIES', ...hatch('SOLID', '1', [poly('3', sq(0, 0, 100, 100)), poly('2', sq(25, 25, 75, 75))]), ...hatch('ANSI31', '0', [edges(sq(200, 0, 300, 100))]), '0', 'ENDSEC', '0', 'EOF', ''].join('\n'));
 }
+{
+  const { PDFDocument } = require('pdf-lib');
+  const d = await PDFDocument.create(), page = d.addPage([612, 792]);
+  const chart = Buffer.alloc(1200 * 800 * 3);
+  for (let y = 0; y < 800; y++) for (let x = 0; x < 1200; x++) { const k = ((x >> 3) * 7 + (y >> 3) * 13) % 200, o = (y * 1200 + x) * 3; chart[o] = (k * 37) & 255; chart[o + 1] = (k * 91) & 255; chart[o + 2] = (k * 53) & 255; }
+  page.drawImage(await d.embedJpg(fs.readFileSync(P('photo.jpg'))), { x: 36, y: 600, width: 144, height: 96 });
+  page.drawImage(await d.embedPng(await sharp(chart, { raw: { width: 1200, height: 800, channels: 3 } }).png().toBuffer()), { x: 36, y: 36, width: 540, height: 360 });
+  fs.writeFileSync(P('images.pdf'), await d.save());
+}
+for (const [src, dst, main, mainDir] of [['doc.docx', 'macro.docm', 'application/vnd.ms-word.document.macroEnabled.main+xml', 'word'], ['sheet.xlsx', 'macro.xlsm', 'application/vnd.ms-excel.sheet.macroEnabled.main+xml', 'xl']]) {
+  const { unzipSync, zipSync, strToU8, strFromU8 } = require('fflate');
+  const z = unzipSync(new Uint8Array(fs.readFileSync(P(src))));
+  const ct = strFromU8(z['[Content_Types].xml']).replace(/<Override\b[^>]*PartName="\/(?:word\/document|xl\/workbook)\.xml"[^>]*\/>/, (t) => t.replace(/ContentType="[^"]+"/, `ContentType="${main}"`)).replace(/<Default Extension="bin"[^>]*\/>/, '').replace('</Types>', '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>');
+  const relsName = `${mainDir}/_rels/${mainDir === 'word' ? 'document' : 'workbook'}.xml.rels`;
+  z['[Content_Types].xml'] = strToU8(ct);
+  z[relsName] = strToU8(strFromU8(z[relsName]).replace('</Relationships>', '<Relationship Id="rIdVba" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/></Relationships>'));
+  z[`${mainDir}/vbaProject.bin`] = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3, 4]);
+  fs.writeFileSync(P(dst), zipSync(z));
+}
 const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
 fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));

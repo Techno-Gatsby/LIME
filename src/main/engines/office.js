@@ -481,6 +481,7 @@ async function pptxToHtml(file) {
 }
 async function convertSlides(input, to, ctx) {
   const from = U.ext(input);
+  if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   const out = ctx.out.file(input, `${U.base(input)}.${to}`);
   if (libreOfficePath() && ['pdf', 'pptx', 'ppt', 'odp'].includes(to) && from !== to) return viaLibreOffice(input, to, ctx, { out });
   if (isMac && iworkPath('Keynote') && IWORK.Keynote[to]) {
@@ -517,6 +518,7 @@ function readBook(input) {
 async function convertSheet(input, to, ctx, opts = {}) {
   const XLSX = require('xlsx');
   const from = U.ext(input);
+  if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   if (from === 'numbers') {
     const out = ctx.out.file(input, `${U.base(input)}.${to}`);
     const r = await viaIWork('Numbers', input, to, out).catch(() => null);
@@ -573,11 +575,78 @@ async function mergeSheets(inputs, opts, ctx) {
   return out;
 }
 
+const OOXML = {
+  docx: ['word', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml'], docm: ['word', 'application/vnd.ms-word.document.macroEnabled.main+xml', true],
+  dotx: ['word', 'application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml'], dotm: ['word', 'application/vnd.ms-word.template.macroEnabledTemplate.main+xml', true],
+  xlsx: ['excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'], xlsm: ['excel', 'application/vnd.ms-excel.sheet.macroEnabled.main+xml', true],
+  xltx: ['excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml'], xltm: ['excel', 'application/vnd.ms-excel.template.macroEnabled.main+xml', true],
+  pptx: ['powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml'], pptm: ['powerpoint', 'application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml', true],
+  potx: ['powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.template.main+xml'], potm: ['powerpoint', 'application/vnd.ms-powerpoint.template.macroEnabled.main+xml', true],
+  ppsx: ['powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml'], ppsm: ['powerpoint', 'application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml', true],
+};
+const MACRO_TYPES = ['application/vnd.ms-office.vbaProject', 'application/vnd.ms-office.vbaProjectSignature', 'application/vnd.ms-office.vbaProjectSignatureAgile', 'application/vnd.ms-office.vbaProjectSignatureV3', 'application/vnd.ms-word.vbaData+xml', 'application/vnd.ms-word.keyMapCustomizations+xml', 'application/vnd.ms-excel.macrosheet+xml', 'application/vnd.ms-excel.intlmacrosheet+xml'];
+const isVariant = (from, to) => from !== to && OOXML[from] && OOXML[to] && OOXML[from][0] === OOXML[to][0];
+async function ooxmlVariant(input, to, ctx) {
+  const { unzipSync, zipSync, strToU8, strFromU8 } = require('fflate');
+  const z = unzipSync(new Uint8Array(await fsp.readFile(input)));
+  const attr = (t, k) => (new RegExp(`\\s${k}="([^"]*)"`).exec(t) || [])[1] || '';
+  let types = z['[Content_Types].xml'] && strFromU8(z['[Content_Types].xml']);
+  const rels = z['_rels/.rels'] && strFromU8(z['_rels/.rels']);
+  if (!types || !rels) throw new Error('This file isn’t an Office Open XML package.');
+  const main = attr([...rels.matchAll(/<Relationship\b[^>]*>/g)].map((m) => m[0]).find((t) => /\/officeDocument"/.test(t)) || '', 'Target').replace(/^\//, '');
+  if (!main) throw new Error('This file has no main document part.');
+  const [family, type, macros] = OOXML[to];
+  const own = `<Override PartName="/${main}" ContentType="${type}"/>`;
+  let found = false;
+  types = types.replace(/<Override\b[^>]*\/>/g, (t) => (attr(t, 'PartName').replace(/^\//, '').toLowerCase() === main.toLowerCase() ? ((found = true), own) : t));
+  if (!found) types = types.replace('</Types>', `${own}</Types>`);
+  const removed = new Set();
+  if (!macros) {
+    const over = new Map([...types.matchAll(/<Override\b[^>]*\/>/g)].map((m) => [attr(m[0], 'PartName').replace(/^\//, '').toLowerCase(), attr(m[0], 'ContentType')]));
+    const def = new Map([...types.matchAll(/<Default\b[^>]*\/>/g)].map((m) => [attr(m[0], 'Extension').toLowerCase(), attr(m[0], 'ContentType')]));
+    for (const name of Object.keys(z)) {
+      if (!MACRO_TYPES.includes(over.get(name.toLowerCase()) ?? def.get(name.split('.').pop().toLowerCase()))) continue;
+      removed.add(name);
+      const r = name.replace(/([^/]+)$/, '_rels/$1.rels');
+      if (z[r]) removed.add(r);
+    }
+    types = types.replace(/<(Override|Default)\b[^>]*\/>/g, (t) => (MACRO_TYPES.includes(attr(t, 'ContentType')) || removed.has(attr(t, 'PartName').replace(/^\//, '')) ? '' : t));
+  }
+  const files = { '[Content_Types].xml': strToU8(types) }, dropped = new Map();
+  for (const [name, data] of Object.entries(z)) {
+    if (name.endsWith('/') || removed.has(name) || name === '[Content_Types].xml') continue;
+    if (!removed.size || !name.endsWith('.rels')) { files[name] = data; continue; }
+    const owner = name.replace(/(^|\/)_rels\/([^/]*)\.rels$/, '$1$2'), dir = path.posix.dirname(owner);
+    files[name] = strToU8(strFromU8(data).replace(/<Relationship\b[^>]*\/>/g, (t) => {
+      if (/TargetMode="External"/i.test(t)) return t;
+      let target = attr(t, 'Target');
+      try { target = decodeURIComponent(target); } catch (_) {}
+      if (!removed.has(target.startsWith('/') ? target.slice(1) : path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, target)))) return t;
+      if (!dropped.has(owner)) dropped.set(owner, new Set());
+      dropped.get(owner).add(attr(t, 'Id'));
+      return '';
+    }));
+  }
+  const gone = dropped.get(main);
+  if (family === 'excel' && gone?.size && files[main]) {
+    let wb = strFromU8(files[main]), k = 0;
+    const index = [...wb.matchAll(/<sheet\b[^>]*\/>/g)].map((m) => (gone.has(attr(m[0], 'r:id')) ? -1 : k++));
+    wb = wb.replace(/<sheet\b[^>]*\/>/g, (t) => (gone.has(attr(t, 'r:id')) ? '' : t))
+      .replace(/<definedName\b[^>]*>[\s\S]*?<\/definedName>/g, (t) => { const m = /localSheetId="(\d+)"/.exec(t); return !m ? t : index[+m[1]] < 0 ? '' : t.replace(m[0], `localSheetId="${index[+m[1]]}"`); })
+      .replace(/<workbookView\b[^>]*>/g, (t) => t.replace(/\s(activeTab|firstSheet)="\d+"/g, ''));
+    files[main] = strToU8(wb);
+  }
+  const out = ctx.out.file(input, `${U.base(input)}.${to}`);
+  await fsp.writeFile(out, zipSync(files, { level: 6 }));
+  return out;
+}
+
 async function convertDocument(input, opts, ctx) {
   const to = opts.to;
   const from = U.ext(input);
   const g = U.groupOf(input);
   if (from === to) throw new Error(`This file is already ${to.toUpperCase()}.`);
+  if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   if (g === 'sheet' || (from === 'json' && ['xlsx', 'xls', 'ods', 'csv', 'tsv', 'html', 'md'].includes(to))) return convertSheet(input, to, ctx, opts);
   if (g === 'slides') return convertSlides(input, to, ctx);
   const out = ctx.out.file(input, `${U.base(input)}.${to}`);

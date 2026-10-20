@@ -624,74 +624,186 @@ async function toExcel(input, opts, out) {
   return out;
 }
 
+const N = (o) => o?.asNumber?.() ?? (typeof o?.numberValue === 'number' ? o.numberValue : null);
+function contentOps(bytes, onOp) {
+  const s = Buffer.from(bytes).toString('latin1'), stack = [];
+  const ws = (c) => c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === '\f' || c === '\0';
+  for (let i = 0; i < s.length;) {
+    const c = s[i];
+    if (ws(c)) { i++; continue; }
+    if (c === '%') { while (i < s.length && s[i] !== '\n' && s[i] !== '\r') i++; continue; }
+    if (c === '(') { for (let d = 0; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === '(') d++; else if (s[i] === ')' && --d === 0) { i++; break; } } stack.push(null); continue; }
+    if (c === '<' && s[i + 1] !== '<') { i = s.indexOf('>', i) + 1 || s.length; stack.push(null); continue; }
+    if ('[]{}'.includes(c) || (c === '<' && s[i + 1] === '<') || (c === '>' && s[i + 1] === '>')) { i += c === '<' || c === '>' ? 2 : 1; continue; }
+    let j = i + 1;
+    while (j < s.length && !ws(s[j]) && !'()<>[]{}/%'.includes(s[j])) j++;
+    const t = s.slice(i, j);
+    i = j;
+    if (c === '/') stack.push({ name: t.slice(1) });
+    else if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)) stack.push(Number(t));
+    else {
+      if (t === 'ID') { const m = /\sEI(?=[\s]|$)/g; m.lastIndex = i; i = m.exec(s) ? m.lastIndex : s.length; }
+      onOp(t, stack);
+      stack.length = 0;
+    }
+  }
+}
+function drawnSizes(doc) {
+  const { decodePDFRawStream } = require('pdf-lib');
+  const ctx = doc.context, uses = new Map(), look = (o) => (o ? ctx.lookup(o) : o);
+  const bytes = (st) => { try { return st instanceof PDFRawStream ? decodePDFRawStream(st).decode() : st.getContents(); } catch (_) { return null; } };
+  const mul = (m, n) => [m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3], m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3]];
+  const walk = (data, res, base, depth) => {
+    if (!data || depth > 12) return;
+    const xo = look(look(res)?.get?.(PDFName.of('XObject')));
+    const gs = [base];
+    contentOps(data, (op, a) => {
+      const top = gs[gs.length - 1];
+      if (op === 'q') gs.push(top);
+      else if (op === 'Q') { if (gs.length > 1) gs.pop(); } else if (op === 'cm' && a.length >= 4) gs[gs.length - 1] = mul(a.slice(0, 4).map(Number), top);
+      else if (op === 'Do' && a[0]?.name && xo?.get) {
+        const ref = xo.get(PDFName.of(a[0].name)), st = look(ref);
+        const kind = st?.dict?.get(PDFName.of('Subtype'))?.toString();
+        if (kind === '/Image') { const k = ref.toString(), u = uses.get(k) || { w: 0, h: 0 }; uses.set(k, { w: Math.max(u.w, Math.hypot(top[0], top[1]) / 72), h: Math.max(u.h, Math.hypot(top[2], top[3]) / 72) }); }
+        else if (kind === '/Form') { const fm = look(st.dict.get(PDFName.of('Matrix'))); const m = fm instanceof PDFArray ? fm.asArray().slice(0, 4).map((x) => N(x) ?? 0) : [1, 0, 0, 1]; walk(bytes(st), st.dict.get(PDFName.of('Resources')) || res, mul(m, top), depth + 1); }
+      }
+    });
+  };
+  let pw = 8.5, ph = 11;
+  for (const page of doc.getPages()) {
+    const { width, height } = page.getSize();
+    if (width * height > pw * ph * 5184) { pw = width / 72; ph = height / 72; }
+    const c = look(page.node.get(PDFName.of('Contents')));
+    const parts = c instanceof PDFArray ? c.asArray().map(look) : [c];
+    walk(Buffer.concat(parts.filter(Boolean).map((p) => Buffer.from(bytes(p) || []))), page.node.Resources(), [1, 0, 0, 1], 0);
+  }
+  return { uses, fallback: (w, h) => { const dpi = Math.min(Math.max(w / pw, h / ph), Math.max(w / ph, h / pw)); return { w: w / dpi, h: h / dpi }; } };
+}
+function unpredict(raw, w, n) {
+  const stride = w * n, rows = Math.floor(raw.length / (stride + 1)), out = Buffer.alloc(rows * stride);
+  for (let y = 0; y < rows; y++) {
+    const f = raw[y * (stride + 1)], src = y * (stride + 1) + 1, o = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= n ? out[o + x - n] : 0, b = y ? out[o - stride + x] : 0, c = x >= n && y ? out[o - stride + x - n] : 0, v = raw[src + x];
+      if (f === 0) out[o + x] = v; else if (f === 1) out[o + x] = v + a; else if (f === 2) out[o + x] = v + b; else if (f === 3) out[o + x] = v + ((a + b) >> 1);
+      else if (f === 4) { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); out[o + x] = v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c); } else return null;
+    }
+  }
+  return out;
+}
+function predict(px, w, n) {
+  const stride = w * n, rows = px.length / stride, out = Buffer.alloc(rows * (stride + 1)), row = Buffer.alloc(stride);
+  for (let y = 0; y < rows; y++) {
+    let best = null, score = Infinity;
+    for (let f = 0; f < 5; f++) {
+      let sum = 0;
+      for (let x = 0; x < stride; x++) {
+        const i = y * stride + x, a = x >= n ? px[i - n] : 0, b = y ? px[i - stride] : 0, c = x >= n && y ? px[i - stride - n] : 0;
+        const pr = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : (() => { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); return pa <= pb && pa <= pc ? a : pb <= pc ? b : c; })();
+        const v = (px[i] - pr) & 255;
+        row[x] = v;
+        sum += Math.min(v, 256 - v);
+      }
+      if (sum < score) { score = sum; best = [f, Buffer.from(row)]; }
+    }
+    out[y * (stride + 1)] = best[0];
+    best[1].copy(out, y * (stride + 1) + 1);
+  }
+  return zlib.deflateSync(out, { level: 9 });
+}
+const fewColours = (px, n, limit) => {
+  const seen = new Set();
+  for (let i = 0; i < px.length; i += n) { seen.add(n === 1 ? px[i] : n === 3 ? (px[i] << 16) | (px[i + 1] << 8) | px[i + 2] : px.readUInt32BE(i)); if (seen.size > limit) return false; }
+  return true;
+};
+function runLength(b) {
+  const out = [];
+  for (let i = 0; i < b.length;) { const n = b[i++]; if (n === 128) break; if (n < 128) { out.push(...b.subarray(i, i + n + 1)); i += n + 1; } else { out.push(...new Array(257 - n).fill(b[i++])); } }
+  return Buffer.from(out);
+}
 async function compress(input, opts, out, ctx) {
   const sharp = require('sharp');
   const level = opts.level || 'recommended';
-  const presets = { low: { max: 3000, q: 85 }, recommended: { max: 2000, q: 72 }, extreme: { max: 1300, q: 52 } };
-  const pre = presets[level] || presets.recommended;
+  const pre = { low: { dpi: 300, q: 85 }, recommended: { dpi: 150, q: 65 }, extreme: { dpi: 72, q: 55 } }[level] || { dpi: 150, q: 65 };
   const before = (await fsp.stat(input)).size;
   const doc = await loadLib(input, opts.password);
-  const objs = doc.context.enumerateIndirectObjects();
+  const C = doc.context, look = (o) => (o ? C.lookup(o) : o), get = (d, k) => look(d.get(PDFName.of(k)));
+  const { uses, fallback } = drawnSizes(doc);
+  const objs = C.enumerateIndirectObjects();
+  const masks = new Set();
   let done = 0, changed = 0;
+  const channels = (cs) => {
+    const name = cs instanceof PDFArray ? cs.get(0)?.toString() : cs?.toString();
+    if (name === '/DeviceGray' || name === '/CalGray') return 1;
+    if (name === '/DeviceRGB' || name === '/CalRGB') return 3;
+    if (name === '/ICCBased') { const k = N(look(cs.get(1))?.dict?.get(PDFName.of('N'))); return k === 1 || k === 3 ? k : 0; }
+    return 0;
+  };
+  const decode = async (obj, n, width, height) => {
+    const d = obj.dict, filter = get(d, 'Filter'), parms = get(d, 'DecodeParms');
+    const fs1 = filter instanceof PDFArray ? (filter.size() === 1 ? [filter.get(0).toString()] : null) : filter ? [filter.toString()] : [];
+    if (!fs1 || N(get(d, 'BitsPerComponent')) !== 8 || get(d, 'Mask') instanceof PDFArray || d.get(PDFName.of('F'))) return null;
+    const p = parms instanceof PDFArray ? look(parms.get(0)) : parms;
+    if (fs1[0] === '/DCTDecode') {
+      if (p?.get?.(PDFName.of('ColorTransform'))) return null;
+      const meta = await sharp(Buffer.from(obj.contents)).metadata();
+      if (meta.space === 'cmyk' || meta.width !== width || meta.height !== height || (meta.channels >= 3 ? 3 : 1) !== n) return null;
+      return { px: await sharp(Buffer.from(obj.contents)).removeAlpha().toColourspace(n === 1 ? 'b-w' : 'srgb').raw().toBuffer(), jpeg: true };
+    }
+    let raw = fs1[0] === '/FlateDecode' ? zlib.inflateSync(Buffer.from(obj.contents)) : fs1[0] === '/RunLengthDecode' ? runLength(Buffer.from(obj.contents)) : fs1.length ? null : Buffer.from(obj.contents);
+    if (!raw) return null;
+    const pred = N(p?.get?.(PDFName.of('Predictor'))) || 1;
+    if (pred >= 10) raw = unpredict(raw, width, n); else if (pred !== 1) return null;
+    return raw && raw.length >= width * height * n ? { px: raw.subarray(0, width * height * n), jpeg: false } : null;
+  };
+  const replace = (ref, obj, data, nw, nh, n, flate) => {
+    const nd = obj.dict.clone(C);
+    nd.set(PDFName.of('Filter'), PDFName.of(flate ? 'FlateDecode' : 'DCTDecode'));
+    if (flate) nd.set(PDFName.of('DecodeParms'), C.obj({ Predictor: 15, Colors: n, BitsPerComponent: 8, Columns: nw })); else nd.delete(PDFName.of('DecodeParms'));
+    nd.set(PDFName.of('Width'), PDFNumber.of(nw));
+    nd.set(PDFName.of('Height'), PDFNumber.of(nh));
+    nd.set(PDFName.of('BitsPerComponent'), PDFNumber.of(8));
+    nd.set(PDFName.of('Length'), PDFNumber.of(data.length));
+    C.assign(ref, PDFRawStream.of(nd, data));
+  };
   for (const [ref, obj] of objs) {
     done++;
-    if (!(obj instanceof PDFRawStream)) continue;
-    const dict = obj.dict;
-    if (dict.get(PDFName.of('Subtype'))?.toString() !== '/Image') continue;
-    if (dict.get(PDFName.of('ImageMask'))?.toString() === 'true') continue;
-    const filter = dict.get(PDFName.of('Filter'));
-    const fname = filter instanceof PDFArray ? (filter.size() === 1 ? filter.get(0).toString() : 'multi') : filter?.toString();
-    const width = dict.get(PDFName.of('Width'))?.asNumber?.() || 0;
-    const height = dict.get(PDFName.of('Height'))?.asNumber?.() || 0;
-    const bpc = dict.get(PDFName.of('BitsPerComponent'))?.asNumber?.() || 8;
-    if (width * height < 40000) continue;
-    try {
-      let input2;
-      if (fname === '/DCTDecode') {
-        input2 = sharp(Buffer.from(obj.contents));
-        const meta = await input2.metadata();
-        if (meta.channels === 4 || meta.space === 'cmyk') continue;
-      } else if (fname === '/FlateDecode' && bpc === 8 && !dict.get(PDFName.of('DecodeParms'))) {
-        const cs = dict.get(PDFName.of('ColorSpace'));
-        let channels = 0;
-        const csName = cs?.toString() || '';
-        if (csName === '/DeviceRGB') channels = 3;
-        else if (csName === '/DeviceGray') channels = 1;
-        else if (cs instanceof PDFArray && cs.get(0)?.toString() === '/ICCBased') {
-          const icc = doc.context.lookup(cs.get(1));
-          channels = icc?.dict?.get(PDFName.of('N'))?.asNumber?.() || 0;
-          if (channels !== 1 && channels !== 3) channels = 0;
-        }
-        if (!channels) continue;
-        const raw = zlib.inflateSync(Buffer.from(obj.contents));
-        if (raw.length !== width * height * channels) continue;
-        input2 = sharp(raw, { raw: { width, height, channels } });
-      } else continue;
-      const scale = Math.min(1, pre.max / Math.max(width, height));
-      const nw = Math.max(1, Math.round(width * scale)), nh = Math.max(1, Math.round(height * scale));
-      const isGray = dict.get(PDFName.of('ColorSpace'))?.toString() === '/DeviceGray';
-      let pipe = input2.resize(nw, nh, { fit: 'fill' });
-      if (isGray) pipe = pipe.toColourspace('b-w');
-      const jpg = await pipe.jpeg({ quality: pre.q, mozjpeg: true, chromaSubsampling: level === 'low' ? '4:4:4' : '4:2:0' }).toBuffer();
-      if (jpg.length >= obj.contents.length * 0.92) continue;
-      const nd = dict.clone(doc.context);
-      nd.set(PDFName.of('Filter'), PDFName.of('DCTDecode'));
-      nd.delete(PDFName.of('DecodeParms'));
-      nd.set(PDFName.of('Width'), PDFNumber.of(nw));
-      nd.set(PDFName.of('Height'), PDFNumber.of(nh));
-      nd.set(PDFName.of('BitsPerComponent'), PDFNumber.of(8));
-      if (isGray) nd.set(PDFName.of('ColorSpace'), PDFName.of('DeviceGray'));
-      else if (fname !== '/DCTDecode' || (dict.get(PDFName.of('ColorSpace'))?.toString() !== '/DeviceRGB')) nd.set(PDFName.of('ColorSpace'), PDFName.of('DeviceRGB'));
-      nd.set(PDFName.of('Length'), PDFNumber.of(jpg.length));
-      doc.context.assign(ref, PDFRawStream.of(nd, jpg));
-      changed++;
-    } catch (_) {}
     if (done % 25 === 0) ctx?.progress(Math.min(0.8, done / objs.length), 'Recompressing images');
+    if (!(obj instanceof PDFRawStream) || masks.has(ref.toString())) continue;
+    const d = obj.dict;
+    if (get(d, 'Subtype')?.toString() !== '/Image' || get(d, 'ImageMask')?.toString() === 'true') continue;
+    const width = N(get(d, 'Width')) || 0, height = N(get(d, 'Height')) || 0, n = channels(get(d, 'ColorSpace'));
+    if (!n || width * height < 40000 || width * height > 1e8) continue;
+    try {
+      const img = await decode(obj, n, width, height);
+      if (!img) continue;
+      const use = uses.get(ref.toString()) || fallback(width, height);
+      const scale = Math.max((use.w * pre.dpi) / width, (use.h * pre.dpi) / height);
+      const fit = (v) => (scale * 1.5 < 1 ? Math.min(v, Math.max(Math.min(8, v), Math.round(v * scale))) : v);
+      const nw = fit(width), nh = fit(height), down = nw < width || nh < height;
+      const graphic = !img.jpeg && fewColours(img.px, n, n === 1 ? 32 : 256);
+      const px = down ? await sharp(img.px, { raw: { width, height, channels: n } }).resize(nw, nh, { fit: 'fill', kernel: graphic ? 'nearest' : 'lanczos3' }).raw().toBuffer() : img.px;
+      const flate = graphic && fewColours(px, n, n === 1 ? 32 : 256);
+      const data = flate ? predict(px, nw, n) : await sharp(px, { raw: { width: nw, height: nh, channels: n } }).toColourspace(n === 1 ? 'b-w' : 'srgb').jpeg({ quality: pre.q, mozjpeg: true, chromaSubsampling: level === 'low' ? '4:4:4' : '4:2:0' }).toBuffer();
+      if (data.length >= (!down && img.jpeg ? Math.floor(obj.contents.length * 0.9) : obj.contents.length)) continue;
+      replace(ref, obj, data, nw, nh, n, flate);
+      changed++;
+      const mref = d.get(PDFName.of('SMask')), mask = look(mref);
+      if (down && mask instanceof PDFRawStream && !masks.has(mref.toString())) {
+        masks.add(mref.toString());
+        const mw = N(get(mask.dict, 'Width')) || 0, mh = N(get(mask.dict, 'Height')) || 0, m = mw && mh ? await decode(mask, 1, mw, mh) : null;
+        if (m && !m.jpeg) {
+          const sw = Math.max(1, Math.round((mw * nw) / width)), sh = Math.max(1, Math.round((mh * nh) / height));
+          const mp = predict(await sharp(m.px, { raw: { width: mw, height: mh, channels: 1 } }).resize(sw, sh, { fit: 'fill' }).raw().toBuffer(), sw, 1);
+          if (mp.length < mask.contents.length) replace(mref, mask, mp, sw, sh, 1, true);
+        }
+      }
+    } catch (_) {}
   }
   const mid = await doc.save({ useObjectStreams: true });
   const m = await mupdf();
   const md = m.Document.openDocument(mid, 'application/pdf');
-  const final = Buffer.from(md.saveToBuffer('garbage=deduplicate,compress=yes,compress-fonts=yes,compress-images=yes,objstms=yes').asUint8Array());
+  const final = Buffer.from(md.saveToBuffer('garbage=deduplicate,compress=yes,compress-fonts=yes,compress-images=yes,compression-effort=100,objstms=yes').asUint8Array());
   const best = final.length < mid.length ? final : mid;
   if (best.length >= before) {
     await fsp.copyFile(input, out);
@@ -770,7 +882,7 @@ async function thumbnail(input, width = 240) {
 }
 
 module.exports = {
-  mupdf, readPdf, loadLib, saveLib, pageCount, pageFrame, fontCache, hex, extractLines, quadRect, STD, FONT_FILES,
+  mupdf, readPdf, loadLib, saveLib, unpredict, pageCount, pageFrame, fontCache, hex, extractLines, quadRect, STD, FONT_FILES,
   merge, subset, split, removePages, extract, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
   repair, flatten, protect, unlock, redact, toImages, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
   compress, ocr, imagesToPdf, thumbnail,
