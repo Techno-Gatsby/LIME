@@ -21,6 +21,10 @@ Bundled engines
   yaml ..................... ISC             Eemeli Aro             https://github.com/eemeli/yaml
   smol-toml ................ BSD-3-Clause    Cynthia Rey            https://github.com/squirrelchat/smol-toml
   saxes .................... ISC             Louis-Dominique Dubeau https://github.com/lddubeau/saxes  (with xmlchars, MIT)
+  @kenjiuno/msgreader ...... Apache-2.0      HiraokaHyperTools      https://github.com/HiraokaHyperTools/msgreader
+  @kenjiuno/decompressrtf .. BSD-2-Clause ; @xmldom/xmldom ... MIT
+  Cubic-to-quadratic font outlines follow the approach of cu2qu (fontTools, Google) ... Apache-2.0
+  Test suite only (not shipped): wawoff2 ... MIT (Google's WOFF2 reference build) ; cfb ... Apache-2.0
   Electron / Chromium ...... MIT / BSD
   Noto Sans/Serif/Mono, Caveat, Dancing Script fonts ... SIL Open Font License 1.1
   Tesseract trained data (tessdata_best, tessdata_fast) ... Apache-2.0

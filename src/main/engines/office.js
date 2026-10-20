@@ -196,15 +196,16 @@ function htmlToText(html) {
     return plain(b.runs);
   }).filter((x) => x !== '').join('\n\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
-function htmlToMd(html) {
+function htmlToMd(html, opts = {}) {
   const md = (runs) => runs.map((r) => { let t = r.text; if (r.code) t = `\`${t}\``; if (r.bold) t = `**${t}**`; if (r.italic) t = `*${t}*`; if (r.strike) t = `~~${t}~~`; if (r.link) t = `[${t}](${r.link})`; return t; }).join('');
+  const pic = (b) => { const src = opts.image ? opts.image(b.src, b.alt) : b.src; return src && !src.startsWith('data:') ? `![${b.alt || ''}](${src.replace(/[ ()]/g, (c) => ({ ' ': '%20', '(': '%28', ')': '%29' })[c])})` : ''; };
   return blocks(parseHtml(html)).map((b) => {
     if (b.type === 'h') return `${'#'.repeat(b.level)} ${md(b.runs)}`;
     if (b.type === 'li') return `${'  '.repeat(b.depth || 0)}${b.ordered ? `${b.index}.` : '-'} ${md(b.runs)}`;
     if (b.type === 'quote') return `> ${md(b.runs)}`;
     if (b.type === 'pre') return `\`\`\`\n${b.text}\n\`\`\``;
     if (b.type === 'hr') return '---';
-    if (b.type === 'img') return b.src && !b.src.startsWith('data:') ? `![${b.alt || ''}](${b.src})` : '';
+    if (b.type === 'img') return pic(b);
     if (b.type === 'table') { const [h, ...r] = b.rows; if (!h) return ''; return [`| ${h.map((c) => c.text).join(' | ')} |`, `|${h.map(() => ' --- ').join('|')}|`, ...r.map((x) => `| ${x.map((c) => c.text).join(' | ')} |`)].join('\n'); }
     return md(b.runs);
   }).filter(Boolean).join('\n\n').replace(/\n(\s*[-\d.]+ .*)\n\n(?=\s*[-\d.]+ )/g, '\n$1\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
@@ -271,27 +272,7 @@ async function odtToHtml(file) {
     .replace(/<text:line-break\/>/g, '<br>').replace(/<text:tab\/>/g, ' ').replace(/<text:s[^>]*\/>/g, ' ').replace(/<table:table-row[^>]*>/g, '<tr>').replace(/<\/table:table-row>/g, '</tr>').replace(/<table:table-cell[^>]*>/g, '<td>').replace(/<\/table:table-cell>/g, '</td>')
     .replace(/<table:table\b[^>]*>/g, '<table>').replace(/<\/table:table>/g, '</table>').replace(/<(?!\/?(h\d|p|li|ul|br|tr|td|table)\b)[^>]+>/g, '');
 }
-async function epubToHtml(file) {
-  const z = await zipEntries(file);
-  const opfPath = (/full-path="([^"]+)"/.exec(utf8(z['META-INF/container.xml'])) || [])[1] || Object.keys(z).find((k) => k.endsWith('.opf'));
-  const opf = utf8(z[opfPath]);
-  const dir = path.posix.dirname(opfPath);
-  const items = {};
-  for (const [, a] of opf.matchAll(/<item\b([^>]*)>/g)) { const id = (/\bid="([^"]+)"/.exec(a) || [])[1]; const href = (/href="([^"]+)"/.exec(a) || [])[1]; if (id && href) items[id] = decodeURIComponent(href); }
-  const spine = [...opf.matchAll(/<itemref\b[^>]*idref="([^"]+)"/g)].map((m) => items[m[1]]).filter(Boolean);
-  const title = (/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/.exec(opf) || [])[1] || U.base(file);
-  const parts = spine.map((href) => {
-    const p = path.posix.normalize(dir === '.' ? href : `${dir}/${href}`);
-    const html = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(utf8(z[p])) || [, utf8(z[p])])[1];
-    return html.replace(/<img\b([^>]*?)src="([^"]+)"/g, (m, pre, src) => {
-      const data = z[path.posix.normalize(`${path.posix.dirname(p)}/${decodeURIComponent(src)}`)];
-      if (!data) return m;
-      const mime = /\.png$/i.test(src) ? 'image/png' : /\.svg$/i.test(src) ? 'image/svg+xml' : /\.gif$/i.test(src) ? 'image/gif' : 'image/jpeg';
-      return `<img${pre}src="data:${mime};base64,${Buffer.from(data).toString('base64')}"`;
-    });
-  });
-  return { title: unesc(title), html: parts.join('<div style="page-break-after:always"></div>') };
-}
+const EBOOK_IN = new Set(['epub', 'kepub', 'fb2', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'pdb', 'htmlz', 'txtz']);
 async function pagesPreview(file) {
   const z = await zipEntries(file).catch(() => ({}));
   const pdf = Object.keys(z).find((k) => /QuickLook\/Preview\.pdf$/i.test(k));
@@ -306,7 +287,7 @@ async function readHtml(input) {
   }
   if (from === 'md' || from === 'markdown') return { html: require('marked').marked.parse(await fsp.readFile(input, 'utf8'), { gfm: true }) };
   if (['html', 'htm', 'xhtml'].includes(from)) return { html: await fsp.readFile(input, 'utf8'), file: input };
-  if (from === 'epub') return epubToHtml(input);
+  if (EBOOK_IN.has(from)) return require('./ebook').readBook(input);
   if (from === 'odt') return { html: await odtToHtml(input) };
   if (from === 'rtf') return { html: rtfToHtml(await fsp.readFile(input, 'latin1')) };
   if (isMac && TEXTUTIL.has(from)) {
@@ -363,25 +344,7 @@ async function htmlToDocx(html, title, out) {
   await fsp.writeFile(out, await D.Packer.toBuffer(doc));
   return out;
 }
-async function htmlToEpub(html, title, out) {
-  const { zipSync, strToU8 } = require('fflate');
-  const imgs = {};
-  let n = 0;
-  const body = html.replace(/src="data:image\/(png|jpeg|gif|svg\+xml);base64,([^"]+)"/g, (m, t, d) => { const e = t === 'jpeg' ? 'jpg' : t === 'svg+xml' ? 'svg' : t; const name = `img${++n}.${e}`; imgs[name] = { data: Buffer.from(d, 'base64'), type: `image/${t}` }; return `src="${name}"`; });
-  const attrs = (node) => Object.entries(node.attrs || {}).filter(([k]) => /^(src|href|alt|title|colspan|rowspan)$/.test(k)).map(([k, v]) => ` ${k}="${esc(v).replace(/"/g, '&quot;')}"`).join('');
-  const ok = /^(p|h[1-6]|ul|ol|li|b|strong|i|em|u|s|a|img|br|hr|table|thead|tbody|tr|td|th|blockquote|pre|code|sup|sub|span|div|figure|figcaption)$/;
-  const xhtml = (node) => (node.text != null ? esc(node.text) : node.tag === 'root' || !ok.test(node.tag) ? (node.kids || []).map(xhtml).join('') : VOID.has(node.tag) ? `<${node.tag}${attrs(node)}/>` : `<${node.tag}${attrs(node)}>${node.kids.map(xhtml).join('')}</${node.tag}>`);
-  const files = {
-    mimetype: [strToU8('application/epub+zip'), { level: 0 }],
-    'META-INF/container.xml': strToU8('<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>'),
-    'OEBPS/content.opf': strToU8(`<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:${require('crypto').randomUUID()}</dc:identifier><dc:title>${esc(title)}</dc:title><dc:language>en</dc:language><meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="c1" href="content.xhtml" media-type="application/xhtml+xml"/>${Object.entries(imgs).map(([k, v], i) => `<item id="i${i}" href="${k}" media-type="${v.type}"/>`).join('')}</manifest><spine><itemref idref="c1"/></spine></package>`),
-    'OEBPS/nav.xhtml': strToU8(`<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>${esc(title)}</title></head><body><nav epub:type="toc"><ol><li><a href="content.xhtml">${esc(title)}</a></li></ol></nav></body></html>`),
-    'OEBPS/content.xhtml': strToU8(`<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>${esc(title)}</title><style>body{font-family:serif;line-height:1.5}img{max-width:100%}</style></head><body>${xhtml(parseHtml(body))}</body></html>`),
-  };
-  for (const [k, v] of Object.entries(imgs)) files[`OEBPS/${k}`] = new Uint8Array(v.data);
-  await fsp.writeFile(out, zipSync(files));
-  return out;
-}
+const htmlToEpub = (html, title, out, meta = {}) => require('./ebook').writeEpub(html, { title, ...meta }, out);
 
 const EMU = 9525;
 async function pptxToHtml(file) {
@@ -679,6 +642,7 @@ async function convertDocument(input, opts, ctx) {
   if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   if (g === 'sheet' || (from === 'json' && ['xlsx', 'xls', 'ods', 'csv', 'tsv', 'html', 'md'].includes(to))) return convertSheet(input, to, ctx, opts);
   if (g === 'slides') return convertSlides(input, to, ctx);
+  if (EBOOK_IN.has(from) || /\.kepub\.epub$/i.test(input)) return require('./ebook').convert(input, opts, ctx);
   const out = ctx.out.file(input, `${U.base(input)}.${to}`);
   if (libreOfficePath() && !['md', 'epub', 'html', 'txt'].includes(to) && !['md', 'markdown', 'epub', 'html', 'htm', 'txt'].includes(from)) return viaLibreOffice(input, to, ctx, { out });
   if (pandocPath() && ['tex', 'rst', 'org'].includes(from)) return viaPandoc(input, to, ctx, out);
@@ -701,9 +665,9 @@ async function convertDocument(input, opts, ctx) {
       return htmlToPdf(htmlDoc(title, src.plain != null ? `<pre style="white-space:pre-wrap;font:10pt/1.45 Menlo,Consolas,monospace;background:none;padding:0;margin:0">${esc(src.plain)}</pre>` : src.html), out, ctx);
     case 'html': await fsp.writeFile(out, src.file ? await fsp.readFile(src.file, 'utf8') : htmlDoc(title, src.html)); return out;
     case 'txt': await fsp.writeFile(out, src.plain ?? htmlToText(src.html)); return out;
-    case 'md': await fsp.writeFile(out, ['docx', 'docm'].includes(from) ? (await require('mammoth').convertToMarkdown({ path: input })).value : htmlToMd(src.html)); return out;
+    case 'md': { const r = await require('./ebook').markdown(src.html, out, path.dirname(input)); await fsp.writeFile(out, r.md); return r.folder ? [out, r.folder] : out; }
     case 'docx': return htmlToDocx(src.html, title, out);
-    case 'epub': return htmlToEpub(src.html, title, out);
+    case 'epub': return htmlToEpub(src.html, src.title, out, { base: path.dirname(input), name: U.base(input) });
     case 'rtf': await fsp.writeFile(out, htmlToRtf(src.html)); return out;
     case 'odt': case 'doc':
       if (isMac) { const tmp = path.join(await U.tmpDir('tu'), `${U.base(input)}.html`); await fsp.writeFile(tmp, htmlDoc(title, src.html)); return viaTextutil(tmp, to, out); }

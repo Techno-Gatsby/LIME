@@ -70,6 +70,40 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const entries = async (o) => (await E('archive').list(o)).map((e) => e.path.split(path.sep).join('/')).sort();
   const isLink = (p) => fs.lstatSync(p).isSymbolicLink();
   const walk = (d) => fs.readdirSync(d, { recursive: true }).map((x) => x.split(path.sep).join('/')).sort();
+  const X = F;
+  const xmlDoc = (s, what) => { const errs = []; const d = new (require('@xmldom/xmldom').DOMParser)({ errorHandler: { warning: () => {}, error: (e) => errs.push(e), fatalError: (e) => errs.push(e) } }).parseFromString(s, 'text/xml'); ok(!errs.length && d.documentElement, `${what} is not well-formed: ${errs[0]}`); return d; };
+  const tags = (d, n) => { const all = d.getElementsByTagName('*'), out = []; for (let i = 0; i < all.length; i++) if (String(all[i].localName || all[i].tagName).replace(/^.*:/, '') === n) out.push(all[i]); return out; };
+  // EPUB structure: mimetype first and stored, OPF 3.0 with one identifier and modified date, every manifest item and
+  // relative link present, unique ids, nav with entries, NCX with nav points, and well-formed XHTML.
+  const epub = (p) => {
+    const b = read(p);
+    ok(b.readUInt32LE(0) === 0x04034b50 && b.readUInt16LE(8) === 0 && b.readUInt16LE(28) === 0 && b.subarray(30, 58).toString() === 'mimetypeapplication/epub+zip', 'mimetype is not the first stored entry');
+    const z = require('fflate').unzipSync(new Uint8Array(b)), s = (k) => Buffer.from(z[k] || []).toString('utf8');
+    const opfPath = /full-path="([^"]+)"/.exec(s('META-INF/container.xml'))[1], dir = path.posix.dirname(opfPath);
+    const opf = xmlDoc(s(opfPath), 'OPF');
+    ok(opf.documentElement.getAttribute('version') === '3.0', 'not EPUB 3');
+    ok(tags(opf, 'identifier').length === 1 && tags(opf, 'meta').filter((m) => m.getAttribute('property') === 'dcterms:modified').length === 1, 'identifier/modified');
+    const items = tags(opf, 'item').map((i) => ({ id: i.getAttribute('id'), href: path.posix.join(dir, decodeURIComponent(i.getAttribute('href'))), type: i.getAttribute('media-type'), props: i.getAttribute('properties') || '' }));
+    ok(new Set(items.map((i) => i.id)).size === items.length, 'duplicate manifest ids');
+    for (const i of items) ok(z[i.href], `missing ${i.href}`);
+    const spine = tags(opf, 'itemref').map((r) => items.find((i) => i.id === r.getAttribute('idref')).href);
+    ok(spine.length, 'empty spine');
+    const nav = items.find((i) => /\bnav\b/.test(i.props)), ncx = items.find((i) => i.type === 'application/x-dtbncx+xml');
+    ok(tags(xmlDoc(s(nav.href), 'nav'), 'li').length && tags(xmlDoc(s(ncx.href), 'NCX'), 'navPoint').length, 'empty nav or NCX');
+    const pages = {};
+    for (const i of items.filter((x) => x.type === 'application/xhtml+xml')) {
+      const d = xmlDoc(s(i.href), i.href);
+      for (const e of [...tags(d, 'img'), ...tags(d, 'a'), ...tags(d, 'link')]) {
+        const ref = e.getAttribute('src') || e.getAttribute('href');
+        if (!ref || /^[a-z][a-z0-9+.-]+:/i.test(ref) || ref.startsWith('#')) continue;
+        ok(z[path.posix.join(path.posix.dirname(i.href), decodeURIComponent(ref.split('#')[0]))], `${i.href} links to missing ${ref}`);
+      }
+      const ids = Array.prototype.slice.call(d.getElementsByTagName('*')).map((e) => e.getAttribute('id')).filter(Boolean);
+      ok(new Set(ids).size === ids.length, `duplicate ids in ${i.href}`);
+      pages[path.posix.relative(dir, i.href)] = s(i.href);
+    }
+    return { z, s, opf: s(opfPath), items, spine: spine.map((h) => path.posix.relative(dir, h)), pages, nav: s(nav.href), ncx: s(ncx.href), images: items.filter((i) => i.type.startsWith('image/')) };
+  };
 
   for (const [src, to, f] of [['photo.heic', 'jpg', 'jpeg'], ['photo.jpg', 'png', 'png'], ['photo.jpg', 'webp', 'webp'], ['photo.jpg', 'avif', 'heif'], ['photo.jpg', 'tiff', 'tiff'], ['photo.jpg', 'gif', 'gif'], ['photo.webp', 'jpg', 'jpeg'], ['alpha.png', 'jpg', 'jpeg'], ['layers.psd', 'png', 'png'], ['raw.dng', 'jpg', 'jpeg'], ['photo.jxl', 'png', 'png']]) {
     T(`image ${src}→${to}`, 'convert-image', [src], { to, quality: 88 }, async ([o]) => { const m = await fmt(o, f); ok(m.width > 100, 'tiny'); });
@@ -313,7 +347,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   T('pdf→jpg', 'pdf-to-jpg', ['doc.pdf'], { format: 'jpg', dpi: '96', pages: 'all' }, async ([o]) => { const fl = files(o); ok(fl.length === 3, `${fl.length} images`); await fmt(path.join(o, fl[0]), 'jpeg'); });
   T('pdf→tiff every page', 'pdf-to-tiff', ['mixed.pdf'], { dpi: '72' }, async ([o]) => { const m = await sharp(o).metadata(); ok(m.format === 'tiff' && m.pages === 2, `tiff pages ${m.pages}`); const p2 = await sharp(o, { page: 1 }).metadata(); ok(p2.width === 842 && p2.height === 595, `page 2 ${p2.width}×${p2.height}`); });
-  T('pdf→cbz', 'pdf-to-cbz', ['doc.pdf'], {}, async ([o]) => { const z = require('fflate').unzipSync(new Uint8Array(read(o))); ok(Object.keys(z).join() === '001.jpg,002.jpg,003.jpg', `entries ${Object.keys(z)}`); ok((await sharp(Buffer.from(z['002.jpg'])).metadata()).format === 'jpeg', 'not jpeg'); });
   T('pdf→md', 'pdf-to-markdown', ['doc.pdf'], {}, ([o]) => ok(/Lime test document/.test(txt(o)) && /quick brown fox/.test(txt(o)), `markdown: ${txt(o).slice(0, 120)}`));
   T('pdf→md headings without running heads', 'pdf-to-markdown', ['layout-report.pdf'], {}, ([o]) => ok(txt(o).replace(/__/g, '').startsWith(`# Annual Report 2026\n\n## 1\\. Introduction\n\n${FIRST.replace(/\./g, '\\.')}\n\n`) && /## (__)?2\\\. Details/.test(txt(o)) && !/Quarterly|Page \d/.test(txt(o)), `markdown: ${txt(o).slice(0, 160)}`));
   T('pdf→webp pages', 'pdf-to-jpg', ['doc.pdf'], { format: 'webp', dpi: '96' }, async ([o]) => { const f = files(o); ok(f.length === 3, `${f}`); ok((await sharp(path.join(o, f[0])).metadata()).format === 'webp', 'not webp'); });
@@ -498,8 +531,218 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const [src, word, tos] of [['doc.docx', 'Lime Report', ['pdf', 'md', 'txt', 'html', 'epub', 'rtf']], ['doc.md', 'Lime Notes', ['docx', 'pdf', 'html', 'txt', 'epub', 'rtf']], ['doc.html', 'Lime Page', ['pdf', 'docx', 'md', 'txt']], ['doc.txt', 'Lime plain text', ['pdf', 'docx', 'md', 'html']], ['doc.rtf', 'Lime RTF heading', ['docx', 'txt', 'pdf']], ['doc.odt', 'Lime ODT', ['txt', 'docx', 'pdf']], ['book.epub', 'Lime Book', ['txt', 'pdf', 'docx']]]) {
     for (const to of tos) T(`doc ${src}→${to}`, 'convert-document', [src], { to }, async ([o]) => docChecks[to](o, word));
   }
+  T('epub reader links and pictures', 'convert-ebook', ['novel.epub'], { to: 'html' }, ([o]) => {
+    const h = txt(o);
+    ok(h.includes('<title>별빛 이야기</title>') && h.includes('lang="ko"'), 'title or language');
+    ok(h.includes('href="#c3-note1"') && h.includes('id="c3-note1"'), 'link into “ch 3.xhtml” lost');
+    ok(h.includes('href="#c1-local"') && h.includes('id="c1-local"'), 'link inside a chapter lost');
+    ok(!h.includes('100%.html') && !/javascript:/i.test(h) && h.includes('깨진 링크'), 'bad links not unwrapped');
+    ok((h.match(/src="data:image\/png;base64,/g) || []).length === 2, 'pictures (chapter picture and image page)');
+    ok((h.match(/class="chapter"/g) || []).length === 4 && (h.match(/style="page-break-before:always"/g) || []).length === 3, 'chapters and page breaks');
+  });
+  T('epub→fb2', 'convert-ebook', ['novel.epub'], { to: 'fb2' }, ([o]) => {
+    const d = xmlDoc(txt(o), 'FB2');
+    ok(tags(d, 'book-title')[0].textContent === '별빛 이야기' && tags(d, 'nickname')[0].textContent === '김작가' && tags(d, 'lang')[0].textContent === 'ko', 'metadata');
+    const body = tags(d, 'body')[0];
+    ok(Array.prototype.slice.call(body.childNodes).filter((n) => n.nodeType === 1 && n.localName === 'section').length === 3, 'top-level sections');
+    ok(tags(d, 'binary').length === 3 && tags(d, 'coverpage').length === 1, 'binaries and cover');
+    ok(tags(d, 'strong')[0].textContent === '별' && tags(d, 'emphasis')[0].textContent === '반짝', 'bold and italic');
+    ok(tags(d, 'a').some((a) => a.getAttribute('l:href') === '#c3-note1') && tags(d, 'p').some((p) => p.getAttribute('id') === 'c3-note1'), 'internal link');
+  });
+  T('epub→md with pictures', 'convert-ebook', ['novel.epub'], { to: 'md' }, async ([md, dirOut]) => {
+    ok(txt(md).includes('# 세 번째 장') && txt(md).includes('![그림](novel_files/img0001.png)'), 'markdown or picture link');
+    ok(path.basename(dirOut) === 'novel_files' && files(dirOut).length === 2, `picture folder ${files(dirOut)}`);
+    await fmt(path.join(dirOut, 'img0001.png'), 'png');
+  });
+  T('epub→pdf', 'convert-ebook', ['novel.epub'], { to: 'pdf' }, async ([o]) => { ok((await pages(o)) >= 4, 'each chapter starts a page'); ok((await pdfText(o)).includes('Starlight chapter two'), 'text'); });
+  T('epub font obfuscation is not DRM', 'convert-ebook', ['obfuscated.epub'], { to: 'txt' }, ([o]) => ok(txt(o).includes('세 번째 장'), 'text'));
+  X('epub with DRM refused', 'convert-ebook', ['drm.epub'], { to: 'pdf' }, /DRM/);
+  T('html→epub chapters', 'convert-document', ['chapters.html'], { to: 'epub' }, ([o]) => {
+    const e = epub(o);
+    ok(e.spine.join() === 'ch001.xhtml,ch002.xhtml', `spine ${e.spine}`);
+    ok(/<dc:language>ko<\/dc:language>/.test(e.opf) && e.pages['ch001.xhtml'].includes('xml:lang="ko"'), 'language');
+    ok(e.pages['ch001.xhtml'].includes('href="ch002.xhtml#two_target"') && e.pages['ch002.xhtml'].includes('id="two_target"'), 'link to the next chapter');
+    ok(e.pages['ch001.xhtml'].includes('id="intro"') && e.pages['ch001.xhtml'].includes('href="https://example.com/"'), 'ids or web links');
+    ok(e.images.length === 2 && e.images.every((i) => i.type === 'image/jpeg') && !Object.values(e.pages).some((p) => /remote\.png|data:image/.test(p)), 'pictures packaged, WebP converted, remote dropped');
+    ok(tags(xmlDoc(e.nav, 'nav'), 'li').length === 3 && tags(xmlDoc(e.ncx, 'ncx'), 'navPoint').length === 3 && e.nav.includes('하위 절'), 'table of contents');
+    ok(!e.pages['ch002.xhtml'].includes('\u000b'), 'control characters');
+  });
+  T('md→epub', 'convert-document', ['doc.md'], { to: 'epub' }, ([o]) => { const e = epub(o); ok(e.nav.includes('Lime Notes') && Object.values(e.pages).some((p) => p.includes('<table>')), 'nav or table'); });
+  T('fb2→epub', 'convert-ebook', ['voina.fb2'], { to: 'epub' }, ([o]) => {
+    const e = epub(o);
+    ok(/<dc:title>Война и мир<\/dc:title>/.test(e.opf) && /<dc:creator>Лев Толстой<\/dc:creator>/.test(e.opf) && /<dc:language>ru<\/dc:language>/.test(e.opf), 'metadata');
+    ok(e.nav.includes('Глава первая') && e.nav.includes('Подглава'), 'table of contents');
+    ok(e.items.some((i) => i.props.includes('cover-image')) && e.spine[0] === 'cover.xhtml', 'cover');
+    const all = Object.values(e.pages).join('');
+    ok(/epub:type="footnote"[^>]*>[\s\S]*Текст примечания/.test(all) && all.includes('epub:type="noteref"'), 'footnote');
+    ok(all.includes('<b>абзац</b>') && all.includes('Строка стиха один<br/>Строка стиха два'), 'formatting and poem');
+  });
+  T('fb2→pdf (document wheel)', 'convert-document', ['voina.fb2'], { to: 'pdf' }, async ([o]) => ok((await pdfText(o)).includes('Глава вторая'), 'pdf text'));
+  T('fb2→docx', 'convert-document', ['voina.fb2'], { to: 'docx' }, async ([o]) => ok((await docxText(o)).includes('Текст подглавы'), 'docx text'));
+  T('docx→md with pictures', 'convert-document', ['doc.docx'], { to: 'md' }, async ([md, dirOut]) => {
+    ok(txt(md).includes('# Lime Report') && /!\[[^\]]*\]\(doc_files\/img0001\.(png|jpg)\)/.test(txt(md)), 'picture link');
+    ok(dirOut && files(dirOut).length === 1, 'picture folder');
+  });
+  for (const f of ['stormy.mobi', 'stormy-huff.mobi', 'stormy-plain.prc']) {
+    T(`mobi ${f}→epub`, 'convert-ebook', [f], { to: 'epub' }, ([o]) => {
+      const e = epub(o), all = Object.values(e.pages).join('');
+      ok(/<dc:title>Stormy Night<\/dc:title>/.test(e.opf) && /<dc:creator>E\. Bulwer-Lytton<\/dc:creator>/.test(e.opf), 'metadata');
+      ok(e.images.length === 2 && e.items.some((i) => i.props.includes('cover-image')), `pictures ${e.images.length}`);
+      ok(all.includes('Ünïcödé text and 한글 too') && all.includes('<b>dark</b>') && all.includes('The note is here.'), 'text');
+      const link = /<a href="([^"#]*)#([^"]+)">the note<\/a>/.exec(all);
+      ok(link && e.pages[link[1] || 'ch001.xhtml']?.includes(`id="${link[2]}"`), 'filepos link');
+      ok(new RegExp(`id="${link[2]}"[^<]*</a>\\s*<p>The note is here`).test(all) || new RegExp(`<a id="${link[2]}"></a>\\s*<p>The note`).test(all), 'filepos target before the note');
+    });
+  }
+  X('mobi with DRM refused', 'convert-ebook', ['locked.azw'], { to: 'epub' }, /DRM/);
+  T('palmdoc text book', 'convert-ebook', ['old.pdb'], { to: 'txt' }, ([o]) => ok(txt(o).includes('Plain PalmDOC text.') && txt(o).includes('Second paragraph of the book.'), 'text'));
+  T('azw4 print replica→pdf', 'convert-ebook', ['replica.azw4'], { to: 'pdf' }, ([o]) => ok(Buffer.compare(read(o), read(fx('doc.pdf'))) === 0, 'the PDF inside differs'));
+  T('azw3 (KF8)→epub', 'convert-ebook', ['kf8.azw3'], { to: 'epub' }, ([o]) => {
+    const e = epub(o), all = Object.values(e.pages).join('');
+    ok(/<dc:title>Kindle Format Eight<\/dc:title>/.test(e.opf) && /<dc:creator>Lime Writer<\/dc:creator>/.test(e.opf), 'metadata');
+    ok(e.spine.filter((s) => /^ch/.test(s)).length === 2 && all.includes('<b>bold</b> and 한글') && all.includes('Aid target paragraph.'), 'parts and text');
+    const to2 = /<a href="(ch\d+\.xhtml)#([^"]+)">To chapter two<\/a>/.exec(all), toAid = /<a href="(ch\d+\.xhtml)#([^"]+)">to the target<\/a>/.exec(all);
+    ok(to2 && e.pages[to2[1]].includes(`id="${to2[2]}"`) && e.pages[to2[1]].includes('Chapter Two'), 'kindle:pos link to an id');
+    ok(toAid && new RegExp(`id="${toAid[2]}">Aid target`).test(e.pages[toAid[1]]), 'kindle:pos link to an aid');
+    ok(e.images.length === 2 && all.includes('alt="pic"'), 'kindle:embed picture and cover');
+  });
+  T('azw3 (KF8)→txt', 'convert-ebook', ['kf8.azw3'], { to: 'txt' }, ([o]) => ok(txt(o).includes('Chapter One') && txt(o).includes('Filler paragraph.'), 'text'));
+  T('epub→kepub', 'convert-ebook', ['kobo.epub'], { to: 'kepub' }, ([o]) => {
+    ok(o.endsWith('kobo.kepub.epub'), `name ${path.basename(o)}`);
+    const src = require('fflate').unzipSync(new Uint8Array(read(fx('kobo.epub')))), z = epub(o).z;
+    ok(Object.keys(src).sort().join() === Object.keys(z).sort().join(), 'entries changed');
+    for (const k of Object.keys(src).filter((n) => !/ch\d+\.xhtml$/.test(n))) ok(Buffer.compare(Buffer.from(src[k]), Buffer.from(z[k])) === 0, `${k} changed`);
+    const ch = Buffer.from(z['OEBPS/ch001.xhtml']).toString();
+    ok(/<body><div id="book-columns"><div id="book-inner">/.test(ch) && ch.includes('<span class="koboSpan" id="kobo.1.1">Kobo Book</span>') && ch.includes('<span class="koboSpan" id="kobo.2.2">Second one? </span>'), 'spans');
+    ok(ch.includes('<b><span class="koboSpan" id="kobo.3.2">Bold</span></b>') && /<span class="koboSpan" id="kobo\.4\.1"><img /.test(ch) && ch.includes('Pi is 3.14 today. </span>'), 'inline parents, pictures, numbers');
+    const ids = [...ch.matchAll(/id="(kobo[^"]+)"/g)].map((m) => m[1]);
+    ok(new Set(ids).size === ids.length, 'duplicate ids');
+  });
+  T('kepub→epub round trip', 'convert-ebook', ['kobo.kepub.epub'], { to: 'epub' }, ([o]) => {
+    const z = epub(o).z, src = require('fflate').unzipSync(new Uint8Array(read(fx('kobo.epub'))));
+    const norm = (b) => Buffer.from(b).toString().replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    for (const k of Object.keys(src).filter((n) => /ch\d+\.xhtml$/.test(n))) { const t = Buffer.from(z[k]).toString(); ok(!t.includes('koboSpan') && !t.includes('book-columns') && norm(z[k]) === norm(src[k]), `${k} keeps Kobo markup or lost text`); }
+    ok(Buffer.from(z['OEBPS/ch001.xhtml']).toString().includes('<p>First sentence. Second one? Third!</p>'), 'text after the round trip');
+  });
+  T('epub→htmlz', 'convert-ebook', ['novel.epub'], { to: 'htmlz' }, ([o]) => { const z = zipHas(o, 'index.html'); ok(z['style.css'] && z['metadata.opf'] && Object.keys(z).filter((k) => k.startsWith('images/')).length === 2 && Buffer.from(z['index.html']).toString().includes('src="images/img0001.png"') && Buffer.from(z['metadata.opf']).toString().includes('<dc:creator opf:role="aut">김작가</dc:creator>'), 'htmlz parts'); });
+  T('epub→txtz', 'convert-ebook', ['novel.epub'], { to: 'txtz' }, ([o]) => { const z = zipHas(o, 'index.txt'); ok(Buffer.from(z['index.txt']).toString().includes('![그림](images/img0001.png)') && z['images/img0001.png'], 'txtz parts'); });
+  T('txtz→epub', 'convert-ebook', ['notes.txtz'], { to: 'epub' }, ([o]) => { const e = epub(o); ok(/<dc:title>Zipped Notes<\/dc:title>/.test(e.opf) && /Note Taker/.test(e.opf) && e.images.length === 1, 'metadata or pictures (the outside picture must stay out)'); });
+  const pdfSizes = async (o) => (await require('pdf-lib').PDFDocument.load(read(o))).getPages().map((p) => `${Math.round(p.getWidth())}x${Math.round(p.getHeight())}`).join(' ');
+  T('cbz→pdf', 'convert-comic', ['comic.cbz'], { to: 'pdf' }, async ([o]) => ok((await pdfSizes(o)) === '150x225 165x248 180x270', `pages ${await pdfSizes(o)}`));
+  T('cb7→pdf', 'convert-comic', ['comic.cb7'], { to: 'pdf' }, async ([o]) => ok((await pdfSizes(o)) === '150x225 165x248 180x270', `pages ${await pdfSizes(o)}`));
+  T('cbt→pdf', 'convert-comic', ['comic.cbt'], { to: 'pdf' }, async ([o]) => ok((await pdfSizes(o)) === '150x225 165x248 180x270', `pages ${await pdfSizes(o)}`));
+  T('cbz→epub (fixed layout)', 'convert-comic', ['comic.cbz'], { to: 'epub' }, ([o]) => { const e = epub(o); ok(e.spine.length === 3 && e.images.length === 3 && /rendition:layout">pre-paginated/.test(e.opf) && e.pages['p0001.xhtml'].includes('width=200, height=300'), 'fixed layout'); });
+  T('cbz→cbz repack', 'convert-comic', ['comic.cbz'], { to: 'cbz' }, ([o]) => { const k = Object.keys(require('fflate').unzipSync(new Uint8Array(read(o)))); ok(k.join() === '001.png,002.jpg,003.png', `entries ${k}`); });
+  T('cb7→pictures', 'convert-comic', ['comic.cb7'], { to: 'images' }, ([o]) => ok(files(o).sort().join() === '001.png,002.jpg,003.png', `files ${files(o)}`));
+  X('locked comic refused', 'convert-comic', ['locked.cbz'], { to: 'pdf' }, /password-protected/);
+  T('pdf→cbz', 'pdf-to-cbz', ['doc.pdf'], { dpi: '96', quality: 80, pages: 'all' }, async ([o]) => { const z = require('fflate').unzipSync(new Uint8Array(read(o))); ok(Object.keys(z).join() === '001.jpg,002.jpg,003.jpg', `entries ${Object.keys(z)}`); const w = (await sharp(Buffer.from(z['001.jpg'])).metadata()).width; ok(w >= 792 && w <= 795, `page width ${w} at 96 dpi`); });
+  T('images→cbz', 'images-to-cbz', ['photo.jpg', 'photo2.jpg', 'photo.png'], {}, ([o]) => { const z = require('fflate').unzipSync(new Uint8Array(read(o))); ok(Object.keys(z).join() === '001.jpg,002.jpg,003.png' && Buffer.compare(Buffer.from(z['002.jpg']), read(fx('photo2.jpg'))) === 0, `entries ${Object.keys(z)}`); });
+  const FONTS = E('fonts');
+  let google = null;
+  try { google = require('wawoff2'); } catch (_) {}
+  const headMask = (h) => { const c = Buffer.from(h); c.fill(0, 8, 12); c.writeUInt16BE(c.readUInt16BE(16) & ~0x800, 16); return c; };
+  // Tables that differ between two fonts (head compared without checkSumAdjustment and the WOFF2 flag; DSIG ignored).
+  const tableDiff = (a, b, skip = []) => [...new Set([...a.tables.keys(), ...b.tables.keys()])].filter((t) => !skip.includes(t) && t !== 'DSIG' && (!a.tables.has(t) || !b.tables.has(t) || Buffer.compare(t === 'head' ? headMask(a.tables.get(t)) : a.tables.get(t), t === 'head' ? headMask(b.tables.get(t)) : b.tables.get(t)) !== 0));
+  const glyphDiff = (a, b) => { const x = FONTS.readGlyphs(a), y = FONTS.readGlyphs(b); return x.filter((g, i) => !!g !== !!y[i] || (g && Buffer.compare(FONTS.serializeGlyph(g), FONTS.serializeGlyph(y[i])) !== 0)).length + Math.abs(x.length - y.length); };
+  const ttfSrc = () => FONTS.load(read(fx('font.ttf')));
+  const woff2Dir = (b) => { const out = []; let p = 48; const ub = () => { let v = 0, c; do { c = b[p++]; v = v * 128 + (c & 127); } while (c & 128); return v; }; for (let i = 0, n = b.readUInt16BE(12); i < n; i++) { const f = b[p++], k = f & 63, tag = k === 63 ? b.toString('latin1', p, (p += 4)) : ['cmap', 'head', 'hhea', 'hmtx', 'maxp', 'name', 'OS/2', 'post', 'cvt ', 'fpgm', 'glyf', 'loca', 'prep'][k] || `#${k}`; const orig = ub(), v = f >> 6, tr = ['glyf', 'loca'].includes(tag) ? v !== 3 : v !== 0; out.push({ tag, v, orig, stored: tr ? ub() : orig, tr }); } return out; };
+  T('font ttf→woff', 'convert-font', ['font.ttf'], { to: 'woff' }, ([o]) => { const b = read(o); ok(b.toString('latin1', 0, 4) === 'wOFF' && b.readUInt32BE(8) === b.length, 'header'); const d = tableDiff(ttfSrc(), FONTS.load(b)); ok(!d.length, `tables changed: ${d}`); });
+  T('font ttf→woff2', 'convert-font', ['font.ttf'], { to: 'woff2' }, async ([o]) => {
+    const b = read(o), src = ttfSrc(), dir = woff2Dir(b), e = (t) => dir.find((x) => x.tag === t);
+    ok(b.length % 4 === 0 && b.readUInt32BE(8) === b.length, 'length');
+    ok(e('glyf').v === 0 && e('glyf').tr && e('loca').v === 0 && e('loca').stored === 0 && e('hmtx').v === 1 && e('cmap').v === 0 && !e('cmap').tr, `transforms ${JSON.stringify(dir.slice(0, 12))}`);
+    ok(dir.findIndex((x) => x.tag === 'loca') === dir.findIndex((x) => x.tag === 'glyf') + 1, 'loca must follow glyf');
+    ok(b.length < 0.8 * FONTS.woffEncode(src).length, 'not smaller than WOFF');
+    const back = FONTS.load(b);
+    ok(!tableDiff(src, back, ['glyf', 'loca']).length && !glyphDiff(src, back), 'round trip');
+    ok(back.tables.get('head').readUInt16BE(16) & 0x800, 'head flag 11');
+    if (google) {
+      const g = FONTS.load(Buffer.from(await google.decompress(b))), gg = FONTS.readGlyphs(g);
+      ok(!tableDiff(src, g, ['glyf', 'loca']).length, `Google’s decoder: ${tableDiff(src, g, ['glyf', 'loca'])}`);
+      ok(FONTS.readGlyphs(src).every((x, i) => !x || Buffer.compare(FONTS.serializeGlyph({ ...x, overlap: false }), FONTS.serializeGlyph({ ...gg[i], overlap: false })) === 0), 'Google’s decoder: glyphs');
+      ok(b.length < 1.05 * read(fx('font.google.woff2')).length, 'larger than Google’s encoder');
+    }
+  });
+  T('font google woff2→ttf', 'convert-font', ['font.google.woff2'], { to: 'ttf' }, ([o]) => { const src = ttfSrc(), out = FONTS.load(read(o)), og = FONTS.readGlyphs(out); ok(!tableDiff(src, out, ['glyf', 'loca']).length, `tables ${tableDiff(src, out, ['glyf', 'loca'])}`); ok(FONTS.readGlyphs(src).every((x, i) => !x || Buffer.compare(FONTS.serializeGlyph({ ...x, overlap: false }), FONTS.serializeGlyph(og[i])) === 0), 'glyphs'); });
+  T('font ttf→eot', 'convert-font', ['font.ttf'], { to: 'eot' }, ([o]) => {
+    const b = read(o);
+    ok(b.readUInt32LE(0) === b.length && b.readUInt32LE(8) === 0x00020001 && b.readUInt32LE(12) === 0 && b.readUInt16LE(34) === 0x504c, 'EOT header');
+    ok(b.toString('utf16le', 84, 84 + b.readUInt16LE(82)) === 'Noto Sans', `family ${b.toString('utf16le', 84, 84 + b.readUInt16LE(82))}`);
+    ok(!tableDiff(ttfSrc(), FONTS.load(b)).length, 'tables');
+  });
+  T('font ttc→otf', 'convert-font', ['font.ttc'], { to: 'otf' }, ([o]) => ok(!tableDiff(ttfSrc(), FONTS.load(read(o))).length, 'first font of the collection'));
+  T('font otf (CFF)→woff2', 'convert-font', ['font.otf'], { to: 'woff2' }, ([o]) => { const src = FONTS.load(read(fx('font.otf'))), back = FONTS.load(read(o)); ok(back.flavor === 0x4f54544f && back.tables.has('CFF ') && !tableDiff(src, back).length, `CFF tables ${tableDiff(src, back)}`); });
+  T('font otf (CFF)→ttf', 'convert-font', ['font.otf'], { to: 'ttf' }, ([o]) => {
+    const src = FONTS.load(read(fx('font.otf'))), tt = FONTS.load(read(o)), g = FONTS.readGlyphs(tt);
+    ok(tt.flavor === 0x10000 && !tt.tables.has('CFF ') && !tt.tables.has('VORG') && tt.tables.get('maxp').length === 32 && g.length === 9, 'TrueType font');
+    for (const t of ['cmap', 'name', 'OS/2']) ok(Buffer.compare(src.tables.get(t), tt.tables.get(t)) === 0, `${t} changed`);
+    const hm = tt.tables.get('hmtx'), adv = [500, 250, 600, 520, 520, 300, 600, 700, 500];
+    g.forEach((x, i) => { ok(hm.readUInt16BE(4 * i) === adv[i] && hm.readInt16BE(4 * i + 2) === (x ? x.xMin : 0), `metrics of glyph ${i}`); if (x) { const xs = x.pts.map((p) => p.x), ys = x.pts.map((p) => p.y); ok(x.xMin === Math.min(...xs) && x.yMax === Math.max(...ys), `bbox of glyph ${i}`); } });
+    const area = (x, k) => { const s = k ? x.ends[k - 1] + 1 : 0, c = x.pts.slice(s, x.ends[k] + 1).filter((p) => p.on); return c.reduce((a, p, i) => a + p.x * c[(i + 1) % c.length].y - c[(i + 1) % c.length].x * p.y, 0) / 2; };
+    ok(area(g[8], 0) === -250000 && area(g[8], 1) === 90000 && area(g[2], 0) < 0, 'contour direction');
+    ok([g[7].xMin, g[7].yMin, g[7].xMax, g[7].yMax].join() === '100,0,600,530' && g[7].pts.some((p) => p.on && p.x === 350 && p.y === 530), 'flex');
+    ok(g[6].n === g[2].n + g[5].n && g[6].pts.slice(g[2].pts.length).every((p, i) => p.x === g[5].pts[i].x + 170 && p.y === g[5].pts[i].y + 190), 'seac accent');
+    const fk = require('@pdf-lib/fontkit').create(read(o)), names = Array.from({ length: 9 }, (_, i) => fk.getGlyph(i).name);
+    ok(tt.tables.get('post').readUInt32BE(0) === 0x20000 && names.join(' ') === '.notdef space A a e acute Aacute flexbar box', `post names ${names}`);
+    const vm = tt.tables.get('vmtx');
+    ok(vm.readInt16BE(4 * 2 + 2) === 900 - g[2].yMax && vm.readInt16BE(4 * 3 + 2) === 880 - g[3].yMax, 'vertical metrics from VORG');
+  });
+  T('font otf (CFF)→eot', 'convert-font', ['font.otf'], { to: 'eot' }, ([o]) => { const b = read(o); ok(b.toString('utf16le', 84, 84 + b.readUInt16LE(82)) === 'Lime Test NameKeyed', 'family name'); const f = FONTS.load(b); ok(f.tables.has('glyf') && !f.tables.has('CFF '), 'TrueType outlines'); });
+  T('font info', 'font-info', ['font.ttf'], { save: true }, ([o], r) => { const t = r[0].text; ok(/Family: Noto Sans/.test(t) && /Style: Regular/.test(t) && new RegExp(`Glyphs: ${ttfSrc().tables.get('maxp').readUInt16BE(4).toLocaleString('en-US')}`).test(t) && /Characters: [\d,]+/.test(t), t); ok(txt(o).includes('Outlines: TrueType'), 'report file'); });
+  X('not a font refused', 'convert-font', ['doc.txt'], { to: 'woff' }, /not a font/);
+  const M = E('email');
+  const REPORT = Buffer.from('%PDF-1.4 fake report');
+  T('mail eml→html', 'convert-email', ['mail.eml'], { to: 'html' }, ([o]) => {
+    const h = txt(o);
+    for (const s of ['<meta charset="utf-8">', '<title>회의 자료</title>', '<th>From</th><td>보낸이 &lt;sender@example.com&gt;</td>', '<th>To</th><td>receiver@example.com, Second &lt;second@example.com&gt;</td>', '<th>Date</th><td>2026-10-01 09:30:00 +09:00</td>', '<th>Attachments</th><td>보고서.pdf, notes.txt</td>', '<p>안녕하세요. 자료를 보냅니다.</p>', 'p { color: #C00000; }', 'src="data:image/png;base64,', 'bgcolor="#EEEEEE"', 'valign="top"', '<font color="#336699">', '<p>양식 안의 본문</p>', 'href="https://example.com/ok"', 'Content-Security-Policy', 'bgcolor="#FFFFF0"']) ok(h.includes(s), `lacks ${s}`);
+    for (const s of ['cid:', '<script', 'onerror', 'onload', 'tracker.example', 'javascript:', '<svg', '<form', '<input', '<xmp', '<!--']) ok(!h.includes(s), `contains ${s}`);
+  });
+  T('mail eml→txt', 'convert-email', ['mail.eml'], { to: 'txt' }, ([o]) => { const t = txt(o); ok(t.startsWith('﻿From: 보낸이 <sender@example.com>\r\n') && t.includes('Subject: 회의 자료\r\n') && t.endsWith('\r\n\r\n안녕하세요. 자료를 보냅니다.\r\n둘째 줄\r\n'), JSON.stringify(t)); });
+  T('mail eml attachments', 'email-attachments', ['mail.eml'], {}, ([o]) => { ok(files(o).sort().join() === ['notes.txt', '보고서.pdf'].sort().join(), `files ${files(o)}`); ok(Buffer.compare(read(path.join(o, '보고서.pdf')), REPORT) === 0 && txt(path.join(o, 'notes.txt')) === 'memo', 'attachment bytes'); });
+  T('mail iso-2022-kr→html', 'convert-email', ['old.eml'], { to: 'html' }, ([o]) => { const h = txt(o); ok(h.includes('<title>한글 제목</title>') && h.includes('<pre class="lime-mail-text">본문 &lt;첫 줄&gt;\r\n둘째 줄') && !h.includes('Attachments'), h.slice(-400)); });
+  X('mail without attachments refused', 'email-attachments', ['old.eml'], {}, /no attachments/);
+  T('mail msg→eml', 'convert-email', ['meeting.msg'], { to: 'eml' }, ([o]) => {
+    const m = M.readMessage(read(o)), raw = txt(o);
+    ok(m.subject === '회의 자료' && m.from[0].name === '보낸이' && m.from[0].addr === 'sender@example.com' && m.to[0].addr === 'receiver@example.com' && m.cc[0].addr === 'copy@example.com', 'headers');
+    ok(m.date === '2026-10-01 00:30:00 +00:00' && /^Message-ID: <meeting-1@example\.com>$/m.test(raw), 'date or message id');
+    ok(m.text === '안녕하세요. 자료를 보냅니다.\r\n둘째 줄' && m.html.includes('<img src="cid:logo@lime">'), 'bodies');
+    ok(m.attachments.map((a) => a.name).join() === '보고서.pdf,Earlier mail.eml' && Buffer.compare(m.attachments[0].data, REPORT) === 0, 'attachments');
+    const inner = M.readMessage(m.attachments[1].data);
+    ok(inner.subject === 'Earlier mail' && inner.text.trim() === 'older text', 'attached message');
+    ok(m.cids.has('logo@lime'), 'inline picture');
+  });
+  T('mail msg→html', 'convert-email', ['meeting.msg'], { to: 'html' }, ([o]) => { const h = txt(o); ok(h.includes('<title>회의 자료</title>') && h.includes('<th>From</th><td>보낸이 &lt;sender@example.com&gt;</td>') && h.includes('<th>Cc</th><td>Copy &lt;copy@example.com&gt;</td>') && h.includes('<th>Attachments</th><td>보고서.pdf, Earlier mail.eml</td>') && h.includes('src="data:image/png;base64,') && !h.includes('cid:'), 'html'); });
+  T('mail msg→txt', 'convert-email', ['meeting.msg'], { to: 'txt' }, ([o]) => ok(txt(o).includes('Subject: 회의 자료\r\n') && txt(o).endsWith('\r\n\r\n안녕하세요. 자료를 보냅니다.\r\n둘째 줄\r\n'), 'txt'));
+  T('mail msg attachments', 'email-attachments', ['meeting.msg'], {}, ([o]) => { ok(files(o).sort().join() === ['Earlier mail.eml', '보고서.pdf'].sort().join(), `files ${files(o)}`); ok(M.readMessage(read(path.join(o, 'Earlier mail.eml'))).text.trim() === 'older text', 'attached message'); });
+  T('mail korean eml after msg', 'convert-email', ['mail.eml'], { to: 'txt' }, ([o]) => ok(txt(o).includes('From: 보낸이 <sender@example.com>') && txt(o).includes('안녕하세요. 자료를 보냅니다.'), 'charsets after an Outlook message'));
+  T('mail rtf-only msg→html', 'convert-email', ['rtf.msg'], { to: 'html' }, ([o]) => ok(txt(o).includes('<p>Encapsulated café text</p>'), 'de-encapsulated HTML'));
+  X('mail broken msg refused', 'convert-email', ['broken.msg'], { to: 'html' }, /Not an Outlook message/);
+  T('mail eml→pdf', 'convert-email', ['mail.eml'], { to: 'pdf' }, async ([o]) => { const t = await pdfText(o); ok(t.includes('Attachments') && t.includes('good link'), 'pdf text'); });
+  // E-mail → PDF renders offline: remote pictures, style sheets and imports are never fetched (a local server counts
+  // requests) while the message's own data: picture still shows.
+  const hits = [];
+  const server = require('http').createServer((req, res) => { hits.push(req.url); res.writeHead(200, { 'content-type': 'image/png' }); res.end(read(fx('photo2.jpg'))); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}`, remote = path.join(OUT, 'remote.eml');
+  fs.writeFileSync(remote, ['From: news@example.com', 'Subject: Remote pictures', 'Content-Type: text/html; charset=utf-8', '', `<html><head><style>@import url(${url}/import.css); body { background: url(${url}/background.png) }</style><link rel="stylesheet" href="${url}/sheet.css"></head><body><p>Offline body text</p><img src="${url}/pixel.png" alt="remote pixel"><img srcset="${url}/srcset.png 2x"><img src="data:image/png;base64,${read(fx('alpha.png')).toString('base64')}" alt="own picture"><div style="background-image:url(${url}/inline.png)">x</div></body></html>`, ''].join('\r\n'));
+  C.push({ name: 'mail eml→pdf fetches nothing', tool: 'convert-email', inputs: [remote], opts: { to: 'pdf' }, check: async ([o]) => {
+    ok((await pdfText(o)).includes('Offline body text'), 'pdf text');
+    const { doc } = await E('pdf').readPdf(o);
+    const images = [];
+    doc.loadPage(0).toStructuredText('preserve-images').walk({ onImageBlock(b, m, img) { if (img.getWidth() > 32) images.push(`${img.getWidth()}x${img.getHeight()}`); } });
+    ok(images.join() === '600x600', `pictures rendered: ${images}; only the message’s own should be`);
+    ok(!hits.length, `fetched ${hits.join(', ')}`);
+  } });
+  T('mhtml→html', 'convert-mhtml', ['page.mhtml'], { to: 'html' }, ([o]) => {
+    const h = txt(o);
+    ok(h.includes('<title>Lime archive page</title>') && h.includes('<html lang="en">') && h.includes('<body class="article">') && h.includes('Content-Security-Policy'), 'page');
+    ok((h.match(/src="data:image\/png;base64,/g) || []).length === 3 && h.includes('background-image:url(') && /\.hero \{ background: url\("data:image\/png;base64,/.test(h), 'pictures from the archive');
+    ok(/@media print \{\s*\.printonly/.test(h) && h.includes('font-family: serif') && h.includes('h1 { color: #2c6413 }'), 'style sheets');
+    ok(!/<script|<iframe|<link|elsewhere\.example|favicon| srcset=/.test(h) && h.includes('<img alt="missing"/>'), 'removed content');
+  });
+  T('mhtml→pdf', 'convert-mhtml', ['page.mhtml'], { to: 'pdf' }, async ([o]) => ok((await pdfText(o)).includes('Archived paragraph text'), 'pdf text'));
   T('sheet→csv (all sheets)', 'convert-sheet', ['sheet.xlsx'], { to: 'csv', allSheets: true }, ([o]) => ok(files(o).length === 2 && txt(path.join(o, 'Fruit.csv')).includes('Lime,12'), 'csv'));
-  for (const [to, chk] of [['json', (o) => ok(JSON.parse(txt(o).replace(/^﻿/, '')).length >= 1 || true, 'json')], ['html', (o) => ok(txt(o).includes('Lime'), 'html')], ['pdf', async (o) => ok((await pdfText(o)).includes('Lime'), 'pdf')], ['ods', (o) => zipHas(o, 'content.xml')], ['md', (o) => ok(txt(o).includes('| Fruit |'), 'md')], ['xls', (o) => ok(require('xlsx').readFile(o).SheetNames.length === 2, 'xls')], ['docx', async (o) => ok((await docxText(o)).includes('Lime'), 'docx')]]) {
+  for (const [to, chk] of [['json', (o) => ok(JSON.parse(txt(o).replace(/^\ufeff/, '')).length >= 1 || true, 'json')], ['html', (o) => ok(txt(o).includes('Lime'), 'html')], ['pdf', async (o) => ok((await pdfText(o)).includes('Lime'), 'pdf')], ['ods', (o) => zipHas(o, 'content.xml')], ['md', (o) => ok(txt(o).includes('| Fruit |'), 'md')], ['xls', (o) => ok(require('xlsx').readFile(o).SheetNames.length === 2, 'xls')], ['docx', async (o) => ok((await docxText(o)).includes('Lime'), 'docx')]]) {
     T(`sheet→${to}`, 'convert-sheet', ['sheet.xlsx'], { to, allSheets: false }, async ([o]) => chk(o));
   }
   T('csv→xlsx', 'convert-sheet', ['sheet.csv'], { to: 'xlsx' }, ([o]) => { const wb = XLSX.readFile(o); ok(wb.SheetNames[0] === 'sheet' && cell(wb.Sheets.sheet, 'A2') === 's:Lime' && cell(wb.Sheets.sheet, 'B2') === 'n:12', 'xlsx'); });

@@ -3,7 +3,21 @@ const U = require('./engines/util');
 const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
-const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles');
+const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email');
+
+// Groups util doesn't know, or reads differently: plain .xml is data (Convert document still takes it) and EPUB/FB2 are e-books.
+const MORE_GROUPS = { subtitle: ['smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc'], data: ['jsonl', 'ndjson', 'jsonc', 'toml'], contacts: ['vcf', 'vcard'],
+  font: ['ttf', 'otf', 'woff', 'woff2', 'eot', 'ttc'], mail: ['eml', 'msg'], webarchive: ['mht', 'mhtml'], comic: ['cbz', 'cbr', 'cb7', 'cbt', 'cbc'], ebook: ['epub', 'kepub', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'fb2', 'htmlz', 'txtz'] };
+const MORE_EXT = Object.fromEntries(Object.entries(MORE_GROUPS).flatMap(([g, list]) => list.map((e) => [e, g])));
+function palmBook(p) {
+  try { const fd = U.fs.openSync(p, 'r'), b = Buffer.alloc(8); U.fs.readSync(fd, b, 0, 8, 60); U.fs.closeSync(fd); return /^(BOOKMOBI|TEXtREAd)$/.test(b.toString('latin1')); } catch (_) { return false; }
+}
+function groupOf(p) {
+  const g = U.groupOf(p), e = U.ext(p);
+  if (g === 'folder') return g;
+  if (g === 'doc' && e === 'xml') return 'data';
+  return MORE_EXT[e] || (e === 'pdb' && palmBook(p) ? 'ebook' : g);
+}
 
 const choice = (key, label, choices, def, extra = {}) => ({ key, type: 'choice', label, choices, default: def ?? choices[0][0], ...extra });
 const select = (key, label, choices, def, extra = {}) => ({ key, type: 'select', label, choices, default: def ?? choices[0][0], ...extra });
@@ -83,12 +97,12 @@ const TOOLS = [
   { id: 'pdf-to-tiff', cat: 'pdf', name: 'PDF to TIFF', desc: 'Every page in one multi-page TIFF.', accepts: ['pdf'], ext: 'tif',
     options: [choice('dpi', 'Resolution', [['150', 'Standard'], ['300', 'Print'], ['600', 'Archive']], '300'), pages(), pdfPassword], run: each((f, o, c) => pdf().toTiff(f, o, outFile('', 'tif')(f, c), c)) },
   { id: 'pdf-to-cbz', cat: 'pdf', name: 'PDF to comic book', desc: 'Pages as a CBZ for comic and e-book readers.', accepts: ['pdf'], ext: 'cbz',
-    options: [choice('dpi', 'Resolution', [['96', 'Small'], ['150', 'Standard'], ['300', 'Sharp']], '150'), pages(), pdfPassword], run: each((f, o, c) => pdf().toComic(f, o, outFile('', 'cbz')(f, c), c)) },
+    options: [choice('dpi', 'Resolution', [['96', 'Small'], ['150', 'Standard'], ['300', 'Sharp']], '150'), range('quality', 'JPEG quality', 85, 30, 100, { unit: '%' }), pages(), pdfPassword], run: each((f, o, c) => pdf().toComic(f, o, outFile('', 'cbz')(f, c), c)) },
   { id: 'pdf-to-markdown', cat: 'pdf', name: 'PDF to Markdown', desc: 'Headings, paragraphs, lists and pictures as Markdown.', accepts: ['pdf'], ext: 'md', options: [pdfPassword], run: each((f, o, c) => pdf().toMarkdown(f, o, outFile('', 'md')(f, c), c)) },
   { id: 'pdf-to-text', cat: 'pdf', name: 'PDF to text', desc: 'All text as a plain-text file.', accepts: ['pdf'], ext: 'txt', options: [pdfPassword], run: each((f, o, c) => pdf().toText(f, o, outFile('', 'txt')(f, c))) },
   { id: 'pdf-to-html', cat: 'pdf', name: 'PDF to HTML', desc: 'A web page that keeps the layout.', accepts: ['pdf'], ext: 'html', options: [pdfPassword], run: each((f, o, c) => pdf().toHtml(f, o, outFile('', 'html')(f, c))) },
   { id: 'pdf-to-svg', cat: 'pdf', name: 'PDF to SVG', desc: 'Vector artwork via VectorCraft.', accepts: ['pdf'], ext: 'svg', craft: 'vectorcraft', run: each((f, o, c) => craft().vector(f, { to: 'svg' }, c)) },
-  { id: 'to-pdf', cat: 'pdf', name: 'Make PDF', desc: 'Documents, slides, sheets, drawings or images to PDF.', accepts: ['doc', 'sheet', 'slides', 'vector', 'cad2d', 'layout', 'image', 'raw'], ext: 'pdf',
+  { id: 'to-pdf', cat: 'pdf', name: 'Make PDF', desc: 'Documents, slides, sheets, drawings or images to PDF.', accepts: ['doc', 'sheet', 'slides', 'vector', 'cad2d', 'layout', 'image', 'raw', 'ebook'], ext: 'pdf',
     run: each((f, o, c) => anyToPdf(f, c)) },
   { id: 'jpg-to-pdf', cat: 'pdf', name: 'Images to PDF', desc: 'One PDF from photos, scans or screenshots.', accepts: IMAGE_IN, ordered: true, ext: 'pdf',
     options: [choice('combine', 'Output', [['one', 'One PDF'], ['each', 'One per image']]), select('pageSize', 'Page size', [['fit', 'Same as image'], ['a4', 'A4'], ['letter', 'Letter'], ['legal', 'Legal'], ['a3', 'A3']]), choice('orientation', 'Orientation', [['auto', 'Auto'], ['portrait', 'Portrait'], ['landscape', 'Landscape']], 'auto', { when: { pageSize: ['a4', 'letter', 'legal', 'a3'] } }), choice('margin', 'Margin', [['none', 'None'], ['small', 'Small'], ['large', 'Large']])],
@@ -208,6 +222,7 @@ const TOOLS = [
       const words = t.trim() ? t.trim().split(/\s+/).length : 0;
       return { path: out, note: words ? `${words} word${words === 1 ? '' : 's'} found` : 'No text found in this image.', text: t };
     }) },
+  { id: 'images-to-cbz', cat: 'image', name: 'Make comic', desc: 'Pictures in order as a CBZ comic book.', accepts: IMAGE_IN, ordered: true, ext: 'cbz', run: async (files, o, c) => [await ebook().imagesToCbz(files, c)] },
   { id: 'screenshot-url', cat: 'image', name: 'Web page to image', desc: 'Full-length screenshot of a web page.', accepts: [], noFiles: true, ext: 'png',
     options: [text('url', 'Web address', '', { placeholder: 'https://example.com', required: true })], run: async (files, o, c) => [await office().urlToPdf(o.url, { format: 'png' }, c)] },
 
@@ -287,6 +302,11 @@ const TOOLS = [
   { id: 'convert-document', cat: 'docs', name: 'Convert document', desc: 'PDF, Word, Markdown, HTML, EPUB, RTF, text and more.', accepts: ['doc', 'data'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['pdf', 'PDF'], ['docx', 'Word (DOCX)'], ['md', 'Markdown'], ['html', 'Web page'], ['txt', 'Plain text'], ['epub', 'eBook (EPUB)'], ['rtf', 'Rich text (RTF)'], ['odt', 'OpenDocument']])],
     run: each((f, o, c) => office().convertDocument(f, o, c)) },
+  { id: 'convert-ebook', cat: 'docs', name: 'Convert e-book', desc: 'EPUB, Kobo, MOBI, AZW3 and FB2 to PDF, Word, text and more.', accepts: ['ebook'], ext: (o) => (o.to === 'kepub' ? 'kepub.epub' : o.to),
+    options: [select('to', 'Convert to', [['epub', 'EPUB'], ['kepub', 'Kobo (KEPUB)'], ['pdf', 'PDF'], ['docx', 'Word (DOCX)'], ['txt', 'Plain text'], ['md', 'Markdown'], ['html', 'Web page'], ['fb2', 'FictionBook (FB2)'], ['htmlz', 'HTMLZ'], ['txtz', 'TXTZ']])],
+    run: each((f, o, c) => ebook().convert(f, o, c)) },
+  { id: 'convert-comic', cat: 'docs', name: 'Convert comic', desc: 'CBZ, CBR, CB7, CBT and CBC to PDF, EPUB, CBZ or pictures.', accepts: ['comic'], ext: (o) => o.to, folderWhen: { to: 'images' }, suffix: '',
+    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['epub', 'EPUB (fixed layout)'], ['cbz', 'CBZ'], ['images', 'Pictures (folder)']])], run: each((f, o, c) => ebook().convertComic(f, o, c)) },
   { id: 'convert-sheet', cat: 'docs', name: 'Convert spreadsheet', desc: 'XLSX, CSV, JSON, HTML, ODS and PDF.', accepts: ['sheet'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['xlsx', 'Excel (XLSX)'], ['csv', 'CSV'], ['pdf', 'PDF'], ['json', 'JSON'], ['html', 'HTML'], ['ods', 'OpenDocument'], ['md', 'Markdown'], ['xls', 'Excel 97']]), toggle('allSheets', 'Every sheet (CSV, JSON)', true, { when: { to: ['csv', 'tsv', 'json'] } })],
     run: each((f, o, c) => office().convertSheet(f, o.to, c, o)) },
@@ -299,7 +319,7 @@ const TOOLS = [
     options: [select('to', 'Convert to', [['csv', 'CSV'], ['xlsx', 'Excel (XLSX)'], ['json', 'JSON'], ['vcf', 'vCard']])], run: each((f, o, c) => data().convert(f, o, c)) },
   { id: 'json-to-sheet', cat: 'docs', name: 'JSON to spreadsheet', desc: 'Turn JSON arrays into a table.', accepts: [], extAccept: ['json'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['xlsx', 'Excel'], ['csv', 'CSV'], ['html', 'HTML'], ['md', 'Markdown']])], run: each((f, o, c) => office().convertSheet(f, o.to, c, o)) },
-  { id: 'merge-documents', cat: 'docs', name: 'Merge into one PDF', desc: 'Documents, sheets, slides, drawings, PDFs and images.', accepts: ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout'], min: 2, ordered: true, ext: 'pdf', suffix: ' - combined',
+  { id: 'merge-documents', cat: 'docs', name: 'Merge into one PDF', desc: 'Documents, sheets, slides, drawings, PDFs and images.', accepts: ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout', 'ebook'], min: 2, ordered: true, ext: 'pdf', suffix: ' - combined',
     run: async (files, o, c) => {
       const tmp = await U.tmpDir('mergedocs');
       const list = [];
@@ -314,6 +334,18 @@ const TOOLS = [
     run: async (files, o, c) => [await office().mergeSheets(files, o, c)] },
   { id: 'convert-layout', cat: 'docs', name: 'Convert layout', desc: 'DesignCraft exports InDesign IDML and INDD to PDF, images, EPUB or PowerPoint.', accepts: ['layout'], craft: 'designcraft', ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
     options: [select('to', 'Export as', [['pdf', 'PDF'], ['png', 'Page images'], ['epub', 'EPUB'], ['pptx', 'PowerPoint'], ['idml', 'IDML']])], run: each((f, o, c) => craft().layout(f, o, c)) },
+
+  { id: 'convert-email', cat: 'docs', name: 'Convert e-mail', desc: 'EML and Outlook MSG to PDF, a web page or text, safely offline.', accepts: ['mail'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['html', 'Web page'], ['txt', 'Plain text'], ['eml', 'EML (from Outlook MSG)']])], run: each((f, o, c) => email().convert(f, o, c)) },
+  { id: 'email-attachments', cat: 'docs', name: 'Save attachments', desc: 'Every file attached to an e-mail, in a folder.', accepts: ['mail'], save: 'folder', suffix: ' - attachments',
+    run: each((f, o, c) => email().convert(f, { to: 'attachments' }, c)) },
+  { id: 'convert-mhtml', cat: 'docs', name: 'Convert web archive', desc: 'MHT and MHTML pages to one self-contained page, PDF or text.', accepts: ['webarchive'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['html', 'Web page'], ['txt', 'Plain text']])], run: each((f, o, c) => email().convert(f, o, c)) },
+  { id: 'convert-font', cat: 'docs', name: 'Convert font', desc: 'TTF, OTF, WOFF, WOFF2 and EOT, every table kept.', accepts: ['font'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', [['woff2', 'WOFF2 (web)'], ['woff', 'WOFF'], ['ttf', 'TrueType (TTF)'], ['otf', 'OpenType (OTF)'], ['eot', 'EOT (old IE)']])],
+    run: each((f, o, c) => fonts().convert(f, o, c)) },
+  { id: 'font-info', cat: 'docs', name: 'Font info', desc: 'Family, style, glyphs, characters and embedding rights.', accepts: ['font'], save: 'none',
+    options: [toggle('save', 'Save a report', false)], run: each((f, o, c) => fonts().report(f, o, c)) },
 
   { id: 'convert-vector', cat: 'cad', name: 'Convert vector', desc: 'VectorCraft converts AI, EPS, SVG, PDF, DXF, EMF and Affinity files.', accepts: ['vector'], extAccept: ['svg', 'svgz', 'pdf', 'dxf'], craft: 'vectorcraft', ext: (o) => o.to,
     options: [select('to', 'Convert to', [['svg', 'SVG'], ['pdf', 'PDF'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['png', 'PNG'], ['dxf', 'DXF'], ['emf', 'EMF'], ['psd', 'Photoshop (PSD)']]), num('scale', 'Image scale', 2, { when: { to: ['png', 'psd'] }, min: 1 }), toggle('outlineText', 'Text as outlines', false, { when: { to: 'svg' }, advanced: true })],
@@ -396,6 +428,20 @@ const WHEELS = {
     convert: [W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'DOCX', 'Word', { to: 'docx' }), W('convert-document', 'MD', 'Markdown', { to: 'md' }), W('convert-document', 'TXT', 'Text', { to: 'txt' }), W('convert-document', 'HTML', 'Web', { to: 'html' }), W('convert-document', 'EPUB', 'eBook', { to: 'epub' }), W('convert-document', 'RTF', 'Rich text', { to: 'rtf' })],
     tools: [ZIP, HASH],
   },
+  comic: { convert: [W('convert-comic', 'PDF', 'Document', { to: 'pdf' }), W('convert-comic', 'EPUB', 'Fixed layout', { to: 'epub' }), W('convert-comic', 'CBZ', 'Repack', { to: 'cbz' }), W('convert-comic', 'Pages', 'Pictures', { to: 'images' }, { full: true })], tools: [ZIP, HASH] },
+  ebook: {
+    convert: [W('convert-ebook', 'EPUB', 'eBook', { to: 'epub' }, { not: ['epub'] }), W('convert-ebook', 'KEPUB', 'Kobo', { to: 'kepub' }, { not: ['kepub'] }), W('convert-ebook', 'PDF', 'Document', { to: 'pdf' }), W('convert-ebook', 'DOCX', 'Word', { to: 'docx' }), W('convert-ebook', 'TXT', 'Text', { to: 'txt' }), W('convert-ebook', 'MD', 'Markdown', { to: 'md' }), W('convert-ebook', 'HTML', 'Web', { to: 'html' }), W('convert-ebook', 'FB2', 'FictionBook', { to: 'fb2' }, { not: ['fb2'] }), W('convert-ebook', 'HTMLZ', 'Calibre', { to: 'htmlz' }, { not: ['htmlz'] })],
+    tools: [ZIP, HASH],
+  },
+  mail: {
+    convert: [W('convert-email', 'PDF', 'Document', { to: 'pdf' }), W('convert-email', 'HTML', 'Web', { to: 'html' }), W('convert-email', 'TXT', 'Text', { to: 'txt' }), W('email-attachments', 'Files', 'Attachments'), W('convert-email', 'EML', 'Mail', { to: 'eml' }, { not: ['eml'] })],
+    tools: [W('email-attachments', 'Attachments', 'Folder'), ZIP, HASH],
+  },
+  webarchive: { convert: [W('convert-mhtml', 'PDF', 'Document', { to: 'pdf' }), W('convert-mhtml', 'HTML', 'One page', { to: 'html' }), W('convert-mhtml', 'TXT', 'Text', { to: 'txt' })], tools: [ZIP, HASH] },
+  font: {
+    convert: [W('convert-font', 'WOFF2', 'Web', { to: 'woff2' }, { not: ['woff2'] }), W('convert-font', 'WOFF', 'Web', { to: 'woff' }, { not: ['woff'] }), W('convert-font', 'TTF', 'TrueType', { to: 'ttf' }, { not: ['ttf'] }), W('convert-font', 'OTF', 'OpenType', { to: 'otf' }, { not: ['otf'] }), W('convert-font', 'EOT', 'Old IE', { to: 'eot' }, { not: ['eot'] })],
+    tools: [W('font-info', 'Info', 'Glyphs'), ZIP, HASH],
+  },
   sheet: {
     convert: [W('convert-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-sheet', 'CSV', 'Plain', { to: 'csv' }), W('convert-sheet', 'PDF', 'Document', { to: 'pdf' }), W('convert-sheet', 'JSON', 'Data', { to: 'json' }), W('convert-sheet', 'HTML', 'Table', { to: 'html' }), W('convert-sheet', 'ODS', 'Open', { to: 'ods' }), W('convert-sheet', 'MD', 'Markdown', { to: 'md' }),
       W('convert-data', 'YAML', 'Data', { to: 'yaml' }, { only: CSV_EXT }), W('convert-data', 'XML', 'Data', { to: 'xml' }, { only: CSV_EXT }), W('convert-contacts', 'vCard', 'Contacts', { to: 'vcf' }, { only: CSV_EXT })],
@@ -461,7 +507,7 @@ function imageRing(files) {
 }
 const MULTI = {
   pdf: [W('merge-pdf', 'Merge', 'One PDF'), W('compare-pdf', 'Compare', 'Changes'), W('compress-pdf', 'Compress', 'Each')],
-  image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch')],
+  image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('images-to-cbz', 'CBZ', 'Comic')],
   raw: [W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' })],
   video: [W('merge-media', 'Merge', 'One video')],
   audio: [W('merge-media', 'Merge', 'One track')],
@@ -469,15 +515,8 @@ const MULTI = {
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
   media: [W('add-audio', 'Soundtrack', 'Replace', { mode: 'replace' }), W('add-audio', 'Mix', 'Add music', { mode: 'mix' }), W('merge-media', 'Merge', 'One video')],
 };
-const SINGLE_OUTPUT = new Set(['scan-to-pdf', 'compare-pdf', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
+const SINGLE_OUTPUT = new Set(['scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
-// Formats util's groups don't know yet; plain .xml is data (converting it as a document stays possible).
-const MORE_GROUPS = { smi: 'subtitle', sami: 'subtitle', lrc: 'subtitle', ttml: 'subtitle', dfxp: 'subtitle', scc: 'subtitle', jsonl: 'data', ndjson: 'data', jsonc: 'data', toml: 'data', vcf: 'contacts', vcard: 'contacts' };
-function groupOf(f) {
-  const g = U.groupOf(f), e = U.ext(f);
-  if (g === 'doc' && e === 'xml') return 'data';
-  return g === 'any' ? MORE_GROUPS[e] || g : g;
-}
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);
 function accepts(t, files) {
@@ -495,12 +534,13 @@ function wheelsFor(files) {
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
   const base = g === 'image' ? { ...WHEELS.image, convert: imageRing(files) } : WHEELS[g] || WHEELS.any;
   const norm = (e) => ({ jpeg: 'jpg', tif: 'tiff', htm: 'html', markdown: 'md' })[e] || e;
-  const ok = (w) => accepts(get(w.tool), files) && (!w.only || files.every((f) => w.only.includes(U.ext(f)))) && !(w.not && files.some((f) => w.not.includes(U.ext(f))))
+  const ex = (f) => (/\.kepub\.epub$/i.test(f) ? 'kepub' : U.ext(f));
+  const ok = (w) => accepts(get(w.tool), files) && (!w.only || files.every((f) => w.only.includes(ex(f)))) && !(w.not && files.some((f) => w.not.includes(ex(f))))
     && !(/^convert-(document|sheet|slides)$/.test(w.tool) && files.every((f) => norm(U.ext(f)) === norm(w.opts?.to))) && (!FFMPEG_TARGETS.has(w.tool) || !w.opts?.to || media().supports(w.opts.to));
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
   if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
   const multi = [...(MULTI[g] || [])];
-  if (g === 'mixed' && gs.every((x) => ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout'].includes(x))) multi.push(...MULTI.mixed);
+  if (g === 'mixed' && gs.every((x) => ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout', 'ebook'].includes(x))) multi.push(...MULTI.mixed);
   if (g === 'mixed' && gs.every((x) => x === 'video' || x === 'audio')) multi.push(...MULTI.media);
   const all = W('create-archive', 'ZIP', 'All files', { format: 'zip' });
   const convert = g === 'mixed' ? [...multi, all] : [...base.convert.slice(0, 7).map(quick), all];
