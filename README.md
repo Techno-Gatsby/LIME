@@ -23,14 +23,21 @@ The installer isn't code-signed yet, so SmartScreen shows a warning: click **Mor
 
 ## Using the wheel
 
+Lime waits as a small lime tucked into the right edge of the screen. The wheel is frosted glass: each slice is one thing your files can become.
+
 | Do this | What happens |
 |---|---|
-| Drop files on the wheel | Petals show what those files can become. Click a petal, or scroll / use the arrow keys and press Return. |
-| **Convert · Tools · More** | Switches the ring (or press Tab). **More** lists every tool that fits. |
-| Right-click a petal | Options for that tool (quality, size, pages, password…). |
-| Drag the centre after a job | Drags the results into any app or folder. |
+| Drag files and hold **Shift** | The wheel opens under the pointer, already showing what those files can become. Drop on a slice to run it in one go, or drop in the middle to see every choice. |
+| While dragging, hold **Option** (Windows: **Alt**) or **Control** | Shows the Tools or More ring instead. You can also hold the file over a tab at the top for half a second. |
+| Drag files onto the lime at the edge, or into the bottom-left corner | The wheel blooms there; drop the files on it. |
+| Click the lime | Opens the wheel; click the middle to choose files. |
+| Click a slice | Runs it. If the tool has settings (pages, quality, a password, the order of files), a card asks first. Right-click a slice for every setting. |
+| **Convert · Tools · More** | Switches the ring (or press Tab). **More** lists every tool that fits, with search. |
+| Drag the middle after a job | Drags the results into any app or folder. |
 | **Control + Option + L** (Windows: **Ctrl + Alt + L**) | Shows or hides the wheel. On a Mac with files selected in Finder, opens them in the wheel. |
 | Menu bar / tray icon | Show the wheel, choose files, recent results, settings. |
+
+On a Mac, Lime reads the dragged files straight from the drag, so the right choices appear for files from any app; no permission is needed. On Windows they appear for files dragged from File Explorer or the desktop; from other apps, drop first and pick a slice. Trackpads with Force Touch give a light tick as the highlight moves.
 
 Lime asks where to save each result. To save next to the original instead, switch this off in Settings. Originals are never changed.
 
