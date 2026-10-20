@@ -200,7 +200,7 @@ function htmlToMd(html, opts = {}) {
   const md = (runs) => runs.map((r) => { let t = r.text; if (r.code) t = `\`${t}\``; if (r.bold) t = `**${t}**`; if (r.italic) t = `*${t}*`; if (r.strike) t = `~~${t}~~`; if (r.link) t = `[${t}](${r.link})`; return t; }).join('');
   const pic = (b) => { const src = opts.image ? opts.image(b.src, b.alt) : b.src; return src && !src.startsWith('data:') ? `![${b.alt || ''}](${src.replace(/[ ()]/g, (c) => ({ ' ': '%20', '(': '%28', ')': '%29' })[c])})` : ''; };
   return blocks(parseHtml(html)).map((b) => {
-    if (b.type === 'h') return `${'#'.repeat(b.level)} ${md(b.runs)}`;
+    if (b.type === 'h') return `${'#'.repeat(b.level)} ${md(b.runs.map((r) => ({ ...r, bold: false })))}`;
     if (b.type === 'li') return `${'  '.repeat(b.depth || 0)}${b.ordered ? `${b.index}.` : '-'} ${md(b.runs)}`;
     if (b.type === 'quote') return `> ${md(b.runs)}`;
     if (b.type === 'pre') return `\`\`\`\n${b.text}\n\`\`\``;

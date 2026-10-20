@@ -41,19 +41,23 @@ On a Mac, Lime reads the dragged files straight from the drag, so the right choi
 
 Lime asks where to save each result. To save next to the original instead, switch this off in Settings. Originals are never changed.
 
-## What it does (85 tools)
+## What it does (117 tools)
 
-**PDF** — edit text, sign, organise pages, merge, split, compress, optimise, rotate, crop, page numbers, watermark, redact and check redactions, protect and unlock, searchable PDF (OCR), repair, flatten, extract images. Also PDF to Word, PowerPoint, Excel, images, text, HTML and SVG, and anything to PDF.
+**PDF** — edit text, sign, organise pages, merge, split, compress, optimise, rotate, crop, page numbers, watermark, redact and check redactions, protect and unlock, searchable PDF (OCR), PDF/A, compare two versions, make fillable forms, scan to PDF, repair, flatten, extract images. PDF to Word rebuilds paragraphs, headings, columns, ruled tables and pictures; also PDF to PowerPoint, Excel (tables into cells), images, TIFF, comic book (CBZ), Markdown, text, HTML and SVG, and anything to PDF.
 
-**Images** — convert (HEIC, RAW, PSD/PSB, EXR, WebP, AVIF, JPEG XL, TIFF and more), develop RAW, auto-enhance, HDR merge, panorama, compress, resize, crop, remove background (on-device AI), upscale, rotate, adjust, watermark, remove photo info, collage, GIF maker, and image to text (OCR in 13 languages).
+**Images** — convert between 30 formats, including real HEIC, AVIF, WebP, JPEG XL, JPEG 2000, APNG, ICO, ICNS, cursors, TIFF (every page), PSD, TGA, QOI and DDS, keeping the colour profile and Exif. Also RAW, EXR and HDR in; develop RAW, auto-enhance, HDR merge, panorama, compress, resize, crop, remove background and blur faces (both on-device AI), upscale, rotate, adjust, watermark, memes, borders, animation speed and reverse for GIF/WebP/APNG, remove photo info, collage, GIF maker, and image to text (OCR in 13 languages).
 
-**Video and audio** — convert (MP4, MOV, HEVC, WebM, MKV, AVI, GIF; MP3, M4A, WAV, FLAC, OGG, Opus), compress, trim, merge, extract audio, mute, resize, rotate, speed, video to GIF or frames, subtitles, loudness and slideshows. Lottie animations and edit timelines (OTIO, FCPXML) render to video.
+**Video and audio** — convert to 21 video formats (MP4, HEVC, AV1, MOV, WebM, MKV, AVI, WMV, MPG, TS, M2TS, VOB, OGV, 3GP, MXF, GIF, APNG and more) and 23 audio formats (MP3, M4A, WAV, FLAC, ALAC, AIFF, OGG, Opus, WMA, AC3, WavPack, CAF and more), copying streams without re-encoding when they already fit. Compress, trim, merge, crop, resize, rotate, speed, reverse, loop, fade, volume, pitch, loudness, blur an area, add or mix in a soundtrack, extract audio or subtitles, burn subtitles, video to GIF or frames, GIF to video, and slideshows. Lottie animations and edit timelines (OTIO, FCPXML) render to video.
 
-**Documents** — Word, ODT, RTF, Markdown, HTML, EPUB and text; spreadsheets (XLSX, XLS, ODS, CSV, JSON); slides (PowerPoint); page layouts (IDML) to PDF, EPUB or PowerPoint; merge documents into one PDF. On a Mac with Pages, Numbers or Keynote installed, their files convert too.
+**Documents** — Word, ODT, RTF, Markdown, HTML, text; spreadsheets (XLSX, XLS, ODS, CSV with encoding detection); slides (PowerPoint); page layouts (IDML) to PDF, EPUB or PowerPoint; merge documents into one PDF. On a Mac with Pages, Numbers or Keynote installed, their files convert too.
 
-**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ, PLY, GLB, 3MF and FBX (read only). Drawings convert to PDF, SVG, PNG, DXF, AI, EPS or EMF; 3D models convert between formats and to rendered images; plus measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
+**E-books, e-mail and fonts** — EPUB, KEPUB, MOBI, AZW/AZW3, FB2, HTMLZ and TXTZ; comics (CBZ, CBR, CB7) to PDF, EPUB or pictures. E-mail (EML, Outlook MSG) and web archives (MHT) to PDF, HTML or text, with attachments saved. Fonts (TTF, OTF, WOFF, WOFF2, EOT, TTC) convert between each other, plus font info.
 
-**Archives** — extract 40+ formats including RAR, 7Z and ISO; create ZIP, 7Z or TAR.GZ with passwords; convert and test archives.
+**Data and subtitles** — JSON, JSON Lines, YAML, TOML, XML, CSV and XLSX convert into each other; vCard contacts to and from spreadsheets. Subtitles (SRT, VTT, ASS, SAMI, LRC, TTML, MicroDVD, SCC) convert between formats.
+
+**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ (with MTL colours), PLY, GLB/glTF, 3MF and FBX (read only). Drawings convert to PDF, SVG, PNG, DXF, AI, EPS or EMF; 3D models convert between formats with real units and part colours, and to rendered images; plus measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
+
+**Archives** — extract 40+ formats including RAR, 7Z and ISO, with checks against unsafe paths and archive bombs; create ZIP, 7Z, TAR, TAR.GZ, TAR.XZ or TAR.BZ2 with passwords; decompress single GZ/BZ2/XZ files; convert and test archives.
 
 **Utilities** — checksums, batch rename.
 
