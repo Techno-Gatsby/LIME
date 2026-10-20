@@ -137,8 +137,8 @@ function outputPlanner(job) {
       const want = path.extname(name).toLowerCase();
       const p = path.extname(dest.path).toLowerCase() === want || !want ? dest.path : dest.path.replace(/(\.[^./\\]+)?$/, want);
       fs.mkdirSync(path.dirname(p), { recursive: true });
-      if (p !== dest.path) return claim(uniquePath(p));
-      fs.rmSync(p, { force: true, recursive: true });
+      if (p !== dest.path || (fs.existsSync(p) && !fs.statSync(p).isFile())) return claim(uniquePath(p));
+      fs.rmSync(p, { force: true });
       return claim(p);
     }
     const dir = dest?.kind === 'folder' ? dest.path : dirFor(src);

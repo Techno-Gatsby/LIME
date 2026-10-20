@@ -188,6 +188,23 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     console.log(line);
     results.push({ name: c.name, status, detail });
   }
+  if (!only || only.test('failed extract keeps folder')) {
+    const keep = path.join(OUT, 'existing folder'), bad = path.join(OUT, 'broken.zip');
+    fs.mkdirSync(keep, { recursive: true });
+    fs.writeFileSync(path.join(keep, 'keep.txt'), 'mine');
+    fs.writeFileSync(bad, Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(512, 7)]));
+    let status = 'PASS', detail = '';
+    try {
+      const id = submit({ tool: 'extract-archive', files: [bad], opts: {}, dest: { kind: 'folder', path: keep } });
+      let j;
+      for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); }
+      ok(j.status !== 'done', 'a broken archive extracted');
+      ok(fs.existsSync(path.join(keep, 'keep.txt')), 'the existing folder was deleted');
+      detail = `kept ${files(keep).join(', ')} after: ${String(j.error).slice(0, 60)}`;
+    } catch (e) { status = 'FAIL'; detail = e.message; }
+    console.log(`${status} ${'failed extract keeps folder'.padEnd(34)}        ${detail}`);
+    results.push({ name: 'failed extract keeps folder', status, detail });
+  }
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));

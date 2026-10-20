@@ -34,12 +34,13 @@ async function list(p, password) {
 async function extract(p, opts, ctx) {
   const name = path.basename(p).replace(/\.(tar\.(gz|bz2|xz|zst)|t[gbx]z|tbz2|part0*1\.rar|7z\.001|zip\.001|[^.]+)$/i, '') || 'Extracted';
   const target = ctx.out.folder(p, name);
+  const hadFiles = (await fsp.readdir(target).catch(() => [])).length > 0;
   const args = ['x', p, `-o${target}`, '-y', '-bsp1', '-bso0', `-p${opts.password || ''}`];
   if (opts.flat) args[0] = 'e';
   try {
     await U.run(seven(), args, { onStdout: progressParser(ctx, 'Extracting'), signal: ctx.signal });
   } catch (e) {
-    await fsp.rm(target, { recursive: true, force: true }).catch(() => {});
+    if (!hadFiles) await fsp.rm(target, { recursive: true, force: true }).catch(() => {});
     throw friendly(e);
   }
 
