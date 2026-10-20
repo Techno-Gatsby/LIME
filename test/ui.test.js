@@ -269,7 +269,9 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
       while (!(got.length === 1 && path.basename(got[0]) === path.basename(want)) && Date.now() - t < 15000) { got = await require(path.join(__dirname, '..', 'src', 'main', 'shellsel')).query([{ hwnd: Number(koffi.address(h)), tab: title }]); if (got[0] !== want) await sleep(1000); }
       post(h, 0x0010, 0, 0);
     }
-    if (!got.some((g) => path.resolve(g).toLowerCase() === path.resolve(want).toLowerCase())) throw new Error(`got ${JSON.stringify(got)}`);
+    // Windows may name the same folder by its short 8.3 name (RUNNER~1) or its long one, so compare real paths.
+    const real = (p) => { try { return fs.realpathSync.native(p).toLowerCase(); } catch (_) { return path.resolve(p).toLowerCase(); } };
+    if (!got.some((g) => real(g) === real(want))) throw new Error(`got ${JSON.stringify(got)}`);
     return got.join(', ');
   });
   for (const [setName, files, modes, skipTools = [], onlyTools = null] of sets) {
