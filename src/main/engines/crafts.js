@@ -27,9 +27,10 @@ async function cli(id) {
   if (!unpacking.has(id)) {
     unpacking.set(id, (async () => {
       await fsp.mkdir(path.dirname(dest), { recursive: true });
-      const part = `${dest}.part`;
+      // Each worker thread unpacks into its own file, so two threads starting at once can't interleave their writes.
+      const part = `${dest}.${process.pid}-${require('worker_threads').threadId}.part`;
       await pipeline(fs.createReadStream(br), zlib.createBrotliDecompress(), fs.createWriteStream(part, { mode: 0o755 }));
-      await fsp.rename(part, dest);
+      await fsp.rename(part, dest).catch((e) => { fsp.rm(part, { force: true }).catch(() => {}); if (!fs.existsSync(dest)) throw e; });
       for (const d of await fsp.readdir(path.join(U.cfg.user, 'crafts'))) if (d.startsWith(`${id}-`) && d !== path.basename(path.dirname(dest))) fsp.rm(path.join(U.cfg.user, 'crafts', d), { recursive: true, force: true }).catch(() => {});
       return dest;
     })().finally(() => unpacking.delete(id)));
@@ -43,7 +44,7 @@ async function run(id, args, ctx, label, opts = {}) {
   let tick = 0.15;
   const t = setInterval(() => { tick = Math.min(0.92, tick + (0.95 - tick) * 0.06); ctx?.progress?.(tick, label); }, 400);
   try {
-    return await U.run(bin, args, { signal: ctx?.signal, cwd: opts.cwd || os.tmpdir(), okCodes: opts.okCodes, errorMessage: `${APPS[id].name} couldn’t finish`, env: { NO_COLOR: '1' } });
+    return await U.run(bin, args, { signal: ctx?.signal, cwd: opts.cwd || os.tmpdir(), okCodes: opts.okCodes, timeout: opts.timeout, errorMessage: `${APPS[id].name} couldn’t finish`, env: { NO_COLOR: '1' } });
   } catch (e) {
     e.message = e.message.replace(/\(([\s\S]*)\)$/, (m, inner) => `(${quiet(inner)})`);
     throw e;
@@ -58,7 +59,7 @@ async function photo(p, opts, ctx) {
   const args = ['convert', p, out];
   if (opts.quality && ['jpg', 'webp'].includes(to)) args.push('--quality', String(opts.quality));
   if (to === 'tif' && opts.layers) args.push('--tiff-layers');
-  await run('photocraft', args, ctx, `Rendering with PhotoCraft`);
+  await run('photocraft', args, ctx, `Rendering with PhotoCraft`, { timeout: 120000 });
   return out;
 }
 async function render(p, out, opts = {}, ctx) {

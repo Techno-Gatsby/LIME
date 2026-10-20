@@ -79,6 +79,22 @@ const PRINT_OPTS = [
   toggle('pageNumbers', 'Page numbers', false, { advanced: true }),
   toggle('ignoreArea', 'Ignore print areas', false, { advanced: true, when: { print: ['workbook', 'active'] } }),
 ];
+const PAPER_CHOICES = [['a4', 'A4'], ['letter', 'Letter'], ['legal', 'Legal'], ['a3', 'A3'], ['a5', 'A5']];
+const DOC_PRINT = [
+  select('paper', 'Paper', [['auto', 'As set in the document'], ...PAPER_CHOICES], 'auto'),
+  choice('orientation', 'Orientation', [['auto', 'Auto'], ['portrait', 'Portrait'], ['landscape', 'Landscape']], 'auto'),
+  choice('margins', 'Margins', [['auto', 'As set'], ['normal', 'Normal'], ['narrow', 'Narrow'], ['wide', 'Wide']], 'auto', { advanced: true }),
+  toggle('pageNumbers', 'Page numbers', false, { advanced: true }),
+  pages('pages', 'Pages', 'all', { advanced: true }),
+];
+const HANDOUTS = ['2', '3', '4', '6', '9'];
+const SLIDE_PRINT = [
+  select('layout', 'Layout', [['slides', 'Full page slides'], ['2', 'Handouts, 2 per page'], ['3', 'Handouts, 3 per page with lines'], ['4', 'Handouts, 4 per page'], ['6', 'Handouts, 6 per page'], ['9', 'Handouts, 9 per page']], 'slides'),
+  pages('slides', 'Slides', 'all'),
+  select('paper', 'Paper', [['auto', 'Automatic'], ...PAPER_CHOICES], 'auto', { when: { layout: HANDOUTS } }),
+  choice('orientation', 'Orientation', [['portrait', 'Portrait'], ['landscape', 'Landscape']], 'portrait', { when: { layout: HANDOUTS } }),
+  toggle('frame', 'Frame slides', true, { when: { layout: HANDOUTS } }),
+];
 const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
   { id: 'sign-pdf', cat: 'pdf', name: 'Sign PDF', desc: 'Draw, type or place a signature.', accepts: ['pdf'], max: 1, editor: 'sign' },
@@ -316,7 +332,8 @@ const TOOLS = [
     run: each((f, o, c) => craft().timeline(f, o, c)) },
 
   { id: 'convert-document', cat: 'docs', name: 'Convert document', desc: 'PDF, Word, Markdown, HTML, EPUB, RTF, text and more.', accepts: ['doc', 'data'], ext: (o) => o.to,
-    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['docx', 'Word (DOCX)'], ['md', 'Markdown'], ['html', 'Web page'], ['txt', 'Plain text'], ['epub', 'eBook (EPUB)'], ['rtf', 'Rich text (RTF)'], ['odt', 'OpenDocument']])],
+    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['docx', 'Word (DOCX)'], ['md', 'Markdown'], ['html', 'Web page'], ['txt', 'Plain text'], ['epub', 'eBook (EPUB)'], ['rtf', 'Rich text (RTF)'], ['odt', 'OpenDocument']]),
+      ...DOC_PRINT.map((o) => ({ ...o, when: { to: ['pdf'], ...o.when } }))],
     run: each((f, o, c) => office().convertDocument(f, o, c)) },
   { id: 'convert-ebook', cat: 'docs', name: 'Convert e-book', desc: 'EPUB, Kobo, MOBI, AZW3 and FB2 to PDF, Word, text and more.', accepts: ['ebook'], ext: (o) => (o.to === 'kepub' ? 'kepub.epub' : o.to),
     options: [select('to', 'Convert to', [['epub', 'EPUB'], ['kepub', 'Kobo (KEPUB)'], ['pdf', 'PDF'], ['docx', 'Word (DOCX)'], ['txt', 'Plain text'], ['md', 'Markdown'], ['html', 'Web page'], ['fb2', 'FictionBook (FB2)'], ['htmlz', 'HTMLZ'], ['txtz', 'TXTZ']])],
@@ -328,8 +345,9 @@ const TOOLS = [
       ...PRINT_OPTS.map((o) => ({ ...o, when: { to: ['pdf'], ...o.when } }))],
     run: each((f, o, c) => office().convertSheet(f, o.to, c, o)) },
   { id: 'convert-slides', cat: 'docs', name: 'Convert slides', desc: 'PowerPoint and Keynote to PDF, images, HTML and text.', accepts: ['slides'], ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
-    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['png', 'Images (PNG)'], ['html', 'Web page'], ['txt', 'Text'], ['md', 'Markdown'], ['pptx', 'PowerPoint']])],
-    run: each((f, o, c) => office().convertSlides(f, o.to, c)) },
+    options: [select('to', 'Convert to', [['pdf', 'PDF'], ['png', 'Images (PNG)'], ['html', 'Web page'], ['txt', 'Text'], ['md', 'Markdown'], ['pptx', 'PowerPoint']]),
+      ...SLIDE_PRINT.map((o) => ({ ...o, when: { to: ['pdf'], ...o.when } }))],
+    run: each((f, o, c) => office().convertSlides(f, o.to, c, o)) },
   { id: 'convert-data', cat: 'docs', name: 'Convert data', desc: 'JSON, YAML, TOML, XML, JSON Lines and CSV into each other.', accepts: ['data'], extAccept: ['csv', 'tsv'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['json', 'JSON'], ['yaml', 'YAML'], ['toml', 'TOML'], ['xml', 'XML'], ['jsonl', 'JSON Lines'], ['csv', 'CSV'], ['xlsx', 'Excel (XLSX)']])], run: each((f, o, c) => data().convert(f, o, c)) },
   { id: 'convert-contacts', cat: 'docs', name: 'Convert contacts', desc: 'vCard to CSV, Excel or JSON, and contact lists to vCard.', accepts: ['contacts'], extAccept: ['csv', 'tsv', 'xlsx', 'xls', 'ods'], ext: (o) => o.to,

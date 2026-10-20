@@ -83,7 +83,8 @@ function run(cmd, args, opts = {}) {
     const child = spawn(cmd, args, { cwd: opts.cwd, windowsHide: true, env: { ...process.env, ...(opts.env || {}) } });
     let stdout = '';
     let stderr = '';
-    let killedForCancel = false;
+    let killedForCancel = false, timedOut = false;
+    const timer = opts.timeout && setTimeout(() => { timedOut = true; child.kill(); }, opts.timeout);
     if (opts.signal) {
       if (opts.signal.aborted) child.kill();
       opts.signal.addEventListener('abort', () => { killedForCancel = true; child.kill(); }, { once: true });
@@ -92,7 +93,9 @@ function run(cmd, args, opts = {}) {
     child.stderr.on('data', (d) => { const s = d.toString(); stderr += s; if (stderr.length > 2e6) stderr = stderr.slice(-1e6); opts.onStderr?.(s); });
     child.on('error', (e) => reject(new Error(e.code === 'ENOENT' ? `${path.basename(cmd)} is missing. Reinstall Lime.` : e.message)));
     child.on('close', (code) => {
+      clearTimeout(timer);
       if (killedForCancel) return reject(Object.assign(new Error('Cancelled'), { cancelled: true }));
+      if (timedOut) return reject(Object.assign(new Error(`${opts.errorMessage || path.basename(cmd)} (it stopped responding)`), { code: 'TIMEOUT' }));
       if (code === 0 || (opts.okCodes || []).includes(code)) resolve({ code, stdout, stderr });
       else {
         const tail = (stderr || stdout).trim().split(/\r?\n/).filter(Boolean).slice(-3).join(' — ');

@@ -72,7 +72,7 @@ select.input { appearance: none; padding-right: 26px; background-image: url("dat
 .switch input:checked { background: var(--green-2); }
 .switch input:checked::after { transform: translateX(14px); }
 
-.field { display: grid; gap: 5px; min-width: 0; }
+.field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; }
 .field > .label { font-size: 11.5px; font-weight: 500; color: var(--ink-2); }
 .range { display: flex; align-items: center; gap: 10px; }
 .range output { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12px; }

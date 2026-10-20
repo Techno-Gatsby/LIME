@@ -301,12 +301,42 @@ async function readHtml(input) {
   }
   return null;
 }
+// Page size, orientation and margins for a document printed to PDF: the Word file's own section setup unless
+// the options choose otherwise. Sizes are in inches.
+const PAPER_IN = { a4: [8.27, 11.69], letter: [8.5, 11], legal: [8.5, 14], a3: [11.69, 16.54], a5: [5.83, 8.27] };
+const MARGIN_IN = { normal: [1, 1, 1, 1], narrow: [0.5, 0.5, 0.5, 0.5], wide: [1, 2, 1, 2] };
+function wordSetup(input) {
+  if (!/^(docx|docm|dotx|dotm)$/.test(U.ext(input))) return null;
+  try {
+    const x = Buffer.from(require('fflate').unzipSync(fs.readFileSync(input), { filter: (f) => f.name === 'word/document.xml' })['word/document.xml']).toString('utf8');
+    const sect = x.slice(x.lastIndexOf('<w:sectPr')), at = (tag, k) => Number((new RegExp(`<w:${tag}\\b[^>]*\\bw:${k}="(-?\\d+)"`).exec(sect) || [])[1]) / 1440;
+    const w = at('pgSz', 'w'), h = at('pgSz', 'h');
+    if (!w || !h) return null;
+    return { size: [Math.min(w, h), Math.max(w, h)], landscape: w > h, margins: ['top', 'right', 'bottom', 'left'].map((k) => Math.max(0, at('pgMar', k) || 0)) };
+  } catch (_) { return null; }
+}
+const localPaper = () => (/[-_](US|CA)$/i.test(Intl.DateTimeFormat().resolvedOptions().locale || '') ? 'letter' : 'a4');
+function pageSetup(input, o = {}) {
+  const doc = wordSetup(input), paper = PAPER_IN[o.paper] ? o.paper : null;
+  const [width, height] = paper ? PAPER_IN[paper] : doc ? doc.size : PAPER_IN[localPaper()];
+  const m = MARGIN_IN[o.margins] || doc?.margins;
+  return { pageSize: { width, height }, landscape: o.orientation === 'landscape' || (o.orientation !== 'portrait' && !!doc?.landscape), margins: m && { top: m[0], right: m[1], bottom: m[2], left: m[3] }, pageNumbers: !!o.pageNumbers };
+}
+const customSetup = (o) => ['paper', 'orientation', 'margins'].some((k) => o[k] && o[k] !== 'auto') || !!o.pageNumbers;
+async function keepPages(out, spec) {
+  if (!spec || spec === 'all') return out;
+  const tmp = `${out}.part`;
+  await require('./pdf').extract(out, spec, tmp);
+  await fsp.rename(tmp, out);
+  return out;
+}
+
 async function htmlToPdf(html, out, ctx, opts = {}) {
   if (!ctx?.host) throw new Error('HTML rendering is only available in the app.');
   const tmp = await U.tmpDir('html');
   const file = path.join(tmp, 'page.html');
   await fsp.writeFile(file, html, 'utf8');
-  try { await ctx.host('htmlToPdf', { file, out, landscape: !!opts.landscape, pageSize: opts.pageSize || 'A4', margins: opts.margins, offline: !!opts.offline, css: !!opts.css }); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+  try { await ctx.host('htmlToPdf', { file, out, landscape: !!opts.landscape, pageSize: opts.pageSize || 'A4', margins: opts.margins, offline: !!opts.offline, css: !!opts.css, pageNumbers: !!opts.pageNumbers }); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
   return out;
 }
 
@@ -442,7 +472,14 @@ async function pptxToHtml(file) {
   const css = `@page{size:${W}px ${H}px;margin:0}html,body{margin:0;padding:0}body{font-family:-apple-system,"Helvetica Neue",Calibri,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}.slide{position:relative;width:${W}px;height:${H}px;overflow:hidden;break-after:page}.sp{position:absolute;display:flex;flex-direction:column;padding:4px 10px;box-sizing:border-box;overflow:hidden;line-height:1.18}.sp p{margin:0 0 .3em}table{border-collapse:collapse;font-size:15px}th,td{border:1px solid #bbb;padding:3px 6px}`;
   return { html: `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${slides.join('')}</body></html>`, width: W, height: H, texts, count: slides.length };
 }
-async function convertSlides(input, to, ctx) {
+async function convertSlides(input, to, ctx, opts = {}) {
+  if (to === 'pdf' && ((opts.layout && opts.layout !== 'slides') || (opts.slides && opts.slides !== 'all'))) {
+    const tmp = path.join(await U.tmpDir('handouts'), `${U.base(input)}.pdf`);
+    try {
+      await convertSlides(input, 'pdf', { ...ctx, out: { ...ctx.out, file: () => tmp } });
+      return await require('./pdf').handouts(tmp, { ...opts, paper: PAPER_IN[opts.paper] ? opts.paper : localPaper() }, ctx.out.file(input, `${U.base(input)}.pdf`));
+    } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
+  }
   const from = U.ext(input);
   if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   const out = ctx.out.file(input, `${U.base(input)}.${to}`);
@@ -633,10 +670,10 @@ async function convertDocument(input, opts, ctx) {
   if (from === to) throw new Error(`This file is already ${to.toUpperCase()}.`);
   if (isVariant(from, to)) return ooxmlVariant(input, to, ctx);
   if (g === 'sheet' || (from === 'json' && ['xlsx', 'xls', 'ods', 'csv', 'tsv', 'html', 'md'].includes(to))) return convertSheet(input, to, ctx, opts);
-  if (g === 'slides') return convertSlides(input, to, ctx);
+  if (g === 'slides') return convertSlides(input, to, ctx, opts);
   if (EBOOK_IN.has(from) || /\.kepub\.epub$/i.test(input)) return require('./ebook').convert(input, opts, ctx);
   const out = ctx.out.file(input, `${U.base(input)}.${to}`);
-  if (libreOfficePath() && !['md', 'epub', 'html', 'txt'].includes(to) && !['md', 'markdown', 'epub', 'html', 'htm', 'txt'].includes(from)) return viaLibreOffice(input, to, ctx, { out });
+  if (libreOfficePath() && !['md', 'epub', 'html', 'txt'].includes(to) && !['md', 'markdown', 'epub', 'html', 'htm', 'txt'].includes(from) && !(to === 'pdf' && customSetup(opts))) return keepPages(await viaLibreOffice(input, to, ctx, { out }), to === 'pdf' && opts.pages);
   if (pandocPath() && ['tex', 'rst', 'org'].includes(from)) return viaPandoc(input, to, ctx, out);
   if (from === 'pages') {
     const r = await viaIWork('Pages', input, to, out).catch(() => null);
@@ -652,9 +689,12 @@ async function convertDocument(input, opts, ctx) {
   const title = src.title || U.base(input);
   ctx.progress?.(0.6, `Writing ${to.toUpperCase()}`);
   switch (to) {
-    case 'pdf':
-      if (src.file) { await ctx.host('htmlToPdf', { file: src.file, out }); return out; }
-      return htmlToPdf(htmlDoc(title, src.plain != null ? `<pre style="white-space:pre-wrap;font:10pt/1.45 Menlo,Consolas,monospace;background:none;padding:0;margin:0">${esc(src.plain)}</pre>` : src.html), out, ctx);
+    case 'pdf': {
+      const setup = pageSetup(input, opts);
+      if (src.file) await ctx.host('htmlToPdf', { file: src.file, out, ...setup });
+      else await htmlToPdf(htmlDoc(title, src.plain != null ? `<pre style="white-space:pre-wrap;font:10pt/1.45 Menlo,Consolas,monospace;background:none;padding:0;margin:0">${esc(src.plain)}</pre>` : src.html), out, ctx, setup);
+      return keepPages(out, opts.pages);
+    }
     case 'html': await fsp.writeFile(out, src.file ? await fsp.readFile(src.file, 'utf8') : htmlDoc(title, src.html)); return out;
     case 'txt': await fsp.writeFile(out, src.plain ?? htmlToText(src.html)); return out;
     case 'md': { const r = await require('./ebook').markdown(src.html, out, path.dirname(input)); await fsp.writeFile(out, r.md); return r.folder ? [out, r.folder] : out; }

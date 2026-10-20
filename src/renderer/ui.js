@@ -52,9 +52,13 @@ export function form(tool, opts, onChange, ctx = {}) {
     if (adv.length) {
       const d = h('<details class="more"><summary>More options</summary><div class="form"></div></details>');
       adv.forEach((o) => d.querySelector('.form').append(control(o)));
+      d.addEventListener('toggle', () => requestAnimationFrame(fit));
       box.append(d);
     }
+    requestAnimationFrame(fit);
   };
+  // A segmented control whose labels don't fit the card becomes a menu.
+  const fit = () => $$('.seg.wide', box).forEach((s) => { if (s.fallback && s.clientWidth && s.scrollWidth > s.clientWidth + 1) s.replaceWith(s.fallback()); });
   const set = (o, v) => {
     opts[o.key] = v;
     onChange?.(opts);
@@ -74,6 +78,7 @@ export function form(tool, opts, onChange, ctx = {}) {
       case 'choice':
         el = h(`<div class="seg wide" role="group">${o.choices.map(([v, l]) => `<button type="button" data-v="${esc(v)}" aria-pressed="${String(val) === String(v)}">${esc(l)}</button>`).join('')}</div>`);
         el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; $$('button', el).forEach((x) => x.setAttribute('aria-pressed', x === b)); set(o, b.dataset.v); });
+        el.fallback = () => control({ ...o, type: 'select' }).lastChild;
         break;
       case 'select':
         el = h(`<select class="input" id="${id}">${o.choices.map(([v, l]) => `<option value="${esc(v)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`);

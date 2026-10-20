@@ -116,7 +116,9 @@ async function runHost(method, p) {
   try {
     await loadInto(win, p);
     if (method === 'htmlToPdf') {
-      await fsp.writeFile(p.out, await win.webContents.printToPDF(p.css ? { printBackground: true, preferCSSPageSize: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } } : { landscape: !!p.landscape, pageSize: p.pageSize || 'A4', printBackground: true, margins: { marginType: p.margins === 'none' ? 'none' : 'default' } }));
+      const numbers = p.pageNumbers ? { displayHeaderFooter: true, headerTemplate: '<span></span>', footerTemplate: '<div style="width:100%;text-align:center;font:8pt Helvetica,Arial,sans-serif;color:#555"><span class="pageNumber"></span> / <span class="totalPages"></span></div>' } : {};
+      const margins = p.margins && typeof p.margins === 'object' ? p.margins : { marginType: p.margins === 'none' ? 'none' : 'default' };
+      await fsp.writeFile(p.out, await win.webContents.printToPDF(p.css ? { printBackground: true, preferCSSPageSize: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } } : { landscape: !!p.landscape, pageSize: p.pageSize || 'A4', printBackground: true, margins, ...numbers }));
       return p.out;
     }
     if (method === 'urlToImage') {

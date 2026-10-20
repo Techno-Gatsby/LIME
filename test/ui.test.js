@@ -343,6 +343,87 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
   results.push(ord);
   await lime(`if (L.S.state !== 'idle') await L.collapse();`).catch(() => {});
 
+  // Every options card, in every variant that reveals more options, with "More options" open: nothing overlaps,
+  // no label or button is cut off, nothing runs off the side, and the Cancel/Convert bar never hides a control.
+  await check('options cards · no overlapping or cut-off text', async () => {
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    await sleep(350);
+    await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
+    await sleep(800);
+    const bad = await lime(`
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const card = document.querySelector('.card'), out = [];
+      const ATOMS = 'label.label, .seg, input.input, select, textarea, .btn, .switch, .range, summary, .head h3, .desc, .chips, .order';
+      const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+      for (const t of Object.values(L.catalog)) {
+        if (!(t.options || []).length || t.editor) continue;
+        const base = Object.fromEntries(t.options.map((o) => [o.key, o.default]));
+        const variants = new Map([[JSON.stringify(base), base]]);
+        for (const o of t.options) if (o.when) { const v = { ...base }; for (const [k, vals] of Object.entries(o.when)) v[k] = Array.isArray(vals) ? vals[0] : vals; variants.set(JSON.stringify(v), v); }
+        for (const [key, v] of variants) {
+          L.showOptions(t, { ...v });
+          await frame();
+          card.querySelectorAll('details').forEach((d) => { d.open = true; });
+          await frame(); await frame();
+          const tag = t.id + (key === JSON.stringify(base) ? '' : ' ' + Object.entries(v).filter(([k, x]) => x !== base[k]).map(([k, x]) => k + '=' + x).join(','));
+          const cr = card.getBoundingClientRect();
+          for (const sel of ['.caption', '.pill', '.wheel']) { const el = document.querySelector(sel); if (el && el.offsetParent && getComputedStyle(el).display !== 'none' && getComputedStyle(el).opacity !== '0') { const r = el.getBoundingClientRect(); if (r.width && hit(r, cr)) out.push(tag + ': the card covers ' + sel); } }
+          if (card.scrollWidth > card.clientWidth + 1) { const edge = card.getBoundingClientRect().right - parseFloat(getComputedStyle(card).paddingRight), wide = [...card.querySelectorAll('*')].filter((el) => el.offsetParent && !el.matches('.foot, .search') && el.getBoundingClientRect().right > edge + 1).sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0]; out.push(tag + ': ' + (wide ? wide.tagName.toLowerCase() + '.' + wide.className + ' "' + (wide.textContent || '').trim().slice(0, 40) + '"' : 'something') + ' runs off the side by ' + (card.scrollWidth - card.clientWidth) + 'px'); }
+          for (const el of card.querySelectorAll('.seg > button, .btn, label.label, .head h3, .switch > span, summary')) if (el.offsetParent && el.scrollWidth > el.clientWidth + 1) out.push(tag + ': cut off "' + el.textContent.trim() + '"');
+          const atoms = [...card.querySelectorAll(ATOMS)].filter((el) => el.offsetParent && !el.closest('.foot'));
+          const boxes = atoms.map((el) => el.getBoundingClientRect());
+          for (let i = 0; i < atoms.length; i++) for (let j = i + 1; j < atoms.length; j++) {
+            if (atoms[i].contains(atoms[j]) || atoms[j].contains(atoms[i])) continue;
+            if (hit(boxes[i], boxes[j])) out.push(tag + ': "' + (atoms[i].textContent || atoms[i].value || atoms[i].className).trim().slice(0, 24) + '" overlaps "' + (atoms[j].textContent || atoms[j].value || atoms[j].className).trim().slice(0, 24) + '"');
+          }
+          card.scrollTop = card.scrollHeight;
+          await frame();
+          const foot = card.querySelector('.foot')?.getBoundingClientRect(), last = atoms.map((el) => el.getBoundingClientRect()).reduce((a, b) => (b.bottom > (a?.bottom ?? -1) ? b : a), null);
+          if (foot && last && last.bottom > foot.top + 0.5) out.push(tag + ': the button bar covers the last control');
+          if (foot && getComputedStyle(card.querySelector('.foot')).backgroundColor.replace(/\\s/g, '').match(/rgba\\(.*,0\\)$|transparent/)) out.push(tag + ': the button bar is see-through');
+        }
+      }
+      await L.collapse();
+      return out;`);
+    if (bad.length) throw new Error(`${bad.length} problems: ${bad.slice(0, 6).join(' · ')}`);
+    return 'every card and variant is clean';
+  });
+  // Every wheel ring for every kind of file: each label and hint sits inside its own slice and they don't touch.
+  await check('wheel rings · labels stay inside their slices', async () => {
+    const kinds = ['photo.jpg', 'anim.gif', 'cursor.cur', 'photo.heic', 'raw.dng', 'doc.pdf', 'doc.docx', 'doc.md', 'sheet.xlsx', 'sheet.csv', 'deck.pptx', 'clip.mp4', 'tone.wav', 'test.dxf', 'part.stp', 'cube.fbx', 'logo.svg', 'archive.zip', 'notes.txt.gz', 'folder',
+      'font.ttf', 'mail.eml', 'meeting.msg', 'page.mhtml', 'novel.epub', 'stormy.mobi', 'comic.cbz', 'data.json', 'config.yml', 'contacts.vcf', 'sub.srt', 'timeline.otio', 'anim.json'].map(fx).filter((f) => fs.existsSync(f));
+    const sets = [...kinds.map((f) => [f]), [fx('photo.jpg'), fx('photo2.jpg')], [fx('doc.pdf'), fx('v1.pdf')], [fx('clip.mp4'), fx('tone.wav')], [fx('doc.docx'), fx('doc.pdf')]];
+    const bad = [];
+    let rings = 0;
+    for (const files of sets) {
+      await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+      await sleep(250);
+      await lime(`await L.openWith(${JSON.stringify(files)});`);
+      await sleep(700);
+      for (const mode of ['convert', 'tools', 'more']) {
+        const r = await lime(`
+          L.setMode(${JSON.stringify(mode)});
+          await new Promise((res) => setTimeout(res, 450));
+          const out = [], name = ${JSON.stringify(files.map((f) => path.basename(f)).join('+'))} + ' · ' + ${JSON.stringify(mode)};
+          const petals = [...document.querySelectorAll('.petal[data-i]')];
+          for (const g of petals) {
+            const glass = g.querySelector('path.glass'), texts = [...g.querySelectorAll('text')];
+            for (const t of texts) {
+              const b = t.getBBox(), inset = 0.6;
+              const corners = [[b.x + inset, b.y + inset], [b.x + b.width - inset, b.y + inset], [b.x + inset, b.y + b.height - inset], [b.x + b.width - inset, b.y + b.height - inset]];
+              if (b.width && corners.some(([x, y]) => !glass.isPointInFill(new DOMPoint(x, y)))) out.push(name + ': "' + t.textContent + '" spills out of its slice');
+            }
+            if (texts.length === 2) { const [a, c] = texts.map((t) => t.getBBox()); if (a.y < c.y + c.height - 0.5 && c.y < a.y + a.height - 0.5 && a.x < c.x + c.width && c.x < a.x + a.width) out.push(name + ': "' + texts[0].textContent + '" touches its hint'); }
+          }
+          return { n: petals.length, out };`);
+        if (r.n) rings++;
+        bad.push(...r.out);
+      }
+    }
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    if (bad.length) throw new Error(`${bad.length} problems: ${[...new Set(bad)].slice(0, 6).join(' · ')}`);
+    return `${rings} rings checked`;
+  });
   await check('sheet print · choose cells in the picker', async () => {
     if (!fs.existsSync(fx('print.xlsx'))) throw Object.assign(new Error('no print.xlsx'), { skip: true });
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
@@ -353,7 +434,8 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     if (i < 0) throw new Error('no PDF petal for a workbook');
     await click(`.petal[data-i="${i}"] text.l`);
     await sleep(500);
-    await click('.card [data-v="selection"]');
+    if (await js('document.querySelector(".card #o-print")?.tagName === "SELECT"')) await js('(() => { const el = document.querySelector(".card #o-print"); el.value = "selection"; el.dispatchEvent(new Event("change", { bubbles: true })); })()');
+    else await click('.card [data-v="selection"]');
     await sleep(300);
     await click('.card #o-cells + button');
     let pk = null;

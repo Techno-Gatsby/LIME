@@ -187,6 +187,28 @@ async function removePages(input, spec, out) {
   if (drop.size >= n) throw new Error('That would remove every page. Leave at least one page.');
   return subset(input, [...Array(n).keys()].filter((i) => !drop.has(i)), out);
 }
+// Slides as handouts, 2, 3, 4, 6 or 9 to a page; with 3, note lines sit beside each slide. "slides" keeps one per page.
+const PAPER_PT = { a4: [595.28, 841.89], letter: [612, 792], legal: [612, 1008], a3: [841.89, 1190.55], a5: [419.53, 595.28] };
+async function handouts(input, o, out) {
+  const src = await loadLib(input), idx = U.parseRanges(o.slides || 'all', src.getPageCount());
+  if (!idx.length) throw new Error('None of those slides exist.');
+  if (!o.layout || o.layout === 'slides') return subset(input, idx, out);
+  const n = Number(o.layout), land = o.orientation === 'landscape', [W, H] = land ? [...PAPER_PT[o.paper]].reverse() : PAPER_PT[o.paper];
+  const [cols, rows] = n === 3 ? [1, 3] : ({ 2: [1, 2], 4: [2, 2], 6: [2, 3], 9: [3, 3] }[n] || [2, 3]).map((x, i, a) => (land ? a[1 - i] : x));
+  const m = 40, gap = 20, cw = (W - 2 * m - gap * (cols - 1)) / cols, ch = (H - 2 * m - gap * (rows - 1)) / rows;
+  const doc = await PDFDocument.create(), pages = await doc.embedPdf(src, idx), grey = rgb(0.62, 0.64, 0.6);
+  for (let k = 0; k < pages.length; k += n) {
+    const page = doc.addPage([W, H]);
+    pages.slice(k, k + n).forEach((e, j) => {
+      const c = j % cols, r = Math.floor(j / cols), bw = n === 3 ? cw * 0.5 : cw, s = Math.min(bw / e.width, ch / e.height), w = e.width * s, h = e.height * s;
+      const x = m + c * (cw + gap) + (n === 3 ? 0 : (cw - w) / 2), y = H - m - r * (ch + gap) - (ch + h) / 2;
+      page.drawPage(e, { x, y, width: w, height: h });
+      if (o.frame !== false) page.drawRectangle({ x, y, width: w, height: h, borderColor: grey, borderWidth: 0.75 });
+      if (n === 3) for (let l = 1; l <= 6; l++) page.drawLine({ start: { x: x + w + gap, y: y + h - (l * h) / 7 }, end: { x: W - m, y: y + h - (l * h) / 7 }, thickness: 0.5, color: grey });
+    });
+  }
+  return saveLib(doc, out);
+}
 async function extract(input, spec, out) {
   const n = await pageCount(input);
   return subset(input, U.parseRanges(spec, n), out);
@@ -874,7 +896,7 @@ async function thumbnail(input, width = 240) {
 
 module.exports = {
   mupdf, readPdf, loadLib, saveLib, unpredict, pageCount, pageFrame, fontCache, hex, extractLines, quadRect, STD, FONT_FILES,
-  merge, subset, split, removePages, extract, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
+  merge, subset, split, removePages, extract, handouts, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
   repair, flatten, protect, unlock, redact, toImages, toTiff, toComic, toMarkdown, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
   compress, ocr, imagesToPdf, thumbnail,
 };

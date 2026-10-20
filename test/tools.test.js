@@ -783,6 +783,24 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('json→xlsx', 'json-to-sheet', ['data.json'], { to: 'xlsx' }, ([o]) => ok(require('xlsx').readFile(o).SheetNames.length === 1, 'xlsx'));
   T('slides→pdf', 'convert-slides', ['deck.pptx'], { to: 'pdf' }, async ([o]) => { await pages(o, 2); ok((await pdfText(o)).includes('Lime Deck'), 'slide text'); });
   T('slides→png', 'convert-slides', ['deck.pptx'], { to: 'png' }, ([o]) => ok(files(o).length === 2, `${files(o).length} slides`));
+  T('doc print: letter landscape, narrow margins, page numbers', 'convert-document', ['doc.docx'], { to: 'pdf', paper: 'letter', orientation: 'landscape', margins: 'narrow', pageNumbers: true }, async ([o]) => {
+    const p = await printed(o);
+    ok(p.every((x) => x.w === 792 && x.h === 612), `pages ${p.map((x) => `${x.w}x${x.h}`)}`);
+    ok(/\b1 \/ \d+/.test(p[0].text) && p[0].text.includes('Lime Report'), `page 1: ${p[0].text.slice(0, 120)}`);
+  });
+  T('doc print: the Word file’s own page size', 'convert-document', ['doc.docx'], { to: 'pdf' }, async ([o]) => {
+    const x = require('fflate').unzipSync(read(fx('doc.docx')))['word/document.xml'], sect = Buffer.from(x).toString('utf8'), w = Number(/w:pgSz[^>]*w:w="(\d+)"/.exec(sect)[1]), h = Number(/w:pgSz[^>]*w:h="(\d+)"/.exec(sect)[1]);
+    const p = (await printed(o))[0], want = [Math.round((w / 1440) * 72), Math.round((h / 1440) * 72)];
+    ok(Math.abs(p.w - want[0]) <= 2 && Math.abs(p.h - want[1]) <= 2, `${p.w}x${p.h} vs ${want}`);
+  });
+  T('doc print: pages', 'convert-document', ['doc.md'], { to: 'pdf', pages: '1' }, async ([o]) => { await pages(o, 1); });
+  T('slides print: handouts, 2 per page', 'convert-slides', ['deck.pptx'], { to: 'pdf', layout: '2', paper: 'a4', orientation: 'portrait', frame: true }, async ([o]) => {
+    const p = await printed(o);
+    ok(p.length === 1 && p[0].w === 595 && p[0].h === 842, `pages ${p.map((x) => `${x.w}x${x.h}`)}`);
+    ok((p[0].text.match(/Lime Deck/g) || []).length >= 1, `text: ${p[0].text.slice(0, 120)}`);
+  });
+  T('slides print: 3 per page with lines, landscape letter', 'convert-slides', ['deck.pptx'], { to: 'pdf', layout: '3', paper: 'letter', orientation: 'landscape' }, async ([o]) => { const p = await printed(o); ok(p.length === 1 && p[0].w === 792 && p[0].h === 612, `pages ${p.map((x) => `${x.w}x${x.h}`)}`); });
+  T('slides print: one slide', 'convert-slides', ['deck.pptx'], { to: 'pdf', slides: '2' }, async ([o]) => { await pages(o, 1); });
   T('slides→txt', 'convert-slides', ['deck.pptx'], { to: 'txt' }, ([o]) => ok(txt(o).includes('Lime Deck') && txt(o).includes('Second point'), 'txt'));
   T('slides→html', 'convert-slides', ['deck.pptx'], { to: 'html' }, ([o]) => ok(txt(o).includes('class="slide"'), 'html'));
   T('merge docs', 'merge-documents', ['doc.docx', 'doc.pdf', 'photo2.jpg', 'deck.pptx'], {}, async ([o]) => ok((await pages(o)) >= 7, 'pages'));
@@ -1135,6 +1153,13 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const v = tools.wheelsFor([fx('clip.mp4')]), a = tools.wheelsFor([fx('tone.wav')]);
     ok(v.convert.length <= 10 && a.convert.length <= 10, `rings of ${v.convert.length} and ${a.convert.length}`);
     return `AV1 ${M.supports('av1') ? (enc.has('libsvtav1') ? 'SVT-AV1' : 'libaom') : 'none'}, AMR ${M.supports('amr') ? 'yes' : 'no'}; ${v.convert.map((w) => w.label)} | ${a.convert.map((w) => w.label)}`;
+  });
+  await check('an engine that stops responding is stopped', async () => {
+    const t = Date.now();
+    const e = await E('util').run(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { timeout: 500, errorMessage: 'Test engine couldn’t finish', env: { ELECTRON_RUN_AS_NODE: '1' } }).then(() => null, (x) => x);
+    ok(e && e.code === 'TIMEOUT' && /stopped responding/.test(e.message), `got ${e && e.message}`);
+    ok(Date.now() - t < 5000, `took ${Date.now() - t} ms`);
+    return e.message;
   });
   await check('extract merges into a folder', async () => {
     const into = path.join(OUT, 'merge into');

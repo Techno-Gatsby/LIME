@@ -21,7 +21,7 @@ async function render() {
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
   const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">Found</span>` : '<span class="tag">Not installed</span>'}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
-  <header>${limeSvg(52, 'p')}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
+  <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">
     ${row('save', 'Ask where to save', 'Choose a name and folder before Lime writes anything', sw('askSave'))}
     ${s.askSave ? '' : row('folder', 'Save results', s.outMode === 'folder' ? esc(s.outFolder) : 'Next to the original file', `${seg('outMode', [['beside', 'Beside original'], ['folder', 'Folder']])}${s.outMode === 'folder' ? '<button class="btn" data-a="folder">Choose…</button>' : ''}`)}

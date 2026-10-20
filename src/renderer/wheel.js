@@ -16,12 +16,12 @@ const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, rin
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-$('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, 't'));
+$('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52));
 
 async function layout() {
   const open = S.state !== 'idle';
   const cardH = card.hidden ? 0 : Math.min(card.scrollHeight, 380) + 14;
-  const L = open ? { w: 330, h: 392 + (cardH ? cardH + 4 : 0), cx: 165, cy: 194 } : { w: TAB, h: TAB, cx: TAB / 2, cy: TAB / 2 };
+  const L = open ? { w: 330, h: cardH ? 364 + cardH : 392, cx: 165, cy: 194 } : { w: TAB, h: TAB, cx: TAB / 2, cy: TAB / 2 };
   const growing = open && shown === 'tab';
   if (growing) stage.classList.add('pre');
   stage.style.setProperty('--w', `${L.w}px`);
@@ -206,7 +206,7 @@ async function drawCenter() {
     html = `${out && !S.result.inPlace ? await fileVisual(out) : `<div class="glyph">${icon('check', 'lg')}</div>`}<div class="tick">${icon('check', 'sm')}</div>${hot}`;
   } else if (S.state === 'failed') html = `<div class="glyph bad">${icon('warning', 'lg')}</div>${hot || capsule('Didn’t finish', 'bad')}`;
   else if (files.length && (S.state === 'open' || S.state === 'ready')) html = `${await fileVisual(files[0])}${files.length > 1 ? `<div class="badge">${files.length}</div>` : ''}${hot || capsule(esc(sizeText(files)))}`;
-  else html = limeSvg(62, 'c').replace('<svg', '<svg class="logo"');
+  else html = limeSvg(96, 'logo');
   if (seq !== centerSeq) return;
   center.innerHTML = html;
   center.draggable = S.state === 'done' && !!S.result?.outs?.length;
