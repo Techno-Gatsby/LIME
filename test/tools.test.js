@@ -781,6 +781,54 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(pattern[0] > 230 && pattern[1] > 150 && pattern[1] < 230, `pattern hatch not tinted: ${pattern}`);
   });
   T('dxf→pdf keeps non-Latin text', 'convert-cad', ['unicode.dxf'], { to: 'pdf', sheet: 'a4' }, async ([o]) => { const t = await pdfText(o); ok(['Größe', 'Ω', 'Привет'].every((w) => t.includes(w)), `text: ${t.trim()}`); });
+  const svgWorld = (o, [ox, oy] = [-200, 100]) => {
+    const s = txt(o), all = [...s.matchAll(/<path d="([^"]+)"([^>]*)>/g)].map((m) => ({ pts: [...m[1].matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((q) => [+q[1], +q[2]]), a: m[2], closed: m[1].endsWith('Z') }));
+    const fr = all.find((p) => p.a.includes('stroke="#00ff00"')), fx = Math.min(...fr.pts.map((p) => p[0])), fy = Math.min(...fr.pts.map((p) => p[1])), W = ([x, y]) => [x - fx + ox, oy - (y - fy)];
+    const paths = all.filter((p) => p !== fr).map((p) => { const w = p.pts.map(W); return { ...p, w, box: [0, 1].flatMap((k) => [Math.min(...w.map((q) => q[k])), Math.max(...w.map((q) => q[k]))]), fill: /fill="#/.test(p.a), color: /(?:stroke|fill)="(#[0-9a-f]{6})"/.exec(p.a)?.[1] }; });
+    return { paths, texts: [...s.matchAll(/<text x="([-\d.]+)" y="([-\d.]+)"([^>]*)>(.*?)<\/text>/g)].map((m) => ({ w: W([+m[1], +m[2]]), a: m[3], t: m[4].replace(/<[^>]+>/g, '') })) };
+  };
+  const box = (paths, b, tol = 0.05) => paths.find((p) => p.box.every((v, i) => Math.abs(v - b[i]) <= tol));
+  const boxes = (paths) => JSON.stringify(paths.map((p) => p.box.map((v) => Math.round(v * 100) / 100)));
+  T('dxf polyline widths: wide strokes and tapered bands', 'convert-cad', ['widths.dxf'], { to: 'svg' }, ([o]) => {
+    const ps = [...txt(o).matchAll(/<path d="([^"]+)"([^>]*)>/g)].map((m) => { const pts = [...m[1].matchAll(/([\d.]+),([\d.]+)/g)].map((q) => [+q[1], +q[2]]), r = (k) => Math.max(...pts.map((p) => p[k])) - Math.min(...pts.map((p) => p[k])); return { n: pts.length, w: r(0), h: r(1), a: m[2] }; });
+    const wide = ps.filter((p) => /stroke-linecap="butt"/.test(p.a)), bands = ps.filter((p) => /stroke="none"/.test(p.a)).sort((a, b) => a.n - b.n), thin = ps.filter((p) => !/stroke="none"|butt/.test(p.a));
+    ok(wide.length === 1 && /stroke-width="5"/.test(wide[0].a) && /stroke-linejoin="miter"/.test(wide[0].a) && Math.abs(wide[0].w - 100) < 0.01, `constant width ${JSON.stringify(wide)}`);
+    ok(bands.length === 2 && bands[0].n === 4 && Math.abs(bands[0].w - 20) < 0.01 && Math.abs(bands[0].h - 6) < 0.01, `arrow ${JSON.stringify(bands)}`);
+    ok(bands[1].n >= 10 && Math.abs(bands[1].w - 43) < 0.05 && Math.abs(bands[1].h - 21.5) < 0.05, `bulged band ${JSON.stringify(bands[1])}`);
+    ok(thin.length === 1 && Math.abs(thin[0].w - 80) < 0.01 && thin[0].h < 0.01, `zero-width segment ${JSON.stringify(thin)}`);
+  });
+  T('dxf polyline widths in pdf', 'convert-cad', ['widths.dxf'], { to: 'pdf', sheet: 'a4' }, async ([o]) => {
+    const { PDFDocument, PDFArray, decodePDFRawStream } = require('pdf-lib');
+    const d = await PDFDocument.load(read(o)), c = d.getPages()[0].node.Contents(), list = c instanceof PDFArray ? c.asArray().map((x) => d.context.lookup(x)) : [c];
+    const blocks = list.map((x) => Buffer.from(decodePDFRawStream(x).decode()).toString('latin1')).join('\n').split(/\nQ\b/);
+    const strokes = blocks.filter((b) => /\bS\s*$/.test(b)).map((b) => ({ w: +/([\d.]+) w\b/.exec(b)[1], round: /\b1 J\b/.test(b) })), fills = blocks.filter((b) => /\bf\s*$/.test(b));
+    const wide = strokes.filter((s) => !s.round);
+    ok(wide.length === 1 && Math.abs(wide[0].w - 5 * (595.28 - 56) / 102.5) < 0.05 && strokes.length === 2 && fills.length === 2, `strokes ${JSON.stringify(strokes)}, fills ${fills.length}`);
+  });
+  T('dxf OCS: mirrored and tilted extrusions', 'convert-cad', ['ocs.dxf'], { to: 'svg' }, ([o]) => {
+    const { paths, texts } = svgWorld(o);
+    for (const [b, m] of [[[-60, -40, -10, 10], 'circle'], [[-10, 0, 0, 10], 'arc'], [[-30, -10, 20, 20], 'polyline'], [[5, 5, -10, 10], 'tilted circle'], [[-130, -120, -20, -10], 'solid'], [[-160, -140, 40, 60], 'hatch']]) ok(box(paths, b), `${m}: ${boxes(paths)}`);
+    const ins = box(paths, [-110, -100, 0, 5]), at = ins?.w.find((q) => Math.abs(q[0] + 100) < 0.01);
+    ok(at && Math.abs(at[1]) < 0.01, `mirrored insert: ${JSON.stringify(ins?.w)}`);
+    const t = texts.find((x) => x.t === 'MIRROR');
+    ok(t && Math.abs(t.w[0] + 60) < 0.01 && Math.abs(t.w[1] - 50) < 0.01 && /text-anchor="end"/.test(t.a) && !/rotate/.test(t.a), `text ${JSON.stringify(t)}`);
+  });
+  T('dxf layer semantics and colours', 'convert-cad', ['layers.dxf'], { to: 'svg' }, ([o]) => {
+    const got = svgWorld(o).paths.map((p) => `${Math.round(p.box[2])}:${p.color}`).sort((a, b) => parseInt(a, 10) - parseInt(b, 10)).join(' ');
+    ok(got === '0:#123456 2:#007fff 4:#ff00ff 22:#007fff 64:#000000 66:#009800 68:#000000 70:#123456', got);
+  });
+  T('dxf draws model space only', 'convert-cad', ['paper.dxf'], { to: 'svg' }, ([o]) => { const ps = [...txt(o).matchAll(/<path d="([^"]+)"/g)].map((m) => m[1].split('L').length); ok(ps.join() === '2', `paths ${ps}`); });
+  T('dxf falls back to paper space', 'convert-cad', ['paperonly.dxf'], { to: 'svg' }, ([o]) => { const ps = [...txt(o).matchAll(/<path d="([^"]+)"/g)].map((m) => m[1].split('L').length).sort((a, b) => a - b); ok(ps.length === 2 && ps[0] === 2 && ps[1] > 100, `paths ${ps}`); });
+  T('dxf xlines and rays clipped to the drawing', 'convert-cad', ['xline.dxf'], { to: 'svg' }, ([o]) => { const { paths } = svgWorld(o, [0, 100]); ok(paths.length === 2 && box(paths, [-5, 105, 50, 50]) && box(paths, [50, 50, 50, 105]), boxes(paths)); });
+  T('dxf 3DFACE hides invisible edges', 'convert-cad', ['faces.dxf'], { to: 'svg' }, ([o]) => {
+    const st = svgWorld(o).paths.filter((p) => !p.fill), a = st.filter((p) => p.box[1] <= 10.01), b = box(st, [20, 30, 0, 10]);
+    ok(a.length === 2 && box(a, [0, 0, 0, 10]) && box(a, [10, 10, 0, 10]), `hidden edges drawn: ${boxes(a)}`);
+    ok(b?.closed && b.w.length === 4, `visible face: ${JSON.stringify(b)}`);
+  });
+  T('dxf SOLID and TRACE fill corners 1-2-4-3', 'convert-cad', ['faces.dxf'], { to: 'svg' }, ([o]) => {
+    const f = svgWorld(o).paths.filter((p) => p.fill), area = (w) => Math.abs(w.reduce((s, p, k) => { const q = w[(k + 1) % w.length]; return s + p[0] * q[1] - q[0] * p[1]; }, 0) / 2);
+    ok(f.length === 2 && box(f, [40, 50, 0, 10]) && box(f, [60, 70, 0, 10]) && f.every((p) => p.w.length === 4 && Math.abs(area(p.w) - 100) < 0.01), JSON.stringify(f.map((p) => p.w)));
+  });
   for (const to of ['pdf', 'png', 'dxf']) T(`dwg→${to}`, 'convert-cad', ['sample_2018.dwg'], { to, sheet: 'a3', size: 2000 }, async ([o]) => (to === 'pdf' ? pages(o, 1) : to === 'png' ? fmt(o, 'png') : ok(txt(o).includes('ENTITIES'), 'dxf')));
   for (const to of ['stl', 'obj', 'glb', '3mf', 'ply']) T(`step→${to}`, 'convert-model', ['part.stp'], { to }, async ([o]) => ok((await E('cad').info(o)).triangles === 4688, 'triangles'));
   T('step→png', 'convert-model', ['part.stp'], { to: 'png' }, async ([o]) => fmt(o, 'png'));

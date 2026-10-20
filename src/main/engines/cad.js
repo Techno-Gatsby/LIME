@@ -3,18 +3,26 @@ const U = require('./util');
 const { fs, fsp, path } = U;
 
 const KINDS = { cad2d: U.GROUPS.cad2d, cad3d: U.GROUPS.cad3d };
-const ACI = [0, 0xff0000, 0xffff00, 0x00ff00, 0x00ffff, 0x0000ff, 0xff00ff, 0xffffff, 0x808080, 0xc0c0c0];
-function aci(i) {
-  if (i >= 1 && i <= 9) return ACI[i];
-  if (i >= 250) return [0x333333, 0x505050, 0x696969, 0x828282, 0xbebebe, 0xffffff][i - 250] ?? 0x808080;
-  if (i < 10 || i > 249) return 0;
-  const h = (Math.floor((i - 10) / 10) * 15) / 360, v = [1, 1, 0.8, 0.8, 0.6, 0.6, 0.5, 0.5, 0.3, 0.3][(i - 10) % 10], s = (i % 2) ? 0.5 : 1;
-  const f = (n) => { const k = (n + h * 6) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
-  return (Math.round(f(5) * 255) << 16) | (Math.round(f(3) * 255) << 8) | Math.round(f(1) * 255);
-}
+const ACI = require('dxf-parser/dist/AutoCadColorIndex').default;
+const aci = (i) => ACI[i] ?? 0;
 const hex = (c) => `#${(c >>> 0 & 0xffffff).toString(16).padStart(6, '0')}`;
 const P = (p) => ({ x: Number(p?.x) || 0, y: Number(p?.y) || 0 });
 const deg = (d) => (d * Math.PI) / 180;
+const unit3 = (v) => { const l = Math.hypot(v.x, v.y, v.z) || 1; return { x: v.x / l, y: v.y / l, z: v.z / l }; };
+const cross3 = (a, b) => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
+function axes(n) {
+  const N = unit3({ x: Number(n?.x) || 0, y: Number(n?.y) || 0, z: n?.z == null ? 1 : Number(n.z) || 0 });
+  const X = unit3(Math.abs(N.x) < 1 / 64 && Math.abs(N.y) < 1 / 64 ? { x: N.z, y: 0, z: -N.x } : { x: -N.y, y: N.x, z: 0 });
+  return { N, X, Y: cross3(N, X) };
+}
+const ocs = (n, z) => { if (!n || (!Number(n.x) && !Number(n.y) && !(Number(n.z) < 0))) return null; const { N, X, Y } = axes(n), e = Number(z) || 0; return [X.x, X.y, Y.x, Y.y, e * N.x, e * N.y]; };
+function frame(n, dir, rot, p) {
+  const { N, X, Y } = axes(n), c = Math.cos(rot), s = Math.sin(rot);
+  const d = dir && (dir.x || dir.y || dir.z) ? unit3({ x: dir.x || 0, y: dir.y || 0, z: dir.z || 0 }) : { x: X.x * c + Y.x * s, y: X.y * c + Y.y * s, z: X.z * c + Y.z * s }, u = cross3(N, d);
+  return [d.x, d.y, u.x, u.y, p.x, p.y];
+}
+const dxfColor = (e) => (e.colorIndex === 0 ? 'block' : e.color != null && e.colorIndex !== 256 && (e.colorIndex == null || e.color !== ACI[Math.abs(e.colorIndex)]) ? { rgb: e.color } : e.colorIndex > 0 && e.colorIndex < 256 ? e.colorIndex : null);
+const dwgColor = (e) => (e.color != null ? { rgb: e.color } : e.colorIndex === 0 ? 'block' : e.colorIndex > 0 && e.colorIndex < 256 ? e.colorIndex : null);
 
 const DWG_LW = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211];
 const dxfWeight = (v) => (v == null || v === -1 ? 'layer' : v === -2 ? 'block' : v < 0 ? null : v / 100);
@@ -26,71 +34,99 @@ function dxfLayers(text) {
   for (let i = 0; i + 1 < L.length; i += 2) {
     const c = L[i].trim(), v = L[i + 1].trim();
     if (c === '0') { if (v === 'ENDTAB') table = false; cur = table && v === 'LAYER' ? {} : null; } else if (c === '2' && !table && v === 'LAYER' && L[i - 1]?.trim() === 'TABLE') table = true;
-    else if (cur) { if (c === '2') out[v] = cur; else if (c === '6') cur.lt = v; else if (c === '370') cur.lw = dxfWeight(Number(v)); }
+    else if (cur) { if (c === '2') out[v] = cur; else if (c === '6') cur.lt = v; else if (c === '370') cur.lw = dxfWeight(Number(v)); else if (c === '62') cur.color = Number(v); else if (c === '70') cur.flags = Number(v); else if (c === '420') cur.rgb = Number(v) & 0xffffff; else if (c === '290') cur.plot = v !== '0'; }
     if (v === 'ENDSEC' && c === '0') table = false;
   }
   return out;
 }
+const gv = (list, c, d) => { const x = list?.find((q) => q[0] === c); return x ? Number(x[1]) : d; };
 function fromDxf(dxf, text = '') {
   const extra = dxfLayers(text);
+  const g = (e, c, d) => gv(e.raw?.[0], c, d);
+  const N = (e) => (e.raw ? { x: g(e, 210, 0), y: g(e, 220, 0), z: g(e, 230, 1) } : e.extrusionDirection || { x: e.extrusionDirectionX || 0, y: e.extrusionDirectionY || 0, z: e.extrusionDirectionZ ?? 1 });
   const conv = (e) => {
-    const base = { lw: dxfWeight(e.lineweight), lt: e.lineType || 'BYLAYER', lts: e.lineTypeScale || 1, layer: e.layer || '0', color: e.colorIndex === 256 || e.colorIndex == null ? null : e.colorIndex === 0 ? 'block' : e.color != null && e.colorIndex == null ? { rgb: e.color } : e.colorIndex, rgb: e.color != null && (e.colorIndex == null || e.colorIndex === 256 ? false : true) ? e.color : null };
+    const base = { lw: dxfWeight(e.lineweight), lt: e.lineType || 'BYLAYER', lts: e.lineTypeScale || 1, layer: e.layer || '0', color: dxfColor(e) };
     switch (e.type) {
       case 'LINE': return { ...base, t: 'line', a: P(e.vertices[0]), b: P(e.vertices[1]) };
-      case 'LWPOLYLINE': case 'POLYLINE': return { ...base, t: 'poly', pts: (e.vertices || []).map((v) => ({ ...P(v), b: v.bulge || 0 })), closed: !!e.shape || !!(e.closed) };
-      case 'CIRCLE': return { ...base, t: 'circle', c: P(e.center), r: e.radius };
-      case 'ARC': return { ...base, t: 'arc', c: P(e.center), r: e.radius, a0: e.startAngle, a1: e.endAngle };
-      case 'ELLIPSE': return { ...base, t: 'ellipse', c: P(e.center), m: P(e.majorAxisEndPoint), ratio: e.axisRatio, a0: e.startAngle ?? 0, a1: e.endAngle ?? Math.PI * 2 };
+      case 'XLINE': case 'RAY': return { ...base, t: 'xline', p: P(e.vertices?.[0]), d: P(e.vertices?.[1]), ray: e.type === 'RAY' };
+      case 'LWPOLYLINE': { const cw = e.width || 0; return { ...base, t: 'poly', pts: (e.vertices || []).map((v) => ({ ...P(v), b: v.bulge || 0, w0: v.startWidth ?? cw, w1: v.endWidth ?? cw })), closed: !!e.shape, ocs: ocs(N(e), e.elevation) }; }
+      case 'POLYLINE': {
+        const vr = (e.raw || []).filter((r) => r[0]?.[1] === 'VERTEX'), w0 = g(e, 40, 0), w1 = g(e, 41, 0);
+        return { ...base, t: 'poly', pts: (e.vertices || []).map((v, k) => ({ ...P(v), b: v.bulge || 0, w0: gv(vr[k], 40, w0), w1: gv(vr[k], 41, w1) })), closed: !!e.shape, ocs: e.is3dPolyline || e.is3dPolygonMesh || e.isPolyfaceMesh ? null : ocs(N(e), g(e, 30, 0)) };
+      }
+      case 'CIRCLE': return { ...base, t: 'circle', c: P(e.center), r: e.radius, ocs: ocs(N(e), e.center?.z) };
+      case 'ARC': return { ...base, t: 'arc', c: P(e.center), r: e.radius, a0: e.startAngle, a1: e.endAngle, ocs: ocs(N(e), e.center?.z) };
+      case 'ELLIPSE': return { ...base, t: 'ellipse', c: P(e.center), m: P(e.majorAxisEndPoint), ratio: e.axisRatio * (N(e).z < 0 ? -1 : 1), a0: e.startAngle ?? 0, a1: e.endAngle ?? Math.PI * 2 };
       case 'SPLINE': return { ...base, t: 'spline', ctrl: (e.controlPoints || []).map(P), fit: (e.fitPoints || []).map(P), degree: e.degreeOfSplineCurve || 3, knots: e.knotValues || [] };
-      case 'TEXT': return { ...base, t: 'text', p: P(e.halign || e.valign ? e.endPoint || e.startPoint : e.startPoint), h: e.textHeight || 1, rot: deg(e.rotation || 0), text: e.text || '', align: e.halign || 0 };
-      case 'MTEXT': return { ...base, t: 'text', p: P(e.position), h: e.height || 1, rot: deg(e.rotation || 0), text: mtext(e.text || ''), attach: e.attachmentPoint || 1, multi: true };
-      case 'INSERT': return { ...base, t: 'insert', name: e.name, p: P(e.position), sx: e.xScale ?? 1, sy: e.yScale ?? 1, rot: deg(e.rotation || 0), cols: e.columnCount || 1, rows: e.rowCount || 1, cs: e.columnSpacing || 0, rs: e.rowSpacing || 0 };
+      case 'TEXT': return { ...base, t: 'text', p: P(e.halign || e.valign ? e.endPoint || e.startPoint : e.startPoint), h: e.textHeight || 1, rot: deg(e.rotation || 0), text: e.text || '', align: e.halign || 0, ocs: ocs(N(e), e.startPoint?.z) };
+      case 'MTEXT': return { ...base, t: 'text', p: { x: 0, y: 0 }, h: e.height || 1, rot: 0, ocs: frame(N(e), e.directionVector, deg(e.rotation || 0), P(e.position)), text: mtext(e.text || ''), attach: e.attachmentPoint || 1, multi: true };
+      case 'INSERT': return { ...base, t: 'insert', name: e.name, p: P(e.position), sx: e.xScale ?? 1, sy: e.yScale ?? 1, rot: deg(e.rotation || 0), cols: e.columnCount || 1, rows: e.rowCount || 1, cs: e.columnSpacing || 0, rs: e.rowSpacing || 0, ocs: ocs(N(e), e.position?.z) };
       case 'DIMENSION': return e.block ? { ...base, t: 'insert', name: e.block, p: { x: 0, y: 0 }, sx: 1, sy: 1, rot: 0 } : null;
       case 'POINT': return { ...base, t: 'point', p: P(e.position) };
-      case 'SOLID': case 'TRACE': return { ...base, t: 'solid', pts: (e.points || []).map(P) };
-      case '3DFACE': return { ...base, t: 'face', pts: (e.vertices || []).map(P) };
-      case 'HATCH': return e.loops?.length ? { ...base, t: 'hatch', loops: e.loops, solid: e.solid } : null;
+      case 'SOLID': case 'TRACE': return { ...base, t: 'solid', pts: (e.points || []).map(P), ocs: ocs(N(e), e.points?.[0]?.z) };
+      case '3DFACE': return { ...base, t: 'face', pts: [10, 11, 12, 13].filter((c) => g(e, c) != null).map((c) => ({ x: g(e, c, 0), y: g(e, c + 10, 0) })), flags: g(e, 70, 0) };
+      case 'HATCH': return e.loops?.length ? { ...base, t: 'hatch', loops: e.loops, solid: e.solid, ocs: ocs(N(e), e.elevation) } : null;
       default: return null;
     }
   };
   const blocks = {};
   for (const [name, b] of Object.entries(dxf.blocks || {})) blocks[name] = { base: P(b.position), ents: (b.entities || []).map(conv).filter(Boolean) };
-  const layers = {};
-  for (const [name, l] of Object.entries(dxf.tables?.layer?.layers || {})) layers[name] = { color: l.colorIndex != null ? Math.abs(l.colorIndex) : 7, rgb: null, hidden: l.visible === false || l.frozen === true || l.colorIndex < 0, lw: extra[name]?.lw === 'layer' ? null : extra[name]?.lw ?? null, lt: extra[name]?.lt || 'CONTINUOUS' };
-  return { ents: (dxf.entities || []).map(conv).filter(Boolean), blocks, layers, units: dxf.header?.$INSUNITS, ltypes: patterns(Object.values(dxf.tables?.lineType?.lineTypes || {}), (t) => t.pattern), ltscale: Number(dxf.header?.$LTSCALE) || 1 };
+  const layers = {}, parsed = dxf.tables?.layer?.layers || {};
+  for (const name of new Set([...Object.keys(parsed), ...Object.keys(extra)])) {
+    const l = parsed[name] || {}, x = extra[name] || {}, ci = x.color ?? (l.colorIndex == null ? 7 : l.visible === false ? -l.colorIndex : l.colorIndex);
+    layers[name] = { color: Math.abs(ci) % 256 || 7, rgb: x.rgb ?? null, off: ci < 0, frozen: x.flags == null ? l.frozen === true : !!(x.flags & 1), plot: x.plot !== false, lw: x.lw === 'layer' ? null : x.lw ?? null, lt: x.lt || 'CONTINUOUS' };
+  }
+  const space = (paper) => (dxf.entities || []).filter((e) => !e.inPaperSpace === !paper).map(conv).filter(Boolean);
+  return { ents: space(false), paper: space(true), blocks, layers, units: dxf.header?.$INSUNITS, ltypes: patterns(Object.values(dxf.tables?.lineType?.lineTypes || {}), (t) => t.pattern), ltscale: Number(dxf.header?.$LTSCALE) || 1 };
+}
+function tapDxf(parser) {
+  const H = parser._entityHandlers;
+  H.TRACE = Object.assign(Object.create(H.SOLID), { ForEntityName: 'TRACE' });
+  for (const t of ['XLINE', 'RAY']) H[t] = Object.assign(Object.create(H.LINE), { ForEntityName: t });
+  for (const t of ['POLYLINE', 'CIRCLE', 'TEXT', 'MTEXT', 'ELLIPSE', '3DFACE']) {
+    const h = H[t];
+    H[t] = { ForEntityName: t, parseEntity(sc, curr) {
+      const s = sc._pointer, e = h.parseEntity(sc, curr), d = sc._data, raw = [[]];
+      for (let i = s; i < sc._pointer - 2; i += 2) { const c = parseInt(d[i], 10); if (c === 0) raw.push([]); raw[raw.length - 1].push([c, d[i + 1].trim()]); }
+      e.raw = raw;
+      return e;
+    } };
+  }
 }
 function fromDwg(db) {
   const conv = (e) => {
-    const base = { lw: dwgWeight(e.lineweight), lt: e.lineType || 'BYLAYER', lts: e.lineTypeScale || 1, layer: e.layer || '0', color: e.colorIndex === 256 || e.colorIndex == null ? null : e.colorIndex === 0 ? 'block' : e.colorIndex, rgb: e.colorIndex === 256 || e.colorIndex == null || e.colorIndex < 257 ? null : e.color };
+    const base = { lw: dwgWeight(e.lineweight), lt: e.lineType || 'BYLAYER', lts: e.lineTypeScale || 1, layer: e.layer || '0', color: dwgColor(e) };
     if (e.isVisible === false) return null;
+    const W = (v, d) => { const w0 = v.startWidth ?? d.w0, w1 = v.endWidth ?? d.w1; return w0 < 0 ? { w0: -w0, w1: -w0 } : { w0, w1 }; };
     switch (e.type) {
       case 'LINE': return { ...base, t: 'line', a: P(e.startPoint), b: P(e.endPoint) };
-      case 'LWPOLYLINE': return { ...base, t: 'poly', pts: (e.vertices || []).map((v) => ({ ...P(v), b: v.bulge || 0 })), closed: !!(e.flag & 1) };
-      case 'POLYLINE2D': case 'POLYLINE3D': return { ...base, t: 'poly', pts: (e.vertices || []).filter((v) => !(v.flag & 16)).map((v) => ({ ...P(v), b: v.bulge || 0 })), closed: !!(e.flag & 1) };
-      case 'CIRCLE': return { ...base, t: 'circle', c: P(e.center), r: e.radius };
-      case 'ARC': return { ...base, t: 'arc', c: P(e.center), r: e.radius, a0: e.startAngle, a1: e.endAngle };
-      case 'ELLIPSE': return { ...base, t: 'ellipse', c: P(e.center), m: P(e.majorAxisEndPoint), ratio: e.axisRatio, a0: e.startAngle ?? 0, a1: e.endAngle ?? Math.PI * 2 };
+      case 'XLINE': case 'RAY': return { ...base, t: 'xline', p: P(e.firstPoint), d: P(e.unitDirection), ray: e.type === 'RAY' };
+      case 'LWPOLYLINE': { const cw = e.constantWidth || 0; return { ...base, t: 'poly', pts: (e.vertices || []).map((v) => ({ ...P(v), b: v.bulge || 0, ...W(v, { w0: cw, w1: cw }) })), closed: !!(e.flag & 1), ocs: ocs(e.extrusionDirection, e.elevation) }; }
+      case 'POLYLINE2D': return { ...base, t: 'poly', pts: (e.vertices || []).filter((v) => !(v.flag & 16)).map((v) => ({ ...P(v), b: v.bulge || 0, ...W(v, { w0: e.startWidth || 0, w1: e.endWidth || 0 }) })), closed: !!(e.flag & 1), ocs: ocs(e.extrusionDirection, e.elevation) };
+      case 'POLYLINE3D': return { ...base, t: 'poly', pts: (e.vertices || []).filter((v) => !(v.flag & 16)).map((v) => ({ ...P(v), b: v.bulge || 0 })), closed: !!(e.flag & 1) };
+      case 'CIRCLE': return { ...base, t: 'circle', c: P(e.center), r: e.radius, ocs: ocs(e.extrusionDirection, e.center?.z) };
+      case 'ARC': return { ...base, t: 'arc', c: P(e.center), r: e.radius, a0: e.startAngle, a1: e.endAngle, ocs: ocs(e.extrusionDirection, e.center?.z) };
+      case 'ELLIPSE': return { ...base, t: 'ellipse', c: P(e.center), m: P(e.majorAxisEndPoint), ratio: e.axisRatio * (e.extrusionDirection?.z < 0 ? -1 : 1), a0: e.startAngle ?? 0, a1: e.endAngle ?? Math.PI * 2 };
       case 'SPLINE': return { ...base, t: 'spline', ctrl: (e.controlPoints || []).map(P), fit: (e.fitPoints || []).map(P), degree: e.degree || 3, knots: e.knots || [] };
-      case 'TEXT': return { ...base, t: 'text', p: P(e.halign || e.valign ? (e.endPoint?.x || e.endPoint?.y ? e.endPoint : e.startPoint) : e.startPoint), h: e.textHeight || 1, rot: e.rotation || 0, text: e.text || '', align: e.halign || 0 };
-      case 'ATTRIB': return e.text ? { ...base, t: 'text', p: P(e.text.startPoint), h: e.text.textHeight || 1, rot: e.text.rotation || 0, text: e.text.text || '', align: e.text.halign || 0 } : null;
-      case 'MTEXT': return { ...base, t: 'text', p: P(e.insertionPoint), h: e.textHeight || 1, rot: e.rotation || Math.atan2(e.direction?.y || 0, e.direction?.x || 1), text: mtext(e.text || ''), attach: e.attachmentPoint || 1, multi: true };
-      case 'INSERT': return { ...base, t: 'insert', name: e.name, p: P(e.insertionPoint), sx: e.xScale ?? 1, sy: e.yScale ?? 1, rot: e.rotation || 0, cols: e.columnCount || 1, rows: e.rowCount || 1, cs: e.columnSpacing || 0, rs: e.rowSpacing || 0, attribs: (e.attribs || []).map(conv).filter(Boolean) };
+      case 'TEXT': return { ...base, t: 'text', p: P(e.halign || e.valign ? (e.endPoint?.x || e.endPoint?.y ? e.endPoint : e.startPoint) : e.startPoint), h: e.textHeight || 1, rot: e.rotation || 0, text: e.text || '', align: e.halign || 0, ocs: ocs(e.extrusionDirection, e.elevation) };
+      case 'ATTRIB': return e.text ? { ...base, t: 'text', p: P(e.text.startPoint), h: e.text.textHeight || 1, rot: e.text.rotation || 0, text: e.text.text || '', align: e.text.halign || 0, ocs: ocs(e.text.extrusionDirection, e.text.elevation) } : null;
+      case 'MTEXT': return { ...base, t: 'text', p: { x: 0, y: 0 }, h: e.textHeight || 1, rot: 0, ocs: frame(e.extrusionDirection, e.direction, e.rotation || 0, P(e.insertionPoint)), text: mtext(e.text || ''), attach: e.attachmentPoint || 1, multi: true };
+      case 'INSERT': return { ...base, t: 'insert', name: e.name, p: P(e.insertionPoint), sx: e.xScale ?? 1, sy: e.yScale ?? 1, rot: e.rotation || 0, cols: e.columnCount || 1, rows: e.rowCount || 1, cs: e.columnSpacing || 0, rs: e.rowSpacing || 0, ocs: ocs(e.extrusionDirection, e.insertionPoint?.z), attribs: (e.attribs || []).map(conv).filter(Boolean) };
       case 'DIMENSION': return e.name ? { ...base, t: 'insert', name: e.name, p: { x: 0, y: 0 }, sx: 1, sy: 1, rot: 0 } : null;
       case 'POINT': return { ...base, t: 'point', p: P(e.position) };
-      case 'SOLID': case 'TRACE': return { ...base, t: 'solid', pts: [e.corner1, e.corner2, e.corner3, e.corner4].filter(Boolean).map(P) };
-      case '3DFACE': return { ...base, t: 'face', pts: [e.corner1, e.corner2, e.corner3, e.corner4].filter(Boolean).map(P) };
-      case 'HATCH': return { ...base, t: 'hatch', solid: !!e.solidFill, loops: (e.boundaryPaths || []).map(hatchLoop).filter((l) => l.length > 1) };
-      case 'XLINE': case 'RAY': return null;
+      case 'SOLID': case 'TRACE': return { ...base, t: 'solid', pts: [e.corner1, e.corner2, e.corner3, e.corner4].filter(Boolean).map(P), ocs: ocs(e.extrusionDirection, e.corner1?.z ?? e.elevation) };
+      case '3DFACE': return { ...base, t: 'face', pts: [e.corner1, e.corner2, e.corner3, e.corner4].filter(Boolean).map(P), flags: e.flag || 0 };
+      case 'HATCH': return { ...base, t: 'hatch', solid: !!e.solidFill, loops: (e.boundaryPaths || []).map(hatchLoop).filter((l) => l.length > 1), ocs: ocs(e.extrusionDirection, e.elevation) };
       default: return null;
     }
   };
+  const recs = db.tables?.BLOCK_RECORD?.entries || [], space = (re) => recs.filter((b) => re.test(b.name)).flatMap((b) => b.entities || []);
   const blocks = {};
-  for (const b of db.tables?.BLOCK_RECORD?.entries || []) if (!/^\*(Model|Paper)_Space/i.test(b.name)) blocks[b.name] = { base: P(b.basePoint), ents: (b.entities || []).map(conv).filter(Boolean) };
+  for (const b of recs) if (!/^\*(Model|Paper)_Space/i.test(b.name)) blocks[b.name] = { base: P(b.basePoint), ents: (b.entities || []).map(conv).filter(Boolean) };
   const layers = {};
-  for (const l of db.tables?.LAYER?.entries || []) { const lw = dwgWeight(l.lineweight); layers[l.name] = { color: Math.abs(l.colorIndex ?? 7), rgb: l.colorIndex > 256 ? l.color : null, hidden: !!l.off || !!l.frozen || l.colorIndex < 0, lw: typeof lw === 'number' ? lw : null, lt: l.lineType || 'CONTINUOUS' }; }
-  const model = db.tables?.BLOCK_RECORD?.entries?.find((b) => /^\*Model_Space$/i.test(b.name));
-  const ents = (db.entities || []).filter((e) => !model || !e.ownerBlockRecordSoftId || e.ownerBlockRecordSoftId === model.handle || !blocks[e.ownerBlockRecordSoftId]).filter((e) => e.type !== 'VIEWPORT');
-  return { ents: ents.map(conv).filter(Boolean), blocks, layers, units: db.header?.INSUNITS, ltypes: patterns(db.tables?.LTYPE?.entries || [], (t) => (t.pattern || t.dashes || []).map((p) => (typeof p === 'number' ? p : p?.elementLength ?? p?.length ?? 0))), ltscale: Number(db.header?.LTSCALE) || 1 };
+  for (const l of db.tables?.LAYER?.entries || []) { const lw = dwgWeight(l.lineweight); layers[l.name] = { color: l.colorIndex > 0 && l.colorIndex < 256 ? l.colorIndex : 7, rgb: l.colorIndex === 256 ? l.color : null, off: !!l.off || l.colorIndex < 0, frozen: !!l.frozen, plot: l.plotFlag == null || !!l.plotFlag, lw: typeof lw === 'number' ? lw : null, lt: l.lineType || 'CONTINUOUS' }; }
+  const ents = recs.some((b) => /^\*Model_Space$/i.test(b.name)) ? space(/^\*Model_Space$/i) : db.entities || [];
+  return { ents: ents.map(conv).filter(Boolean), paper: space(/^\*Paper_Space/i).map(conv).filter(Boolean), blocks, layers, units: db.header?.INSUNITS, ltypes: patterns(db.tables?.LTYPE?.entries || [], (t) => (t.pattern || t.dashes || []).map((p) => (typeof p === 'number' ? p : p?.elementLength ?? p?.length ?? 0))), ltscale: Number(db.header?.LTSCALE) || 1 };
 }
 function hatchLoop(bp) {
   if (bp.polylineVertices?.length || bp.vertices?.length) return (bp.polylineVertices || bp.vertices).map(P);
@@ -123,6 +159,8 @@ class DxfHatch {
       else if (code === 62) e.colorIndex = Number(value);
       else if (code === 420) e.color = Number(value);
       else if (code === 70) e.solid = (Number(value) & 1) === 1;
+      else if (code === 30) e.elevation = Number(value);
+      else if (code === 210 || code === 220 || code === 230) (e.extrusionDirection ||= { x: 0, y: 0, z: 1 })['xyz'[(code - 210) / 10]] = Number(value);
       else if (code === 91) {
         for (let n = Number(value); n > 0 && i < g.length; n--) {
           const flags = take(92) || 0, pts = [];
@@ -171,18 +209,36 @@ function arcPts(c, r, a0, a1) {
   const n = Math.max(4, Math.ceil((ARC_STEPS * d) / (Math.PI * 2)));
   return Array.from({ length: n + 1 }, (_, i) => ({ x: c.x + r * Math.cos(a0 + (d * i) / n), y: c.y + r * Math.sin(a0 + (d * i) / n) }));
 }
-function bulgePts(a, b, bulge) {
-  const th = 4 * Math.atan(bulge);
+function bulgeArc(a, b, k) {
   const ch = Math.hypot(b.x - a.x, b.y - a.y);
-  if (!ch) return [];
-  const r = ch / (2 * Math.sin(th / 2));
-  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-  const h = Math.sqrt(Math.max(0, r * r - (ch / 2) ** 2)) * Math.sign(bulge) * (Math.abs(th) > Math.PI ? -1 : 1);
-  const ux = -(b.y - a.y) / ch, uy = (b.x - a.x) / ch;
-  const c = { x: mx + ux * h, y: my + uy * h };
-  const s = Math.atan2(a.y - c.y, a.x - c.x);
-  const n = Math.max(6, Math.ceil(Math.abs(th) / (Math.PI / 90)));
-  return Array.from({ length: n }, (_, i) => { const t = s + (th * (i + 1)) / n; return { x: c.x + Math.abs(r) * Math.cos(t), y: c.y + Math.abs(r) * Math.sin(t) }; });
+  if (!ch || !k) return null;
+  const d = (ch * (1 - k * k)) / (4 * k), c = { x: (a.x + b.x) / 2 - ((b.y - a.y) / ch) * d, y: (a.y + b.y) / 2 + ((b.x - a.x) / ch) * d };
+  return { c, r: Math.hypot(a.x - c.x, a.y - c.y), s: Math.atan2(a.y - c.y, a.x - c.x), th: 4 * Math.atan(k) };
+}
+function bulgePts(a, b, k) {
+  const A = bulgeArc(a, b, k);
+  if (!A) return [];
+  const n = Math.max(6, Math.ceil(Math.abs(A.th) / (Math.PI / 90)));
+  return Array.from({ length: n }, (_, i) => { const t = A.s + (A.th * (i + 1)) / n; return { x: A.c.x + A.r * Math.cos(t), y: A.c.y + A.r * Math.sin(t) }; });
+}
+function band(a, b) {
+  const A = bulgeArc(a, b, a.b), n = A ? Math.max(4, Math.ceil(Math.abs(A.th) / deg(10))) : 1, ch = Math.hypot(b.x - a.x, b.y - a.y) || 1, L = [], R = [];
+  for (let i = 0; i <= n; i++) {
+    const w = (a.w0 + ((a.w1 - a.w0) * i) / n) / 2;
+    if (A) { const t = A.s + (A.th * i) / n, c = Math.cos(t), s = Math.sin(t); L.push({ x: A.c.x + (A.r + w) * c, y: A.c.y + (A.r + w) * s }); R.push({ x: A.c.x + Math.max(0, A.r - w) * c, y: A.c.y + Math.max(0, A.r - w) * s }); }
+    else { const p = i ? b : a, nx = -(b.y - a.y) / ch, ny = (b.x - a.x) / ch; L.push({ x: p.x + nx * w, y: p.y + ny * w }); R.push({ x: p.x - nx * w, y: p.y - ny * w }); }
+  }
+  return [...L, ...R.reverse()];
+}
+function clip(p, d, ray, [x0, y0, x1, y1]) {
+  if (!d.x && !d.y) return null;
+  let t0 = ray ? 0 : -Infinity, t1 = Infinity;
+  for (const [q, v, lo, hi] of [[p.x, d.x, x0, x1], [p.y, d.y, y0, y1]]) {
+    if (Math.abs(v) < 1e-12) { if (q < lo || q > hi) return null; continue; }
+    const a = (lo - q) / v, b = (hi - q) / v;
+    t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+  }
+  return t0 < t1 ? [{ x: p.x + d.x * t0, y: p.y + d.y * t0 }, { x: p.x + d.x * t1, y: p.y + d.y * t1 }] : null;
 }
 function bspline(ctrl, degree, knots) {
   const n = ctrl.length;
@@ -222,33 +278,38 @@ function catmull(pts) {
 }
 
 function flatten(model) {
-  const out = [];
-  const colorOf = (e, inherited) => {
-    if (e.rgb) return e.rgb;
-    if (e.color === 'block') return inherited ?? 7;
-    if (e.color != null) return e.color;
-    const l = model.layers[e.layer];
-    return l ? (l.rgb != null ? { rgb: l.rgb } : l.color) : 7;
-  };
-  const resolve = (c) => (c && typeof c === 'object' ? c.rgb : typeof c === 'number' && c > 256 ? c : aci(c));
-  const weightOf = (e, inh) => (e.lw === 'layer' ? model.layers[e.layer]?.lw ?? null : e.lw === 'block' ? inh.lw : e.lw ?? null);
-  const typeOf = (e, inh) => (/^bylayer$/i.test(e.lt || 'BYLAYER') ? model.layers[e.layer]?.lt || 'CONTINUOUS' : /^byblock$/i.test(e.lt) ? inh.lt : e.lt);
+  const out = [], later = [], L = (n) => model.layers[n];
+  const colorOf = (e, lay, inh) => (e.color === 'block' ? inh.col : e.color ?? (L(lay) ? (L(lay).rgb != null ? { rgb: L(lay).rgb } : L(lay).color) : 7));
+  const weightOf = (e, lay, inh) => (e.lw === 'layer' ? L(lay)?.lw ?? null : e.lw === 'block' ? inh.lw : e.lw ?? null);
+  const typeOf = (e, lay, inh) => (/^bylayer$/i.test(e.lt || 'BYLAYER') ? L(lay)?.lt || 'CONTINUOUS' : /^byblock$/i.test(e.lt) ? inh.lt : e.lt);
   const walk = (ents, m, inh, depth) => {
     for (const e of ents) {
-      if (model.layers[e.layer]?.hidden || /^defpoints$/i.test(e.layer)) continue;
-      const col = colorOf(e, inh.col);
-      const rgb = resolve(col);
-      const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
-      const lw = weightOf(e, inh), lt = typeOf(e, inh), pat = model.ltypes?.[String(lt).toUpperCase()];
+      const lay = e.layer === '0' && inh.layer ? inh.layer : e.layer, l = L(lay);
+      if (l?.frozen || (e.t !== 'insert' && (l?.off || l?.plot === false || /^defpoints$/i.test(lay)))) continue;
+      const M = e.ocs ? mul(m, e.ocs) : m;
+      const col = colorOf(e, lay, inh), rgb = typeof col === 'object' ? col.rgb : aci(col);
+      const scale = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2]));
+      const lw = weightOf(e, lay, inh), lt = typeOf(e, lay, inh), pat = model.ltypes?.[String(lt).toUpperCase()];
       const dash = pat?.length >= 2 && pat.some((v) => v < 0) && pat.every(Number.isFinite) ? pat.map((v) => v * (model.ltscale || 1) * (e.lts || 1) * scale) : null;
-      const push = (pts, closed, fill) => pts.length > 1 && out.push({ k: 'path', pts: pts.map((p) => ap(m, p)), closed, fill, rgb, lw, dash: fill ? null : dash, aci: typeof col === 'number' ? col : null, layer: e.layer });
+      const item = (pts, closed, fill, ww) => ({ k: 'path', pts, closed, fill, rgb, lw, dash: fill ? null : dash, aci: typeof col === 'number' ? col : null, layer: lay, ...(ww ? { ww } : {}) });
+      const push = (pts, closed, fill, ww) => pts.length > 1 && out.push(item(pts.map((p) => ap(M, p)), closed, fill, ww));
       switch (e.t) {
         case 'line': push([e.a, e.b]); break;
+        case 'xline': { const p = ap(M, e.p), d = { x: M[0] * e.d.x + M[2] * e.d.y, y: M[1] * e.d.x + M[3] * e.d.y }; later.push((box) => { const s = clip(p, d, e.ray, box); if (s) out.push(item(s)); }); break; }
         case 'poly': {
-          const pts = [];
-          const n = e.pts.length;
-          for (let i = 0; i < n; i++) { const a = e.pts[i], b = e.pts[(i + 1) % n]; pts.push(a); if (a.b && (i < n - 1 || e.closed)) pts.push(...bulgePts(a, b, a.b)); }
-          push(pts, e.closed);
+          const n = e.pts.length, segs = e.pts.slice(0, e.closed ? n : n - 1), cw = segs[0]?.w0 || 0;
+          if (segs.every((a) => (a.w0 || 0) === cw && (a.w1 || 0) === cw)) {
+            const pts = [];
+            for (let i = 0; i < n; i++) { const a = e.pts[i], b = e.pts[(i + 1) % n]; pts.push(a); if (a.b && (i < n - 1 || e.closed)) pts.push(...bulgePts(a, b, a.b)); }
+            push(pts, e.closed, false, cw * scale);
+            break;
+          }
+          let run = [];
+          segs.forEach((a, i) => {
+            const b = e.pts[(i + 1) % n];
+            if (a.w0 || a.w1) { push(run); run = []; push(band(a, b), true, true); } else run.push(...(run.length ? [] : [a]), ...(a.b ? bulgePts(a, b, a.b) : [b]));
+          });
+          push(run);
           break;
         }
         case 'circle': push(arcPts(e.c, e.r, 0, Math.PI * 2), true); break;
@@ -262,41 +323,47 @@ function flatten(model) {
           break;
         }
         case 'spline': push(e.ctrl.length >= 2 ? bspline(e.ctrl, e.degree, e.knots) : catmull(e.fit)); break;
-        case 'point': out.push({ k: 'point', p: ap(m, e.p), rgb, layer: e.layer }); break;
+        case 'point': out.push({ k: 'point', p: ap(M, e.p), rgb, layer: lay }); break;
         case 'solid': { const [a, b, c, d] = e.pts; push(d && (d.x !== c.x || d.y !== c.y) ? [a, b, d, c] : [a, b, c], true, true); break; }
-        case 'face': push(e.pts, true); break;
+        case 'face': {
+          if (!(e.flags & 15)) { push(e.pts, true); break; }
+          e.pts.forEach((a, i) => { const b = e.pts[(i + 1) % e.pts.length]; if (!(e.flags & (1 << i)) && (a.x !== b.x || a.y !== b.y)) push([a, b]); });
+          break;
+        }
         case 'hatch': {
-          const loops = e.loops.filter((l) => l.length > 2).map((l) => l.map((p) => ap(m, p)));
+          const loops = e.loops.filter((l) => l.length > 2).map((l) => l.map((p) => ap(M, p)));
           const sub = loops.map((l, k) => ((area(l) > 0) === (loops.filter((o, j) => j !== k && inside(l[0], o)).length % 2 === 0) ? l : l.slice().reverse()));
-          if (sub.length) out.push({ k: 'path', pts: sub.flat(), sub, closed: true, fill: true, tint: !e.solid, rgb, aci: typeof col === 'number' ? col : null, layer: e.layer });
+          if (sub.length) out.push({ k: 'path', pts: sub.flat(), sub, closed: true, fill: true, tint: !e.solid, rgb, aci: typeof col === 'number' ? col : null, layer: lay });
           break;
         }
         case 'text': {
           if (!e.text.trim()) break;
-          const p = ap(m, e.p);
-          const ang = e.rot + Math.atan2(m[1], m[0]);
-          out.push({ k: 'text', p, h: e.h * scale, rot: ang, text: e.text, align: e.align, attach: e.attach, multi: e.multi, rgb, layer: e.layer });
+          const c = Math.cos(e.rot), s = Math.sin(e.rot), f = M[0] * M[3] - M[1] * M[2] < 0 ? -1 : 1;
+          out.push({ k: 'text', p: ap(M, e.p), h: e.h * scale, rot: Math.atan2(f * (M[1] * c + M[3] * s), f * (M[0] * c + M[2] * s)), text: e.text, align: f < 0 ? [2, 1, 0][e.align] ?? e.align : e.align, attach: f < 0 && e.attach ? e.attach + [2, 0, -2][(e.attach - 1) % 3] : e.attach, multi: e.multi, rgb, layer: lay });
           break;
         }
         case 'insert': {
-          const b = model.blocks[e.name];
+          const b = model.blocks[e.name], sub = { col, lw, lt, layer: lay };
           if (!b || depth > 12) break;
           for (let r = 0; r < (e.rows || 1); r++) for (let c = 0; c < (e.cols || 1); c++) {
-            const t = mul(mul(mul(m, [1, 0, 0, 1, e.p.x, e.p.y]), [Math.cos(e.rot), Math.sin(e.rot), -Math.sin(e.rot), Math.cos(e.rot), 0, 0]), [e.sx, 0, 0, e.sy, c * (e.cs || 0), r * (e.rs || 0)]);
-            walk(b.ents, mul(t, [1, 0, 0, 1, -b.base.x, -b.base.y]), { col, lw, lt }, depth + 1);
+            const t = mul(mul(mul(M, [1, 0, 0, 1, e.p.x, e.p.y]), [Math.cos(e.rot), Math.sin(e.rot), -Math.sin(e.rot), Math.cos(e.rot), 0, 0]), [e.sx, 0, 0, e.sy, c * (e.cs || 0), r * (e.rs || 0)]);
+            walk(b.ents, mul(t, [1, 0, 0, 1, -b.base.x, -b.base.y]), sub, depth + 1);
           }
-          if (e.attribs?.length) walk(e.attribs, m, { col, lw, lt }, depth + 1);
+          if (e.attribs?.length) walk(e.attribs, m, sub, depth + 1);
           break;
         }
         default:
       }
     }
   };
-  walk(model.ents, ident, { col: 7, lw: null, lt: 'CONTINUOUS' }, 0);
+  const top = { col: 7, lw: null, lt: 'CONTINUOUS', layer: null };
+  walk(model.ents, ident, top, 0);
+  if (!out.length && !later.length && model.paper?.length) walk(model.paper, ident, top, 0);
+  if (later.length) { const x = extents(out), mg = Math.max(x.x1 - x.x0, x.y1 - x.y0) * 0.05; later.forEach((f) => f([x.x0 - mg, x.y0 - mg, x.x1 + mg, x.y1 + mg])); }
   return out;
 }
 function bounds(it) {
-  if (it.k === 'path') { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const p of it.pts) { if (p.x < a) a = p.x; if (p.y < b) b = p.y; if (p.x > c) c = p.x; if (p.y > d) d = p.y; } return [a, b, c, d]; }
+  if (it.k === 'path') { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const p of it.pts) { if (p.x < a) a = p.x; if (p.y < b) b = p.y; if (p.x > c) c = p.x; if (p.y > d) d = p.y; } const h = (it.ww || 0) / 2; return [a - h, b - h, c + h, d + h]; }
   if (it.k === 'text') { const w = it.h * it.text.split('\n').reduce((m, l) => Math.max(m, l.length), 0) * 0.6, hh = it.h * it.text.split('\n').length * 1.4; return [it.p.x - (it.multi ? 0 : w / 2) * 0, it.p.y - hh, it.p.x + w, it.p.y + it.h]; }
   return [it.p.x, it.p.y, it.p.x, it.p.y];
 }
@@ -317,9 +384,9 @@ function extents(items) {
 }
 function onLight(c) {
   const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+  if (Math.min(r, g, b) >= 224) return 0;
   const l = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  if (l < 0.62) return c;
-  if (Math.max(r, g, b) - Math.min(r, g, b) < 24) return 0x1a1f16;
+  if (l < 0.62 || Math.max(r, g, b) - Math.min(r, g, b) < 24) return c;
   const k = 0.52 / l;
   return (Math.round(r * k) << 16) | (Math.round(g * k) << 8) | Math.round(b * k);
 }
@@ -350,6 +417,7 @@ async function readDrawing(p) {
   if (/^AutoCAD Binary DXF/.test(text)) throw new Error('Binary DXF isn’t supported. Save it as ASCII DXF.');
   const parser = new Parser();
   parser.registerEntityHandler(DxfHatch);
+  tapDxf(parser);
   try { return fromDxf(parser.parseSync(text), text); } catch (e) { throw new Error(`This DXF couldn’t be read: ${e.message}`); }
 }
 
@@ -377,8 +445,8 @@ function drawingSvg(items, opts = {}) {
     if (it.k === 'path') {
       const d = it.sub ? it.sub.map((l) => `M${l.map(tx).join('L')}Z`).join('') : `M${it.pts.map(tx).join('L')}${it.closed ? 'Z' : ''}`;
       const fill = it.tint ? mix(ink(it), dark ? '#151913' : '#ffffff', 0.75) : ink(it);
-      const dash = dashes(it, unit);
-      parts.push(`<path d="${d}" ${it.fill ? `fill="${fill}" stroke="none"` : `fill="none" stroke="${ink(it)}" stroke-width="${fmt(Math.max(it.lw ?? 0.18, 0.1) * unit * (opts.lineWidth || 1))}"${dash ? ` stroke-dasharray="${dash.map(fmt).join(' ')}"` : ''}`}/>`);
+      const dash = dashes(it, unit), pen = Math.max(it.lw ?? 0.18, 0.1) * unit * (opts.lineWidth || 1), wide = it.ww > pen;
+      parts.push(`<path d="${d}" ${it.fill ? `fill="${fill}" stroke="none"` : `fill="none" stroke="${ink(it)}" stroke-width="${fmt(wide ? it.ww : pen)}"${wide ? ' stroke-linecap="butt" stroke-linejoin="miter"' : ''}${dash ? ` stroke-dasharray="${dash.map(fmt).join(' ')}"` : ''}`}/>`);
     } else if (it.k === 'point') {
       const [x, y] = tx(it.p).split(',');
       parts.push(`<circle cx="${x}" cy="${y}" r="${fmt(stroke * 1.5)}" fill="${ink(it)}"/>`);
@@ -429,8 +497,8 @@ async function drawingPdf(items, out, opts = {}) {
   for (const it of items) {
     if (it.k === 'path') {
       const d = (it.sub || [it.pts]).map((l) => `M${l.map((p) => `${fmt(X(p))} ${fmt(PH - Y(p))}`).join(' L')}${it.closed ? ' Z' : ''}`).join(' ');
-      const dash = dashes(it, 72 / 25.4 / s);
-      page.drawSvgPath(d, { x: 0, y: PH, ...(it.fill ? { color: col(it) } : { borderColor: col(it), borderWidth: Math.max(it.lw ?? 0.18, 0.1) * 72 / 25.4, borderLineCap: 1, ...(dash ? { borderDashArray: dash.map((v) => v * s) } : {}) }) });
+      const dash = dashes(it, 72 / 25.4 / s), pen = Math.max(it.lw ?? 0.18, 0.1) * 72 / 25.4, wide = it.ww * s > pen;
+      page.drawSvgPath(d, { x: 0, y: PH, ...(it.fill ? { color: col(it) } : { borderColor: col(it), borderWidth: wide ? it.ww * s : pen, borderLineCap: wide ? 0 : 1, ...(dash ? { borderDashArray: dash.map((v) => v * s) } : {}) }) });
     } else if (it.k === 'point') page.drawCircle({ x: X(it.p), y: Y(it.p), size: 0.8, color: col(it) });
     else if (it.k === 'text') {
       const size = Math.max(1, it.h * s);
@@ -468,9 +536,9 @@ function drawingDxf(items, layers) {
   const color = (it) => { if (it.aci && it.aci > 0 && it.aci < 256) g(62, it.aci); };
   for (const it of items) {
     if (it.k === 'path') {
-      if (it.pts.length === 2 && !it.closed && !it.fill) { g(0, 'LINE'); g(8, it.layer); color(it); g(10, fmt(it.pts[0].x)); g(20, fmt(it.pts[0].y)); g(30, 0); g(11, fmt(it.pts[1].x)); g(21, fmt(it.pts[1].y)); g(31, 0); continue; }
+      if (it.pts.length === 2 && !it.closed && !it.fill && !it.ww) { g(0, 'LINE'); g(8, it.layer); color(it); g(10, fmt(it.pts[0].x)); g(20, fmt(it.pts[0].y)); g(30, 0); g(11, fmt(it.pts[1].x)); g(21, fmt(it.pts[1].y)); g(31, 0); continue; }
       for (const l of it.sub || [it.pts]) {
-        g(0, 'POLYLINE'); g(8, it.layer); color(it); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, it.closed ? 1 : 0);
+        g(0, 'POLYLINE'); g(8, it.layer); color(it); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, it.closed ? 1 : 0); if (it.ww) { g(40, fmt(it.ww)); g(41, fmt(it.ww)); }
         for (const p of l) { g(0, 'VERTEX'); g(8, it.layer); g(10, fmt(p.x)); g(20, fmt(p.y)); g(30, 0); }
         g(0, 'SEQEND'); g(8, it.layer);
       }
