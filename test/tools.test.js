@@ -1197,6 +1197,12 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(v.convert.length <= 10 && a.convert.length <= 10, `rings of ${v.convert.length} and ${a.convert.length}`);
     return `AV1 ${M.supports('av1') ? (enc.has('libsvtav1') ? 'SVT-AV1' : 'libaom') : 'none'}, AMR ${M.supports('amr') ? 'yes' : 'no'}; ${v.convert.map((w) => w.label)} | ${a.convert.map((w) => w.label)}`;
   });
+  await check('psd opens with Lime’s own reader when PhotoCraft can’t', async () => {
+    const m = await (await E('image').open(fx('layers.psd'))).metadata(), st = await (await E('image').open(fx('layers.psd'))).stats();
+    ok(m.width === 800 && m.height === 534, `${m.width}×${m.height}`);
+    ok(st.channels.slice(0, 3).some((c) => c.stdev > 10), 'the picture is blank');
+    return `${m.width}×${m.height}`;
+  });
   await check('an engine that stops responding is stopped', async () => {
     const t = Date.now();
     const e = await E('util').run(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { timeout: 500, errorMessage: 'Test engine couldn’t finish', env: { ELECTRON_RUN_AS_NODE: '1' } }).then(() => null, (x) => x);
