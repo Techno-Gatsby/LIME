@@ -2,7 +2,7 @@ const f = (n) => (Math.round(n * 100) / 100).toString();
 const at = (a, r) => [r * Math.sin(a), -r * Math.cos(a)];
 const P = (p) => `${f(p[0])} ${f(p[1])}`;
 
-export function wedge(i, n, rIn, rOut, gap = 7, kOut = 20, kIn = 12) {
+export function wedge(i, n, rIn, rOut, gap = 7, kOut = 10, kIn = 6) {
   if (n === 1) return `M0 ${-rOut}A${rOut} ${rOut} 0 1 1 0 ${rOut}A${rOut} ${rOut} 0 1 1 0 ${-rOut}ZM0 ${-rIn}A${rIn} ${rIn} 0 1 0 0 ${rIn}A${rIn} ${rIn} 0 1 0 0 ${-rIn}Z`;
   const step = (Math.PI * 2) / n, g = gap / 2, half = Math.sin(Math.min(step, Math.PI) * 0.42);
   const ko = Math.max(2, Math.min(kOut, (rOut * half - g) / (1 + half), (rOut - rIn) * 0.42));

@@ -415,6 +415,8 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
             }
             if (texts.length === 2) { const [a, c] = texts.map((t) => t.getBBox()); if (a.y < c.y + c.height - 0.5 && c.y < a.y + a.height - 0.5 && a.x < c.x + c.width && c.x < a.x + a.width) out.push(name + ': "' + texts[0].textContent + '" touches its hint'); }
           }
+          // The file name and its details under the wheel must fit in the window, shadows included.
+          for (const el of document.querySelectorAll('.caption > *')) { const b = el.getBoundingClientRect(); if (b.height && b.bottom > innerHeight - 4) out.push(name + ': "' + el.textContent + '" is cut off at the bottom'); }
           return { n: petals.length, out };`);
         if (r.n) rings++;
         bad.push(...r.out);

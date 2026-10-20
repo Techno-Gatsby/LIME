@@ -21,7 +21,7 @@ $('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, '', k));
 async function layout() {
   const open = S.state !== 'idle';
   const cardH = card.hidden ? 0 : Math.min(card.scrollHeight, 380) + 14;
-  const L = open ? { w: 330, h: cardH ? 364 + cardH : 392, cx: 165, cy: 194 } : { w: TAB, h: TAB, cx: TAB / 2, cy: TAB / 2 };
+  const L = open ? { w: 330, h: cardH ? 364 + cardH : 416, cx: 165, cy: 194 } : { w: TAB, h: TAB, cx: TAB / 2, cy: TAB / 2 };
   const growing = open && shown === 'tab';
   if (growing) stage.classList.add('pre');
   stage.style.setProperty('--w', `${L.w}px`);
