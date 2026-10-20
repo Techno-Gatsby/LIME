@@ -300,8 +300,23 @@ function drawingSvg(items, opts = {}) {
   const bg = opts.transparent ? '' : `<rect x="0" y="0" width="${fmt(W)}" height="${fmt(H)}" fill="${dark ? '#151913' : '#ffffff'}"/>`;
   return { svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${fmt(W)} ${fmt(H)}" width="${opts.pxWidth ? opts.pxWidth : fmt(W)}" height="${opts.pxWidth ? Math.round((opts.pxWidth * H) / W) : fmt(H)}">${bg}<g stroke-width="${fmt(stroke)}" stroke-linecap="round" stroke-linejoin="round">${parts.join('')}</g></svg>`, W, H, ext, pad };
 }
+const FALLBACK_FONTS = ['/System/Library/Fonts/Supplemental/Arial Unicode.ttf', '/Library/Fonts/Arial Unicode.ttf', ...['malgun.ttf', 'simhei.ttf', 'msyh.ttf'].map((f) => path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts', f)), '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf'];
+async function textFonts(doc) {
+  const fontkit = require('@pdf-lib/fontkit');
+  doc.registerFontkit(fontkit);
+  const faces = [];
+  for (const f of [path.join(U.cfg.data, 'fonts', 'NotoSans-Regular.ttf'), FALLBACK_FONTS.find((x) => fs.existsSync(x))].filter(Boolean)) {
+    const bytes = await fsp.readFile(f), face = fontkit.create(bytes);
+    if (typeof face.hasGlyphForCodePoint === 'function') faces.push({ bytes, face, font: null });
+  }
+  return async (ch) => {
+    const e = faces.find((x) => x.face.hasGlyphForCodePoint(ch.codePointAt(0)));
+    if (e && !e.font) e.font = await doc.embedFont(e.bytes, { subset: true });
+    return e?.font || null;
+  };
+}
 async function drawingPdf(items, out, opts = {}) {
-  const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
+  const { PDFDocument, rgb, degrees } = require('pdf-lib');
   const ext = extents(items);
   const w = ext.x1 - ext.x0, h = ext.y1 - ext.y0;
   const sheets = { a4: [841.89, 595.28], a3: [1190.55, 841.89], letter: [792, 612], tabloid: [1224, 792] };
@@ -313,7 +328,7 @@ async function drawingPdf(items, out, opts = {}) {
   const doc = await PDFDocument.create();
   doc.setCreator('Lime');
   const page = doc.addPage([PW, PH]);
-  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontFor = items.some((it) => it.k === 'text') ? await textFonts(doc) : null;
   const col = (it) => { const v = onLight(it.rgb ?? 0); return rgb(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255); };
   const X = (p) => ox + (p.x - ext.x0) * s, Y = (p) => oy + (p.y - ext.y0) * s;
   for (const it of items) {
@@ -323,15 +338,24 @@ async function drawingPdf(items, out, opts = {}) {
     } else if (it.k === 'point') page.drawCircle({ x: X(it.p), y: Y(it.p), size: 0.8, color: col(it) });
     else if (it.k === 'text') {
       const size = Math.max(1, it.h * s);
-      it.text.split('\n').forEach((line, i) => {
-        const clean = line.replace(/[^\x20-\x7e -ÿ]/g, '?');
-        const tw = font.widthOfTextAtSize(clean, size);
+      for (const [i, line] of it.text.split('\n').entries()) {
+        const runs = [];
+        for (let ch of line) {
+          let f = /\s/.test(ch) && runs.length ? runs[runs.length - 1].font : await fontFor(ch);
+          if (!f) { ch = '?'; f = await fontFor('?'); }
+          if (runs.length && runs[runs.length - 1].font === f) runs[runs.length - 1].text += ch; else runs.push({ font: f, text: ch });
+        }
+        runs.forEach((r) => { r.w = r.font.widthOfTextAtSize(r.text, size); });
+        const tw = runs.reduce((t, r) => t + r.w, 0);
         const anchor = it.multi ? ((it.attach || 1) - 1) % 3 : [0, 1, 2, 0, 1, 0][it.align || 0];
-        const dx = -(anchor === 1 ? tw / 2 : anchor === 2 ? tw : 0);
+        let dx = -(anchor === 1 ? tw / 2 : anchor === 2 ? tw : 0);
         const dy = -(i * size * 1.4) - (it.multi && (it.attach || 1) <= 3 ? size : 0);
         const c = Math.cos(it.rot), sn = Math.sin(it.rot);
-        page.drawText(clean, { x: X(it.p) + dx * c - dy * sn, y: Y(it.p) + dx * sn + dy * c, size, font, color: col(it), rotate: degrees((it.rot * 180) / Math.PI) });
-      });
+        for (const r of runs) {
+          page.drawText(r.text, { x: X(it.p) + dx * c - dy * sn, y: Y(it.p) + dx * sn + dy * c, size, font: r.font, color: col(it), rotate: degrees((it.rot * 180) / Math.PI) });
+          dx += r.w;
+        }
+      }
     }
   }
   await fsp.writeFile(out, await doc.save());
@@ -373,6 +397,10 @@ async function readMesh(p) {
   if (['step', 'stp', 'iges', 'igs', 'brep'].includes(e)) return readOcct(buf, e);
   throw new Error(`Lime can’t read ${e.toUpperCase()} models.`);
 }
+const toZUp = (m, k = 1) => { const p = m.pos; for (let i = 0; i < p.length; i += 3) { const y = p[i + 1]; p[i] *= k; p[i + 1] = -p[i + 2] * k; p[i + 2] = y * k; } return m; };
+const toYUp = (pos, k = 1) => { const p = new Float32Array(pos.length); for (let i = 0; i < p.length; i += 3) { p[i] = pos[i] * k; p[i + 1] = pos[i + 2] * k; p[i + 2] = -pos[i + 1] * k; } return p; };
+const MF_UNITS = { micron: 0.001, millimeter: 1, centimeter: 10, inch: 25.4, foot: 304.8, meter: 1000 };
+const num = (n) => String(Math.round(n * 1e6) / 1e6);
 function mesh(pos, idx, parts) { return { pos: pos instanceof Float32Array ? pos : Float32Array.from(pos), idx: idx instanceof Uint32Array ? idx : Uint32Array.from(idx), parts: parts || null }; }
 function readStl(buf) {
   const head = buf.subarray(0, 512).toString('latin1');
@@ -404,7 +432,7 @@ function readObj(text) {
       for (let k = 1; k < f.length - 1; k++) idx.push(f[0], f[k], f[k + 1]);
     }
   }
-  return mesh(v, idx);
+  return toZUp(mesh(v, idx));
 }
 function readOff(text) {
   const t = text.replace(/#.*$/gm, '').trim().split(/\s+/);
@@ -518,11 +546,14 @@ function readGltf(buf, p) {
   const scene = json.scenes?.[json.scene || 0];
   const roots = scene ? scene.nodes : (json.nodes || []).map((_, i) => i);
   roots.forEach((r) => visit(r, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
-  return mesh(pos, idx, parts.some((p) => p.color != null) ? parts : null);
+  return toZUp(mesh(pos, idx, parts.some((p) => p.color != null) ? parts : null), 1000);
 }
 function read3mf(buf) {
   const z = require('fflate').unzipSync(new Uint8Array(buf));
   const files = Object.keys(z).filter((k) => /\.model$/i.test(k));
+  const root = files.find((f) => /^3D\/3dmodel\.model$/i.test(f)) || files[0];
+  const unit = (root && /<model\b[^>]*\bunit="([^"]*)"/.exec(Buffer.from(z[root]).toString('utf8'))?.[1]) || 'millimeter';
+  if (!MF_UNITS[unit]) throw new Error(`This 3MF file uses a unit Lime doesn’t know: “${unit}”.`);
   const objects = {};
   for (const f of files) {
     const xml = Buffer.from(z[f]).toString('utf8');
@@ -548,7 +579,7 @@ function read3mf(buf) {
     for (const c of o.comps) add(c.id, cat(tm(c.t), m), depth + 1);
   };
   (items.length ? items : Object.keys(objects).map((id) => ({ id }))).forEach((it) => add(it.id, tm(it.t)));
-  return mesh(pos, idx);
+  return mesh(pos.map((v) => v * MF_UNITS[unit]), idx);
 }
 let occt = null;
 async function readOcct(buf, e) {
@@ -613,8 +644,8 @@ function writeStl(m) {
   return b;
 }
 function writeObj(m) {
-  const L = ['# Lime'];
-  for (let i = 0; i < m.pos.length; i += 3) L.push(`v ${fmt(m.pos[i])} ${fmt(m.pos[i + 1])} ${fmt(m.pos[i + 2])}`);
+  const L = ['# Lime'], p = toYUp(m.pos);
+  for (let i = 0; i < p.length; i += 3) L.push(`v ${num(p[i])} ${num(p[i + 1])} ${num(p[i + 2])}`);
   for (let i = 0; i < m.idx.length; i += 3) L.push(`f ${m.idx[i] + 1} ${m.idx[i + 1] + 1} ${m.idx[i + 2] + 1}`);
   return `${L.join('\n')}\n`;
 }
@@ -627,7 +658,8 @@ function writePly(m) {
   for (let i = 0; i < nf; i++) { b.writeUInt8(3, o); b.writeUInt32LE(m.idx[i * 3], o + 1); b.writeUInt32LE(m.idx[i * 3 + 1], o + 5); b.writeUInt32LE(m.idx[i * 3 + 2], o + 9); o += 13; }
   return Buffer.concat([head, b]);
 }
-function writeGlb(m) {
+function writeGlb(src) {
+  const m = { ...src, pos: toYUp(src.pos, 0.001) };
   const n = normals(m);
   const info = meshInfo(m);
   const pos = Buffer.from(m.pos.buffer, m.pos.byteOffset, m.pos.byteLength);
@@ -666,7 +698,7 @@ function render3d(m, opts = {}) {
   const W = Number(opts.width) || 1400, H = Number(opts.height) || Math.round(W * 0.75), SS = 2;
   const w = W * SS, h = H * SS;
   const yaw = deg(opts.yaw ?? 35), pitch = deg(opts.pitch ?? 28);
-  const zUp = opts.zUp ?? (() => { const i = meshInfo(m); return i.size[2] <= i.size[1] * 1.6 || i.size[1] < i.size[2] * 0.4; })();
+  const zUp = opts.zUp ?? true;
   const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
   const n = m.pos.length / 3;
   const P2 = new Float32Array(n * 3);

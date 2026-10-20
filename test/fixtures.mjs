@@ -119,6 +119,17 @@ for (const f of ['test.dxf', 'sample_2018.dwg', 'as1.stp', 'cube.igs']) if (cadS
 const cad = require(path.resolve('src/main/engines/cad.js'));
 const cube = { pos: Float32Array.from([0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 10, 0, 0, 0, 10, 10, 0, 10, 10, 10, 10, 0, 10, 10]), idx: Uint32Array.from([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]) };
 fs.writeFileSync(P('cube.stl'), cad.writeStl(cube));
+{
+  const { PDFDocument, StandardFonts } = require('pdf-lib');
+  const d = await PDFDocument.create(), font = await d.embedFont(StandardFonts.Helvetica);
+  for (const [w, h, t] of [[595, 842, 'Portrait page'], [842, 595, 'Landscape page']]) d.addPage([w, h]).drawText(t, { x: 60, y: h - 100, size: 28, font });
+  fs.writeFileSync(P('mixed.pdf'), await d.save());
+}
+fs.writeFileSync(P('unicode.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1021', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES', '0', 'LINE', '8', '0', '10', '0', '20', '0', '11', '200', '21', '0', '0', 'TEXT', '8', '0', '10', '10', '20', '20', '40', '8', '1', 'Größe Ω Привет', '0', 'ENDSEC', '0', 'EOF', ''].join('\n'));
+const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
+fs.writeFileSync(P('box.stl'), cad.writeStl(box));
+fs.writeFileSync(P('box.glb'), cad.writeGlb(box));
+fs.writeFileSync(P('box-inch.3mf'), require('fflate').zipSync({ '_rels/.rels': Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="r" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'), '3D/3dmodel.model': Buffer.from(`<?xml version="1.0"?><model unit="inch" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${Array.from({ length: 8 }, (_, i) => `<vertex x="${box.pos[i * 3] / 10}" y="${box.pos[i * 3 + 1] / 10}" z="${box.pos[i * 3 + 2] / 10}"/>`).join('')}</vertices><triangles>${Array.from({ length: 12 }, (_, i) => `<triangle v1="${cube.idx[i * 3]}" v2="${cube.idx[i * 3 + 1]}" v3="${cube.idx[i * 3 + 2]}"/>`).join('')}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`) }));
 fs.writeFileSync(P('mesh.obj'), `v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n`);
 fs.writeFileSync(P('logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160"><rect x="10" y="10" width="220" height="140" rx="24" fill="#86c23a"/><circle cx="70" cy="80" r="40" fill="#2c6413"/><text x="125" y="92" font-size="30" fill="#fff">Lime</text></svg>');
 for (const [f, t] of [['logo.ai', 'ai'], ['logo.eps', 'eps']]) try { sh(cli('vectorcraft'), ['convert', P('logo.svg'), P(f)]); } catch (e) { console.log(t, e.message); }

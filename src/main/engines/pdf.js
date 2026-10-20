@@ -545,20 +545,25 @@ async function toPowerPoint(input, opts, out, ctx) {
   const { doc, m } = await readPdf(input, opts.password);
   const PptxGenJS = require('pptxgenjs');
   const pptx = new PptxGenJS();
-  const b0 = doc.loadPage(0).getBounds();
-  const W = (b0[2] - b0[0]) / 72, H = (b0[3] - b0[1]) / 72;
-  const scale = 10 / Math.max(W, H);
-  pptx.defineLayout({ name: 'PDF', width: W * scale, height: H * scale });
+  const size = (b) => [b[2] - b[0], b[3] - b[1]];
+  let [cx, cy] = size(doc.loadPage(0).getBounds()).map((v) => Math.max(1, v) * 12700);
+  const shrink = Math.min(1, 51206400 / Math.max(cx, cy)), grow = Math.max(1, 914400 / (Math.min(cx, cy) * shrink));
+  const [SW, SH] = [cx, cy].map((v) => Math.min(51206400, Math.max(914400, v * shrink * grow)) / 914400);
+  pptx.defineLayout({ name: 'PDF', width: SW, height: SH });
   pptx.layout = 'PDF';
   const n = doc.countPages();
   for (let i = 0; i < n; i++) {
     const page = doc.loadPage(i);
-    const pix = page.toPixmap(m.Matrix.scale(2, 2), m.ColorSpace.DeviceRGB, false, true);
+    const [w, h] = size(page.getBounds());
+    const px = ((w / 72) * 150) * ((h / 72) * 150), dpi = px > 25e6 ? Math.floor(150 * Math.sqrt(25e6 / px)) : 150;
+    const pix = page.toPixmap(m.Matrix.scale(dpi / 72, dpi / 72), m.ColorSpace.DeviceRGB, false, true);
+    const k = Math.min(SW / (w / 72), SH / (h / 72)), iw = (w / 72) * k, ih = (h / 72) * k;
     const slide = pptx.addSlide();
-    slide.addImage({ data: `data:image/png;base64,${Buffer.from(pix.asPNG()).toString('base64')}`, x: 0, y: 0, w: W * scale, h: H * scale });
+    slide.background = { color: 'FFFFFF' };
+    slide.addImage({ data: `data:image/jpeg;base64,${Buffer.from(pix.asJPEG(90, false)).toString('base64')}`, x: (SW - iw) / 2, y: (SH - ih) / 2, w: iw, h: ih, altText: `Page ${i + 1}` });
     if (opts.notes !== false) {
-      const t = page.toStructuredText('').asText().trim();
-      if (t) slide.addNotes(t.slice(0, 5000));
+      const t = page.toStructuredText('preserve-whitespace').asText().trim();
+      if (t) slide.addNotes(t);
     }
     ctx?.progress((i + 1) / n, `Slide ${i + 1} of ${n}`);
   }

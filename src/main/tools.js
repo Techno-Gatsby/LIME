@@ -384,7 +384,8 @@ function wheelsFor(files) {
   const gs = groupsOf(files);
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
   const base = WHEELS[g] || WHEELS.any;
-  const ok = (w) => accepts(get(w.tool), files);
+  const norm = (e) => ({ jpeg: 'jpg', tif: 'tiff', htm: 'html', markdown: 'md' })[e] || e;
+  const ok = (w) => accepts(get(w.tool), files) && !(/^convert-(document|sheet|slides)$/.test(w.tool) && files.every((f) => norm(U.ext(f)) === norm(w.opts?.to)));
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
   if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
   const multi = [...(MULTI[g] || [])];
