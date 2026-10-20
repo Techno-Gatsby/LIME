@@ -116,7 +116,7 @@ async function runHost(method, p) {
   try {
     await loadInto(win, p);
     if (method === 'htmlToPdf') {
-      await fsp.writeFile(p.out, await win.webContents.printToPDF({ landscape: !!p.landscape, pageSize: p.pageSize || 'A4', printBackground: true, margins: { marginType: p.margins === 'none' ? 'none' : 'default' } }));
+      await fsp.writeFile(p.out, await win.webContents.printToPDF(p.css ? { printBackground: true, preferCSSPageSize: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } } : { landscape: !!p.landscape, pageSize: p.pageSize || 'A4', printBackground: true, margins: { marginType: p.margins === 'none' ? 'none' : 'default' } }));
       return p.out;
     }
     if (method === 'urlToImage') {
@@ -202,7 +202,7 @@ function notify(j, outs) {
 }
 
 let wheel = null, prefsWin = null, tray = null, dragTimer = null, sensor = null, watcher = null;
-const editors = new Set();
+const editors = new Set(), pickers = new Set();
 const webPrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false };
 const workArea = (pt) => screen.getDisplayNearestPoint(pt).workArea;
 function defaultAnchor() {
@@ -327,6 +327,25 @@ function openEditor(file, mode) {
   editors.add(win);
   win.on('closed', () => editors.delete(win));
   return true;
+}
+
+// A window showing the workbook, for choosing the cells to print. Resolves with the range text, or null.
+function pickCells(file, value) {
+  return new Promise((resolve) => {
+    const area = screen.getPrimaryDisplay().workAreaSize;
+    const win = new BrowserWindow({
+      width: Math.min(1100, area.width - 80), height: Math.min(720, area.height - 60), minWidth: 560, minHeight: 380, show: false, title: `Choose cells — ${path.basename(file)}`,
+      ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 22 } } : { autoHideMenuBar: true }),
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2', icon: asset('icon.png'), webPreferences: webPrefs,
+    });
+    win.pickerData = { file, value };
+    win.pick = (v) => { win.pick = null; resolve(v); if (!win.isDestroyed()) win.close(); };
+    win.on('closed', () => win.pick?.(null));
+    win.loadURL('app://local/picker.html');
+    win.once('ready-to-show', () => win.show());
+    pickers.add(win);
+    win.on('closed', () => pickers.delete(win));
+  });
 }
 
 function trayImage() {
@@ -488,6 +507,9 @@ function registerIpc() {
   h('jobs:list', () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt));
   h('editor:open', (file, mode) => openEditor(file, mode));
   hE('editor:data', (e) => BrowserWindow.fromWebContents(e.sender)?.editorData || null);
+  h('cells:pick', (file, value) => (file ? pickCells(file, value || '') : null));
+  hE('picker:data', async (e) => { const d = BrowserWindow.fromWebContents(e.sender)?.pickerData; return d ? { ...d, ...(await call('sheetPreview', d.file)) } : null; });
+  hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });
   h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
   hE('dialog:open', async (e, o = {}) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });

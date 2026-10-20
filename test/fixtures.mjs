@@ -464,6 +464,49 @@ const wb = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Fruit', 'Count', 'Price'], ['Lime', 12, 0.4], ['Lemon', 7, 0.5], ['Orange', 3, 0.9]]), 'Fruit');
 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Month', 'Sales'], ['Jan', 100], ['Feb', 140]]), 'Sales');
 XLSX.writeFile(wb, P('sheet.xlsx'));
+// A styled workbook for printing: merged title, fills, borders, number formats, a hidden row and column, repeated
+// header row, a picture and a footer on "Budget"; a landscape fit-to-page print area on "Summary"; a hidden sheet.
+{
+  const { zipSync, strToU8: u } = require('fflate');
+  const cell = (r, c) => `${String.fromCharCode(65 + c)}${r}`;
+  const months = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Q9', 'Q10', 'Total'];
+  const rows = [`<row r="1" ht="24" customHeight="1"><c r="A1" s="1" t="inlineStr"><is><t>Lime Budget 2026</t></is></c></row>`,
+    `<row r="2"><c r="A2" s="2" t="inlineStr"><is><t>Item</t></is></c>${months.map((m, i) => `<c r="${cell(2, i + 1)}" s="2" t="inlineStr"><is><t>${m}</t></is></c>`).join('')}</row>`];
+  for (let r = 3; r <= 62; r++) {
+    const name = r === 10 ? 'HiddenRow' : `Item ${r - 2}`;
+    rows.push(`<row r="${r}"${r === 10 ? ' hidden="1"' : ''}><c r="A${r}" t="inlineStr"><is><t>${name}</t></is></c><c r="B${r}" s="3"><v>${1234.5 * r}</v></c><c r="C${r}" s="4"><v>${0.125}</v></c><c r="D${r}" s="5"><v>${46037 + r}</v></c>`
+      + `<c r="E${r}" t="inlineStr"><is><t>HiddenCol</t></is></c><c r="F${r}" s="6"><v>${r % 2 ? -500 : 500}</v></c>${months.slice(5).map((m, i) => `<c r="${cell(r, i + 6)}"><v>${r * 10 + i}</v></c>`).join('')}</row>`);
+  }
+  const budget = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dimension ref="A1:L62"/>`
+    + `<cols><col min="1" max="1" width="18.7109375" customWidth="1"/><col min="2" max="4" width="12.7109375" customWidth="1"/><col min="5" max="5" width="12" hidden="1" customWidth="1"/><col min="6" max="12" width="12.7109375" customWidth="1"/></cols>`
+    + `<sheetData>${rows.join('')}</sheetData><mergeCells count="1"><mergeCell ref="A1:L1"/></mergeCells><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>`
+    + `<pageSetup paperSize="9" orientation="portrait"/><headerFooter><oddFooter>&amp;LLime&amp;CPage &amp;P of &amp;N&amp;R&amp;A</oddFooter></headerFooter><drawing r:id="rId1"/></worksheet>`;
+  const summary = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetData>`
+    + Array.from({ length: 20 }, (_, i) => `<row r="${i + 1}">${Array.from({ length: 6 }, (__, c) => `<c r="${cell(i + 1, c)}" t="inlineStr"><is><t>${i < 5 && c < 3 ? `In ${cell(i + 1, c)}` : 'Outside'}</t></is></c>`).join('')}</row>`).join('')
+    + `</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="1"/></worksheet>`;
+  const hidden = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>SECRET</t></is></c></row></sheetData></worksheet>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="3"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="yyyy-mm-dd"/><numFmt numFmtId="166" formatCode="#,##0;[Red]-#,##0"/></numFmts>`
+    + `<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="16"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/></font></fonts>`
+    + `<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2F6F1E"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor theme="9" tint="0.59999389629810485"/></patternFill></fill></fills>`
+    + `<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="medium"><color auto="1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>`
+    + `<cellXfs count="7"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1"/>`
+    + `<xf numFmtId="164" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="10" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="166" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`;
+  const rel = (id, type, target) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>`;
+  const rels = (...r) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${r.join('')}</Relationships>`;
+  const anchor = (col, row) => `<xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row}</xdr:row><xdr:rowOff>0</xdr:rowOff>`;
+  const drawing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+    + `<xdr:twoCellAnchor><xdr:from>${anchor(1, 3)}</xdr:from><xdr:to>${anchor(3, 8)}</xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="Logo"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"/></xdr:spPr></xdr:pic><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`;
+  const logo = await sharp({ create: { width: 120, height: 60, channels: 3, background: '#3d8a28' } }).png().toBuffer();
+  fs.writeFileSync(P('print.xlsx'), zipSync({
+    '[Content_Types].xml': u(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${[1, 2, 3].map((n) => `<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`),
+    '_rels/.rels': u(rels(rel('rId1', 'officeDocument', 'xl/workbook.xml'))),
+    'xl/workbook.xml': u(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets><sheet name="Budget" sheetId="1" r:id="rId1"/><sheet name="Summary" sheetId="2" r:id="rId2"/><sheet name="Hidden" sheetId="3" state="hidden" r:id="rId3"/></sheets><definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">Budget!$2:$2</definedName><definedName name="_xlnm.Print_Area" localSheetId="1">Summary!$A$1:$C$5</definedName></definedNames></workbook>`),
+    'xl/_rels/workbook.xml.rels': u(rels(rel('rId1', 'worksheet', 'worksheets/sheet1.xml'), rel('rId2', 'worksheet', 'worksheets/sheet2.xml'), rel('rId3', 'worksheet', 'worksheets/sheet3.xml'), rel('rId4', 'styles', 'styles.xml'))),
+    'xl/styles.xml': u(styles), 'xl/worksheets/sheet1.xml': u(budget), 'xl/worksheets/sheet2.xml': u(summary), 'xl/worksheets/sheet3.xml': u(hidden),
+    'xl/worksheets/_rels/sheet1.xml.rels': u(rels(rel('rId1', 'drawing', '../drawings/drawing1.xml'))),
+    'xl/drawings/drawing1.xml': u(drawing), 'xl/drawings/_rels/drawing1.xml.rels': u(rels(rel('rId1', 'image', '../media/image1.png'))), 'xl/media/image1.png': new Uint8Array(logo),
+  }));
+}
 fs.writeFileSync(P('sheet.csv'), 'Fruit,Count\nLime,12\nLemon,7\n');
 fs.writeFileSync(P('sheet2.csv'), 'Fruit,Count\nKiwi,5\n');
 fs.writeFileSync(P('data.json'), JSON.stringify([{ name: 'Lime', count: 12 }, { name: 'Lemon', count: 7 }], null, 2));

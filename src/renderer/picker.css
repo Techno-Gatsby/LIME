@@ -1,0 +1,26 @@
+html, body { height: 100%; }
+body { margin: 0; display: grid; grid-template-rows: auto 1fr auto; background: var(--bg); color: var(--ink); font: 13px/1.35 var(--font); overflow: hidden; }
+.bar { display: flex; align-items: center; gap: 8px; padding: 14px 16px 12px; background: var(--surface); border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+:root[data-platform="darwin"] .bar { padding-left: 84px; }
+.bar > * { -webkit-app-region: no-drag; }
+.bar .what { flex: 1; min-width: 0; -webkit-app-region: drag; }
+.bar h1 { margin: 0; font: 600 14px/1.2 var(--font-display); }
+.bar p { margin: 2px 0 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+kbd { font: 600 10.5px var(--font); padding: 0 4px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--surface-2); }
+.range { width: 240px; font-family: var(--mono); }
+.range[aria-invalid="true"] { border-color: var(--danger); }
+.grid { position: relative; overflow: auto; background: #fff; color: #000; user-select: none; cursor: cell; }
+.sheet { position: relative; display: inline-block; min-width: 100%; }
+.sheet td.h { cursor: default; }
+.sheet tr:first-child td.h { position: sticky; top: 0; z-index: 3; cursor: s-resize; }
+.sheet td.h[data-row] { position: sticky; left: 0; z-index: 2; cursor: e-resize; }
+.sheet tr:first-child td.h:first-child { left: 0; z-index: 4; cursor: se-resize; }
+.sheet td.h.on { background: #d9ecc9 !important; color: #1f4f12; font-weight: 600; }
+.sel { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.sel > div { position: absolute; border: 2px solid var(--green-2); background: rgba(61, 138, 40, .12); border-radius: 1px; }
+.sel > div.anchor { box-shadow: inset 0 0 0 1px #fff; }
+.tabs { display: flex; gap: 2px; padding: 0 12px; background: var(--surface-2); border-top: 1px solid var(--line); overflow-x: auto; }
+.tabs button { appearance: none; border: 0; background: transparent; color: var(--ink-2); font: 500 12px var(--font); padding: 8px 14px 9px; border-top: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+.tabs button:hover { color: var(--ink); background: var(--hover); }
+.tabs button[aria-selected="true"] { color: var(--accent-strong); background: var(--surface); border-top-color: var(--accent); font-weight: 600; }
+.tabs .n { margin-left: 6px; font-size: 10.5px; padding: 0 5px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-strong); }

@@ -28,6 +28,7 @@ const toggle = (key, label, def = false, extra = {}) => ({ key, type: 'toggle', 
 const pages = (key = 'pages', label = 'Pages', def = 'all', extra = {}) => ({ key, type: 'pages', label, default: def, placeholder: '1-3, 5, 8-', ...extra });
 const color = (key, label, def) => ({ key, type: 'color', label, default: def });
 const password = (key, label, extra = {}) => ({ key, type: 'password', label, default: '', ...extra });
+const cells = (key, label, extra = {}) => ({ key, type: 'cells', label, default: '', placeholder: 'A1:F20 or Sheet2!B2:H40', ...extra });
 const file = (key, label, filters, extra = {}) => ({ key, type: 'file', label, filters, default: '', ...extra });
 const level = (def = 'recommended') => choice('level', 'Compression', [['low', 'Light'], ['recommended', 'Balanced'], ['extreme', 'Strong']], def);
 const pdfPassword = password('password', 'Password, if locked', { advanced: true });
@@ -63,6 +64,21 @@ const SUB_IN = ['srt', 'vtt', 'ass', 'ssa', 'smi', 'sami', 'lrc', 'ttml', 'dfxp'
 const SINGLE_IN = ['gz', 'bz2', 'xz', 'lzma', 'z', 'zst', 'tgz', 'tbz', 'tbz2', 'txz', 'tzst'];
 const ARCHIVE_OUT = [['zip', 'ZIP'], ['7z', '7Z'], ['tar.gz', 'TAR.GZ'], ['tar.xz', 'TAR.XZ'], ['tar.bz2', 'TAR.BZ2'], ['tar', 'TAR'], ['gz', 'GZ (one file)'], ['bz2', 'BZ2 (one file)'], ['xz', 'XZ (one file)']];
 
+// Excel's print choices for spreadsheets saved as PDF.
+const PRINT_OPTS = [
+  choice('print', 'Print', [['workbook', 'Workbook'], ['active', 'Active sheet'], ['selection', 'Selection']], 'workbook'),
+  cells('cells', 'Cells', { required: true, when: { print: ['selection'] } }),
+  select('fit', 'Scaling', [['sheet', 'As set in the file'], ['none', 'Actual size'], ['page', 'Fit sheet on one page'], ['columns', 'Fit all columns on one page'], ['rows', 'Fit all rows on one page']], 'sheet'),
+  choice('orientation', 'Orientation', [['auto', 'Auto'], ['portrait', 'Portrait'], ['landscape', 'Landscape']], 'auto'),
+  select('paper', 'Paper', [['auto', 'As set in the file'], ['a4', 'A4'], ['letter', 'Letter'], ['legal', 'Legal'], ['a3', 'A3'], ['a5', 'A5'], ['tabloid', 'Tabloid']], 'auto'),
+  choice('gridlines', 'Gridlines', [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']], 'auto'),
+  choice('margins', 'Margins', [['auto', 'As set'], ['normal', 'Normal'], ['narrow', 'Narrow'], ['wide', 'Wide']], 'auto', { advanced: true }),
+  choice('order', 'Page order', [['auto', 'As set'], ['down', 'Down, then over'], ['over', 'Over, then down']], 'auto', { advanced: true }),
+  toggle('headings', 'Row and column headings', false, { advanced: true }),
+  toggle('center', 'Center on page', false, { advanced: true }),
+  toggle('pageNumbers', 'Page numbers', false, { advanced: true }),
+  toggle('ignoreArea', 'Ignore print areas', false, { advanced: true, when: { print: ['workbook', 'active'] } }),
+];
 const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
   { id: 'sign-pdf', cat: 'pdf', name: 'Sign PDF', desc: 'Draw, type or place a signature.', accepts: ['pdf'], max: 1, editor: 'sign' },
@@ -308,7 +324,8 @@ const TOOLS = [
   { id: 'convert-comic', cat: 'docs', name: 'Convert comic', desc: 'CBZ, CBR, CB7, CBT and CBC to PDF, EPUB, CBZ or pictures.', accepts: ['comic'], ext: (o) => o.to, folderWhen: { to: 'images' }, suffix: '',
     options: [select('to', 'Convert to', [['pdf', 'PDF'], ['epub', 'EPUB (fixed layout)'], ['cbz', 'CBZ'], ['images', 'Pictures (folder)']])], run: each((f, o, c) => ebook().convertComic(f, o, c)) },
   { id: 'convert-sheet', cat: 'docs', name: 'Convert spreadsheet', desc: 'XLSX, CSV, JSON, HTML, ODS and PDF.', accepts: ['sheet'], ext: (o) => o.to,
-    options: [select('to', 'Convert to', [['xlsx', 'Excel (XLSX)'], ['csv', 'CSV'], ['pdf', 'PDF'], ['json', 'JSON'], ['html', 'HTML'], ['ods', 'OpenDocument'], ['md', 'Markdown'], ['xls', 'Excel 97']]), toggle('allSheets', 'Every sheet (CSV, JSON)', true, { when: { to: ['csv', 'tsv', 'json'] } })],
+    options: [select('to', 'Convert to', [['xlsx', 'Excel (XLSX)'], ['csv', 'CSV'], ['pdf', 'PDF'], ['json', 'JSON'], ['html', 'HTML'], ['ods', 'OpenDocument'], ['md', 'Markdown'], ['xls', 'Excel 97']]), toggle('allSheets', 'Every sheet (CSV, JSON)', true, { when: { to: ['csv', 'tsv', 'json'] } }),
+      ...PRINT_OPTS.map((o) => ({ ...o, when: { to: ['pdf'], ...o.when } }))],
     run: each((f, o, c) => office().convertSheet(f, o.to, c, o)) },
   { id: 'convert-slides', cat: 'docs', name: 'Convert slides', desc: 'PowerPoint and Keynote to PDF, images, HTML and text.', accepts: ['slides'], ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
     options: [select('to', 'Convert to', [['pdf', 'PDF'], ['png', 'Images (PNG)'], ['html', 'Web page'], ['txt', 'Text'], ['md', 'Markdown'], ['pptx', 'PowerPoint']])],
@@ -443,7 +460,7 @@ const WHEELS = {
     tools: [W('font-info', 'Info', 'Glyphs'), ZIP, HASH],
   },
   sheet: {
-    convert: [W('convert-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-sheet', 'CSV', 'Plain', { to: 'csv' }), W('convert-sheet', 'PDF', 'Document', { to: 'pdf' }), W('convert-sheet', 'JSON', 'Data', { to: 'json' }), W('convert-sheet', 'HTML', 'Table', { to: 'html' }), W('convert-sheet', 'ODS', 'Open', { to: 'ods' }), W('convert-sheet', 'MD', 'Markdown', { to: 'md' }),
+    convert: [W('convert-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-sheet', 'CSV', 'Plain', { to: 'csv' }), W('convert-sheet', 'PDF', 'Print', { to: 'pdf' }, { ask: true }), W('convert-sheet', 'JSON', 'Data', { to: 'json' }), W('convert-sheet', 'HTML', 'Table', { to: 'html' }), W('convert-sheet', 'ODS', 'Open', { to: 'ods' }), W('convert-sheet', 'MD', 'Markdown', { to: 'md' }),
       W('convert-data', 'YAML', 'Data', { to: 'yaml' }, { only: CSV_EXT }), W('convert-data', 'XML', 'Data', { to: 'xml' }, { only: CSV_EXT }), W('convert-contacts', 'vCard', 'Contacts', { to: 'vcf' }, { only: CSV_EXT })],
     tools: [ZIP, HASH],
   },

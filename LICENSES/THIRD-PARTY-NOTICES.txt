@@ -26,7 +26,7 @@ Bundled engines
   Cubic-to-quadratic font outlines follow the approach of cu2qu (fontTools, Google) ... Apache-2.0
   Test suite only (not shipped): wawoff2 ... MIT (Google's WOFF2 reference build) ; cfb ... Apache-2.0
   Electron / Chromium ...... MIT / BSD
-  Noto Sans/Serif/Mono, Caveat, Dancing Script fonts ... SIL Open Font License 1.1
+  Noto Sans/Serif/Mono, Caveat, Dancing Script, Carlito fonts ... SIL Open Font License 1.1
   Tesseract trained data (tessdata_best, tessdata_fast) ... Apache-2.0
 
 ArtCraft engines (unmodified command-line builds from github.com/storytold)

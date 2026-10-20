@@ -132,6 +132,19 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       const p = BrowserWindow.getAllWindows().find((x) => x.getTitle() === 'Lime Settings');
       if (p) await shot('14-prefs', p);
     }
+    if (want('print')) {
+      const book = path.join(samples, 'print.xlsx');
+      await js(`window.__lime.openWith(${JSON.stringify([book])})`);
+      await sleep(400);
+      await js('(() => { const t = window.__lime.catalog["convert-sheet"], o = Object.fromEntries(t.options.map((x) => [x.key, x.default])); Object.assign(o, { to: "pdf", print: "selection", cells: "Budget!B3:C6" }); window.__lime.showOptions(t, o); })()');
+      await shot('16-print-options');
+      js(`window.lime.invoke('cells:pick', ${JSON.stringify(book)}, 'Budget!B3:C6, Budget!F12:H14')`);
+      let pk = null;
+      for (let t = 0; t < 60 && !pk; t++) { await sleep(250); pk = BrowserWindow.getAllWindows().find((x) => x.pickerData && !x.webContents.isLoading()); }
+      if (pk) { await sleep(1500); await shot('17-picker', pk); pk.close(); }
+      await js('window.__lime.collapse()');
+      await sleep(500);
+    }
     if (want('editor')) {
       openEditor(path.join(samples, 'doc.pdf'), 'edit');
       await sleep(4500);

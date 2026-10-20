@@ -306,7 +306,7 @@ async function htmlToPdf(html, out, ctx, opts = {}) {
   const tmp = await U.tmpDir('html');
   const file = path.join(tmp, 'page.html');
   await fsp.writeFile(file, html, 'utf8');
-  try { await ctx.host('htmlToPdf', { file, out, landscape: !!opts.landscape, pageSize: opts.pageSize || 'A4', margins: opts.margins, offline: !!opts.offline }); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+  try { await ctx.host('htmlToPdf', { file, out, landscape: !!opts.landscape, pageSize: opts.pageSize || 'A4', margins: opts.margins, offline: !!opts.offline, css: !!opts.css }); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
   return out;
 }
 
@@ -495,6 +495,7 @@ async function convertSheet(input, to, ctx, opts = {}) {
     throw missing('Numbers files need the Numbers app on this Mac.');
   }
   if (CSV_IN.includes(from) && ['json', 'jsonl', 'yaml', 'toml', 'xml', 'vcf'].includes(to)) return data().convert(input, { to }, ctx);
+  if (to === 'pdf') return require('./sheetprint').toPdf(input, opts, ctx.out.file(input, `${U.base(input)}.pdf`), ctx);
   const flat = ['csv', 'tsv', 'txt', 'json'].includes(to);
   const wb = readBook(input, flat ? { cellStyles: true } : {});
   const names = wb.SheetNames, filled = names.filter((n) => hasCells(wb.Sheets[n]));
@@ -509,15 +510,6 @@ async function convertSheet(input, to, ctx, opts = {}) {
   if (to === 'html') { await fsp.writeFile(out, htmlDoc(U.base(input), tables.join(''))); return out; }
   if (to === 'md') { await fsp.writeFile(out, htmlToMd(tables.join(''))); return out; }
   if (to === 'docx') return htmlToDocx(tables.join(''), U.base(input), out);
-  if (to === 'pdf') {
-    if (libreOfficePath() && CSV_IN.includes(from)) {
-      const tmp = path.join(await U.tmpDir('csv'), `${U.base(input)}.xlsx`);
-      XLSX.writeFile(wb, tmp, { compression: true });
-      try { return await viaLibreOffice(tmp, 'pdf', ctx, { out }); } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
-    }
-    if (libreOfficePath()) return viaLibreOffice(input, 'pdf', ctx, { out });
-    return htmlToPdf(htmlDoc(U.base(input), tables.join('<div style="page-break-after:always"></div>'), 'body{font-size:8.5pt}h2{font-size:12pt}'), out, ctx, { landscape: true });
-  }
   return writeSheet(XLSX, wb.Sheets[filled[0] || names[0]], to, out);
 }
 // What the sheet shows, rows and columns from A1 to the used range's far corner, hidden ones left out.

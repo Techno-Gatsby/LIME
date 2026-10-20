@@ -484,7 +484,7 @@ function showOptions(tool, opts, it) {
   const node = h(`<div><div class="head"><h3>${esc(tool.name)}</h3><button class="btn subtle icon" data-a="x" title="Close">${icon('close', 'sm')}</button></div><p class="desc">${esc(tool.desc || '')}</p><p class="about">${esc(S.files.length === 1 ? `${nameOf(S.files[0])} · ${about}` : about)}</p></div>`);
   const btn = h(`<button class="btn primary">${esc(verbFor(tool, opts))}</button>`);
   if (tool.ordered && S.files.length > 1) node.append(orderList(tool, () => { btn.disabled = S.files.length < (tool.min || 1); btn.title = btn.disabled ? `${tool.name} needs at least ${tool.min} files` : ''; }));
-  node.append(form(tool, opts, () => { btn.textContent = verbFor(tool, opts); requestAnimationFrame(layout); }));
+  node.append(form(tool, opts, () => { btn.textContent = verbFor(tool, opts); requestAnimationFrame(layout); }, { files: S.files, busy: (v) => { S.asking = v; } }));
   const foot = h('<div class="foot"><button class="btn" data-a="x">Cancel</button></div>');
   foot.append(btn);
   node.append(foot);

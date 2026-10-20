@@ -329,7 +329,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     if (!(await lime('return !!document.querySelector(".card .order li");'))) throw new Error('no order list in the card');
     await click('.card .order li[data-i="0"] [data-mv="1"]');
     await sleep(300);
-    const order = await lime('return L.S.files.map((f) => f.split(/[\\/]/).pop());');
+    const order = await lime('return L.S.files.map((f) => f.split(/[\\\\/]/).pop());');
     if (order[0] !== 'doc.pdf') throw new Error(`order after move: ${order}`);
     asked = [];
     await click('.card .foot .btn.primary');
@@ -342,6 +342,49 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
   console.log(`${ord.status} ${ord.name.padEnd(44)}        ${ord.detail}`);
   results.push(ord);
   await lime(`if (L.S.state !== 'idle') await L.collapse();`).catch(() => {});
+
+  await check('sheet print · choose cells in the picker', async () => {
+    if (!fs.existsSync(fx('print.xlsx'))) throw Object.assign(new Error('no print.xlsx'), { skip: true });
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    await sleep(350);
+    await lime(`await L.openWith(${JSON.stringify([fx('print.xlsx')])}); L.setMode('convert');`);
+    await sleep(1000);
+    const i = await lime('return L.S.ring.findIndex((x) => x.tool === "convert-sheet" && x.opts?.to === "pdf");');
+    if (i < 0) throw new Error('no PDF petal for a workbook');
+    await click(`.petal[data-i="${i}"] text.l`);
+    await sleep(500);
+    await click('.card [data-v="selection"]');
+    await sleep(300);
+    await click('.card #o-cells + button');
+    let pk = null;
+    for (let t = 0; t < 60 && !pk; t++) { await sleep(200); pk = BrowserWindow.getAllWindows().find((w) => /picker\.html/.test(w.webContents.getURL()) && !w.webContents.isLoading()) || null; }
+    if (!pk) throw new Error('the cell picker did not open');
+    const wc = pk.webContents, pjs = (code) => js(code, wc);
+    for (let t = 0; t < 60 && !(await pjs('!!document.querySelector("td[data-r]")')); t++) await sleep(200);
+    const tabs = await pjs('[...document.querySelectorAll("#tabs button")].map((b) => b.textContent).join()');
+    if (tabs !== 'Budget,Summary') throw new Error(`sheet tabs ${tabs}`);
+    const pos = (sel) => pjs(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()`);
+    const press = async (p, type, extra = {}) => { wc.sendInputEvent({ type, x: p.x, y: p.y, button: 'left', clickCount: 1, ...extra }); await sleep(70); };
+    const a = await pos('td[data-r="2"][data-c="1"]'), b = await pos('td[data-r="5"][data-c="2"]');
+    await press(a, 'mouseMove'); await press(a, 'mouseDown'); await press(b, 'mouseMove', { modifiers: ['leftButtonDown'] }); await press(b, 'mouseUp');
+    const picked = await pjs('document.querySelector("#range").value');
+    if (picked !== 'Budget!B3:C6') throw new Error(`the picker shows ${picked}`);
+    const u = await pos('[data-a="use"]');
+    await press(u, 'mouseMove'); await press(u, 'mouseDown'); await press(u, 'mouseUp');
+    for (let t = 0; t < 40 && !pk.isDestroyed(); t++) await sleep(100);
+    if (!pk.isDestroyed()) throw new Error('the picker stayed open');
+    const val = await js('document.querySelector(".card #o-cells").value');
+    if (val !== picked) throw new Error(`the Cells field shows ${val}`);
+    asked = [];
+    await click('.card .foot .btn.primary');
+    if ((await settle()) !== 'done') throw new Error(await lime('return L.S.result?.error || "did not finish";'));
+    const [o] = await lime('return L.S.result.outs;');
+    if (!asked.length || !inside(o)) throw new Error('not saved where asked');
+    const { doc } = await require(path.join(__dirname, '..', 'src', 'main', 'engines', 'pdf')).readPdf(o);
+    const t = doc.loadPage(0).toStructuredText('').asText();
+    if (doc.countPages() !== 1 || !t.includes('3,703.50') || !t.includes('12.50%') || t.includes('Item 1')) throw new Error(`printed ${doc.countPages()} pages: ${t.slice(0, 120)}`);
+    return `${picked} → ${path.relative(OUT, o)}`;
+  });
 
   const ed = { name: 'edit pdf · save', status: 'PASS', detail: '' };
   try {

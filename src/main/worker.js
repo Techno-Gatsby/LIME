@@ -23,6 +23,7 @@ function normalise(res) {
   return list.filter(Boolean).map((r) => (typeof r === 'string' ? { path: r } : r));
 }
 const CALLS = {
+  sheetPreview: (p) => require('./engines/sheetprint').preview(p),
   async thumbnail(p, size = 240) {
     const g = U.groupOf(p);
     if (g === 'pdf') { const t = await require('./engines/pdf').thumbnail(p, size); return { png: t.png, pages: t.pages }; }

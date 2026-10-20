@@ -42,7 +42,7 @@ export function visible(o, opts) {
 export function missingRequired(tool, opts) {
   return (tool.options || []).find((o) => o.required && visible(o, opts) && (opts[o.key] === '' || opts[o.key] == null));
 }
-export function form(tool, opts, onChange) {
+export function form(tool, opts, onChange, ctx = {}) {
   const box = h('<div class="form"></div>');
   const draw = () => {
     box.innerHTML = '';
@@ -99,6 +99,17 @@ export function form(tool, opts, onChange) {
         el = h(`<div class="row"><button class="btn" type="button">Choose…</button><span class="muted ell">${val ? esc(nameOf(val)) : 'No file chosen'}</span></div>`);
         $('button', el).addEventListener('click', async () => { const [f] = await api.invoke('dialog:open', { multi: false, filters: o.filters }); if (f) { set(o, f); $('span', el).textContent = nameOf(f); } });
         break;
+      case 'cells': {
+        el = h(`<div class="row"><input class="input" id="${id}" type="text" value="${esc(val)}" placeholder="${esc(o.placeholder || '')}" autocomplete="off" spellcheck="false"><button class="btn" type="button">Choose…</button></div>`);
+        const input = $('input', el);
+        input.addEventListener('input', (e) => set(o, e.target.value));
+        $('button', el).addEventListener('click', async () => {
+          ctx.busy?.(true);
+          const v = await api.invoke('cells:pick', ctx.files?.[0], input.value).catch(() => null).finally(() => ctx.busy?.(false));
+          if (v != null) { input.value = v; set(o, v); }
+        });
+        break;
+      }
       case 'multi':
         el = h(`<div class="chips">${o.choices.map(([v, l]) => `<button type="button" class="chip" data-v="${esc(v)}" aria-pressed="${(val || []).includes(v)}">${esc(l)}</button>`).join('')}</div>`);
         el.addEventListener('click', (e) => {

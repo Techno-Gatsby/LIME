@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' media: data:">
+<title>Choose cells</title>
+<link rel="stylesheet" href="lime.css">
+<link rel="stylesheet" href="picker.css">
+</head>
+<body>
+<header class="bar">
+  <div class="what"><h1>Choose cells to print</h1><p class="muted">Drag to select. Hold <kbd class="mod">Ctrl</kbd> to add another area. Click a row or column heading to take all of it.</p></div>
+  <input class="input range" id="range" spellcheck="false" autocomplete="off" placeholder="A1:F20" aria-label="Cells">
+  <button class="btn" type="button" data-a="used">Used range</button>
+  <button class="btn" type="button" data-a="cancel">Cancel</button>
+  <button class="btn primary" type="button" data-a="use" disabled>Use Selection</button>
+</header>
+<main class="grid" id="grid"><div class="sheet" id="sheet"></div><div class="sel" id="sel"></div></main>
+<nav class="tabs" id="tabs" aria-label="Sheets"></nav>
+<script type="module" src="picker.js"></script>
+</body>
+</html>

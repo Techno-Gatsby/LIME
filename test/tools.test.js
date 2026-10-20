@@ -744,6 +744,41 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const [to, chk] of [['json', (o) => ok(JSON.parse(txt(o).replace(/^\ufeff/, '')).length >= 1 || true, 'json')], ['html', (o) => ok(txt(o).includes('Lime'), 'html')], ['pdf', async (o) => ok((await pdfText(o)).includes('Lime'), 'pdf')], ['ods', (o) => zipHas(o, 'content.xml')], ['md', (o) => ok(txt(o).includes('| Fruit |'), 'md')], ['xls', (o) => ok(require('xlsx').readFile(o).SheetNames.length === 2, 'xls')], ['docx', async (o) => ok((await docxText(o)).includes('Lime'), 'docx')]]) {
     T(`sheet→${to}`, 'convert-sheet', ['sheet.xlsx'], { to, allSheets: false }, async ([o]) => chk(o));
   }
+  // Printing a workbook: Budget is 1021 px wide and 1232 px tall on A4 portrait, so 2 column bands × 2 row bands.
+  const printed = async (p) => {
+    const { doc } = await E('pdf').readPdf(p);
+    return Array.from({ length: doc.countPages() }, (_, i) => {
+      const pg = doc.loadPage(i), [x0, y0, x1, y1] = pg.getBounds();
+      let images = 0;
+      pg.toStructuredText('preserve-images').walk({ onImageBlock() { images++; } });
+      return { w: Math.round(x1 - x0), h: Math.round(y1 - y0), text: pg.toStructuredText('').asText(), images };
+    });
+  };
+  const PR = { to: 'pdf' };
+  T('sheet print: workbook as set in the file', 'convert-sheet', ['print.xlsx'], PR, async ([o], r) => {
+    const p = await printed(o);
+    same(p.map((x) => `${x.w}x${x.h}`), ['595x842', '595x842', '595x842', '595x842', '842x595'], 'page sizes');
+    has(p[0].text, 'Lime Budget 2026', 'Item 1', '3,703.50', '12.50%', 'Q1', 'Page 1 of 5', 'Budget', 'Lime');
+    ok(/\d{4}-\d{2}-\d{2}/.test(p[0].text) && /-500/.test(p[0].text), 'date or negative format');
+    ok(!p.some((x) => /HiddenRow|HiddenCol|SECRET|Outside/.test(x.text)), 'hidden row, column, sheet or outside the print area printed');
+    has(p[1].text, 'Q1', 'Item 60', 'Page 2 of 5');
+    ok(!p[1].text.includes('Lime Budget 2026') && !p[0].text.includes('Total'), 'bands');
+    has(p[2].text, 'Total', 'Q7');
+    has(p[4].text, 'In A1', 'In C5');
+    ok(p[0].images === 1 && p[2].images === 0, `pictures ${p.map((x) => x.images)}`);
+    ok(/5 pages/.test(r[0].note), r[0].note);
+  });
+  T('sheet print: fit all columns', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'active', fit: 'columns' }, async ([o]) => { const p = await printed(o); ok(p.length === 1, `${p.length} pages`); has(p[0].text, 'Total', 'Item 60', 'Lime Budget 2026'); });
+  T('sheet print: fit all rows', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'active', fit: 'rows' }, async ([o]) => { const p = await printed(o); ok(p.length === 2, `${p.length} pages`); has(p[0].text, 'Item 1', 'Item 60'); ok(!p[0].text.includes('Total') && p[1].text.includes('Total'), 'columns split'); });
+  T('sheet print: fit sheet on one page, landscape letter', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'active', fit: 'page', orientation: 'landscape', paper: 'letter' }, async ([o]) => { const p = await printed(o); same(p.map((x) => `${x.w}x${x.h}`), ['792x612'], 'pages'); has(p[0].text, 'Total', 'Item 60'); });
+  T('sheet print: over, then down', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'active', fit: 'none', order: 'over' }, async ([o]) => { const p = await printed(o); ok(p.length === 4 && p[1].text.includes('Total') && !p[1].text.includes('Item 60'), `page 2: ${p[1]?.text.slice(0, 80)}`); });
+  T('sheet print: selection', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'selection', cells: 'B2:C6' }, async ([o]) => { const p = await printed(o); ok(p.length === 1, `${p.length} pages`); has(p[0].text, 'Q1', 'Q2', '3,703.50', 'Page 1 of 1'); ok(!/Item 1|Lime Budget/.test(p[0].text), 'outside the selection'); });
+  T('sheet print: areas on two sheets', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'selection', cells: "Budget!A3:A4, 'Summary'!D10:E11" }, async ([o]) => { const p = await printed(o); ok(p.length === 2, `${p.length} pages`); has(p[0].text, 'Item 1', 'Item 2'); has(p[1].text, 'Outside'); });
+  T('sheet print: headings and page numbers', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'selection', cells: 'Summary!A1:C5', headings: true, pageNumbers: true }, async ([o]) => { const t = (await printed(o))[0].text.split('\n').map((x) => x.trim()); ok(['A', 'B', 'C', '1', '5'].every((x) => t.includes(x)), `headings: ${t.slice(0, 12)}`); ok(t.includes('Page 1 of 1'), 'page number'); });
+  T('sheet print: ignore print areas', 'convert-sheet', ['print.xlsx'], { ...PR, ignoreArea: true }, async ([o]) => { const p = await printed(o); has(p[p.length - 1].text, 'Outside', 'In A1'); });
+  F('sheet print: selection needs cells', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'selection', cells: '' }, /Choose the cells/);
+  F('sheet print: unknown sheet', 'convert-sheet', ['print.xlsx'], { ...PR, print: 'selection', cells: 'Nope!A1:B2' }, /no sheet called/);
+  T('sheet print: csv with gridlines', 'convert-sheet', ['sheet.csv'], PR, async ([o]) => { const p = await printed(o); ok(p.length === 1, `${p.length} pages`); has(p[0].text, 'Fruit', 'Lime', 'Lemon'); });
   T('csv→xlsx', 'convert-sheet', ['sheet.csv'], { to: 'xlsx' }, ([o]) => { const wb = XLSX.readFile(o); ok(wb.SheetNames[0] === 'sheet' && cell(wb.Sheets.sheet, 'A2') === 's:Lime' && cell(wb.Sheets.sheet, 'B2') === 'n:12', 'xlsx'); });
   T('json→xlsx', 'json-to-sheet', ['data.json'], { to: 'xlsx' }, ([o]) => ok(require('xlsx').readFile(o).SheetNames.length === 1, 'xlsx'));
   T('slides→pdf', 'convert-slides', ['deck.pptx'], { to: 'pdf' }, async ([o]) => { await pages(o, 2); ok((await pdfText(o)).includes('Lime Deck'), 'slide text'); });
