@@ -504,17 +504,22 @@ async function convertSlides(input, to, ctx) {
   throw missing(`PowerPoint to ${to.toUpperCase()} needs ${isMac ? 'Keynote or ' : ''}LibreOffice on this computer.`);
 }
 
-function readBook(input) {
+const data = () => require('./data');
+const CSV_IN = ['csv', 'tsv', 'tab'];
+const sheetName = (n) => n.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31).trim() || 'Sheet1';
+function readBook(input, opts = {}) {
   const XLSX = require('xlsx');
-  if (U.ext(input) === 'json') {
-    const data = JSON.parse(fs.readFileSync(input, 'utf8'));
-    const rows = Array.isArray(data) ? data : Object.values(data).find(Array.isArray) || [data];
+  const e = U.ext(input), D = data();
+  if (e === 'json' || CSV_IN.includes(e)) {
+    // CSV cells stay text unless they are plain numbers: no dates from "1/2", no lost leading zeros, any encoding.
+    const rows = e === 'json' ? D.table(D.readTree(input, 'json')) : D.csvRows(fs.readFileSync(input), e !== 'csv', false);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.map((r) => (r && typeof r === 'object' ? Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v && typeof v === 'object' ? JSON.stringify(v) : v])) : { value: r }))), 'Data');
+    XLSX.utils.book_append_sheet(wb, D.rowsToSheet(rows), e === 'json' ? 'Data' : sheetName(U.base(input)));
     return wb;
   }
-  return XLSX.readFile(input, { cellDates: true, FS: U.ext(input) === 'tsv' ? '\t' : undefined });
+  return XLSX.readFile(input, { cellDates: true, ...opts });
 }
+const hasCells = (ws) => Object.keys(ws).some((k) => k[0] !== '!' && ws[k].v != null && ws[k].v !== '');
 async function convertSheet(input, to, ctx, opts = {}) {
   const XLSX = require('xlsx');
   const from = U.ext(input);
@@ -526,11 +531,13 @@ async function convertSheet(input, to, ctx, opts = {}) {
     if (libreOfficePath()) return viaLibreOffice(input, to, ctx, { out });
     throw missing('Numbers files need the Numbers app on this Mac.');
   }
-  const wb = readBook(input);
-  const names = wb.SheetNames;
-  if (['csv', 'tsv', 'txt', 'json'].includes(to) && names.length > 1 && opts.allSheets !== false) {
+  if (CSV_IN.includes(from) && ['json', 'jsonl', 'yaml', 'toml', 'xml', 'vcf'].includes(to)) return data().convert(input, { to }, ctx);
+  const flat = ['csv', 'tsv', 'txt', 'json'].includes(to);
+  const wb = readBook(input, flat ? { cellStyles: true } : {});
+  const names = wb.SheetNames, filled = names.filter((n) => hasCells(wb.Sheets[n]));
+  if (flat && filled.length > 1 && opts.allSheets !== false) {
     const folder = ctx.out.folder(input, `${U.base(input)} - sheets`);
-    for (const n of names) await writeSheet(XLSX, wb.Sheets[n], to, path.join(folder, `${U.sanitize(n)}.${to}`));
+    for (const n of filled) await writeSheet(XLSX, wb.Sheets[n], to, path.join(folder, `${U.sanitize(n)}.${to}`));
     return folder;
   }
   const out = ctx.out.file(input, `${U.base(input)}${from === to ? '-converted' : ''}.${to}`);
@@ -540,15 +547,38 @@ async function convertSheet(input, to, ctx, opts = {}) {
   if (to === 'md') { await fsp.writeFile(out, htmlToMd(tables.join(''))); return out; }
   if (to === 'docx') return htmlToDocx(tables.join(''), U.base(input), out);
   if (to === 'pdf') {
+    if (libreOfficePath() && CSV_IN.includes(from)) {
+      const tmp = path.join(await U.tmpDir('csv'), `${U.base(input)}.xlsx`);
+      XLSX.writeFile(wb, tmp, { compression: true });
+      try { return await viaLibreOffice(tmp, 'pdf', ctx, { out }); } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
+    }
     if (libreOfficePath()) return viaLibreOffice(input, 'pdf', ctx, { out });
     return htmlToPdf(htmlDoc(U.base(input), tables.join('<div style="page-break-after:always"></div>'), 'body{font-size:8.5pt}h2{font-size:12pt}'), out, ctx, { landscape: true });
   }
-  return writeSheet(XLSX, wb.Sheets[names[0]], to, out);
+  return writeSheet(XLSX, wb.Sheets[filled[0] || names[0]], to, out);
+}
+// What the sheet shows, rows and columns from A1 to the used range's far corner, hidden ones left out.
+function sheetRows(XLSX, ws) {
+  if (!ws['!ref'] || !hasCells(ws)) return [];
+  const r = XLSX.utils.decode_range(ws['!ref']);
+  const hidden = (list) => new Set((list || []).map((x, i) => (x?.hidden ? i : -1)));
+  const hr = hidden(ws['!rows']), hc = hidden(ws['!cols']);
+  const rows = [];
+  for (let R = 0; R <= r.e.r; R++) {
+    if (hr.has(R)) continue;
+    const row = [];
+    for (let C = 0; C <= r.e.c; C++) {
+      if (hc.has(C)) continue;
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      row.push(!cell || cell.v == null ? '' : cell.w ?? XLSX.utils.format_cell(cell));
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 async function writeSheet(XLSX, ws, to, out) {
   if (to === 'json') await fsp.writeFile(out, JSON.stringify(XLSX.utils.sheet_to_json(ws, { defval: '' }), null, 2));
-  else if (to === 'tsv' || to === 'txt') await fsp.writeFile(out, XLSX.utils.sheet_to_csv(ws, { FS: '\t' }));
-  else await fsp.writeFile(out, `\ufeff${XLSX.utils.sheet_to_csv(ws)}`);
+  else await fsp.writeFile(out, data().csvText(sheetRows(XLSX, ws), to === 'csv' ? ',' : '\t'));
   return out;
 }
 async function mergeSheets(inputs, opts, ctx) {
