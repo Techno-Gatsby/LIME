@@ -23,7 +23,7 @@ function configure(c) { Object.assign(cfg, c || {}); }
 
 const GROUPS = {
   pdf: ['pdf'],
-  image: ['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif', 'heic', 'heif', 'svg', 'ico', 'psd', 'psb', 'pcraft', 'tga', 'jp2', 'jxl', 'dds', 'pcx', 'ppm', 'pgm', 'exr', 'hdr', 'dpx', 'qoi'],
+  image: ['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif', 'heic', 'heif', 'svg', 'ico', 'psd', 'psb', 'pcraft', 'tga', 'jp2', 'jxl', 'dds', 'pcx', 'ppm', 'pgm', 'exr', 'hdr', 'dpx', 'qoi', 'apng', 'cur', 'icns', 'hif', 'j2k', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'sun', 'xbm', 'xpm', 'wbmp'],
   raw: ['cr2', 'cr3', 'nef', 'nrw', 'arw', 'srf', 'sr2', 'dng', 'orf', 'rw2', 'raf', 'srw', 'pef', 'x3f', '3fr', 'erf', 'kdc', 'mrw', 'rwl', 'iiq'],
   video: ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts', '3gp', '3g2', 'ogv', 'vob', 'asf', 'f4v', 'rm', 'rmvb', 'divx', 'mxf'],
   audio: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'aif', 'amr', 'ac3', 'mka', 'alac', 'ape', 'wv', 'm4b', 'caf', 'au', 'mid', 'midi'],

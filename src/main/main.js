@@ -556,9 +556,10 @@ app.whenReady().then(async () => {
   screen.on('display-removed', () => { placeWheel(); placeSensor(); });
   screen.on('display-metrics-changed', () => { placeWheel(); placeSensor(); });
   screen.on('display-added', placeSensor);
-  if (process.env.LIME_TEST && !app.isPackaged) require(path.join(ROOT, 'test', 'tools.test'))({ submit, jobs, app, tools, dir: process.env.LIME_TEST });
-  if (process.env.LIME_UI && !app.isPackaged) require(path.join(ROOT, 'test', 'ui.test'))({ wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen, dir: process.env.LIME_UI });
-  if (process.env.LIME_SHOTS && !app.isPackaged) require(path.join(ROOT, 'test', 'shots'))({ wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen, dir: process.env.LIME_SHOTS });
+  const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
+  harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
+  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen });
+  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen });
 });
 app.on('activate', () => showWheel());
 app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });

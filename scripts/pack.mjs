@@ -11,7 +11,7 @@ export const which = (env, ...n) => process.env[env] || n.find((x) => { try { ex
 export const rm = (...p) => fs.rmSync(path.join(...p), { recursive: true, force: true });
 export const ls = (d) => (fs.existsSync(d) ? fs.readdirSync(d) : []);
 
-const KEEP = /^\/(src|build|node_modules|package\.json)(\/|$)/;
+const KEEP = /^\/(src|build|assets|node_modules|package\.json)(\/|$)/;
 const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests__|docs?|examples?|benchmarks?|\.github)\/|\/(?!licen[cs]e|copying|notice)[^/]*\.(md|markdown|map|ts|tsbuildinfo|flow)$/i;
 
 export async function pack(platform, arch, opts) {

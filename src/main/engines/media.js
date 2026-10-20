@@ -648,25 +648,6 @@ async function blurArea(p, opts, ctx) {
     : `boxblur=lr=${r}:lp=2:cr=${Math.max(1, Math.min(Math.floor(r / 2), Math.floor(side / 4)))}:cp=2`;
   return simpleFilter(p, ctx, 'blurred', `split[a][b];[b]crop=${w}:${h}:${x}:${y},${fx}[c];[a][c]overlay=${x}:${y}`, null, opts.mode === 'pixelate' ? 'Pixelating' : 'Blurring');
 }
-async function animation(p, opts, ctx) {
-  const sharp = require('sharp'), e = U.ext(p) === 'webp' ? 'webp' : 'gif';
-  const m = await sharp(p, { animated: true, limitInputPixels: false }).metadata();
-  const n = m.pages || 1, h = m.pageHeight || m.height, k = U.clamp(Number(opts.speed) || 1, 0.1, 10);
-  if (n < 2) throw new Error(`${path.basename(p)} isn’t animated.`);
-  let delay = Array.from({ length: n }, (_, i) => { const d = m.delay?.[i] || 100; return k === 1 ? d : Math.max(20, Math.round(d / k)); });
-  let img = sharp(p, { animated: true, limitInputPixels: false });
-  if (opts.reverse) {
-    const { data, info } = await img.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-    const size = info.width * h * 4, flipped = Buffer.alloc(data.length);
-    for (let i = 0; i < n; i++) data.copy(flipped, (n - 1 - i) * size, i * size, (i + 1) * size);
-    img = sharp(flipped, { raw: { width: info.width, height: h * n, channels: 4, pageHeight: h } });
-    delay = delay.reverse();
-  }
-  ctx.progress(0.3, opts.reverse ? 'Reversing' : 'Changing speed');
-  const out = ctx.out.file(p, `${U.base(p)}-${opts.reverse ? 'reversed' : `${k}x`}.${e}`);
-  await img[e]({ delay, loop: m.loop ?? 0 }).toFile(out);
-  return out;
-}
 async function imagesToVideo(inputs, opts, ctx) {
   const secs = Number(opts.seconds) || 3;
   const [W, H] = (opts.size || '1920x1080').split('x').map(Number);
@@ -724,6 +705,6 @@ async function thumbnail(p) {
 
 module.exports = {
   probe, probeFf, ffmpeg, parseTime, encoders, supports, convertVideo, compressVideo, trim, merge, extractAudio, convertAudio, compressAudio, mute, resizeVideo, rotateVideo, speed,
-  toGif, frames, extractSubtitles, snapshot, burnSubtitles, normalize, cropVideo, addAudio, loop, volume, reverse, fade, pitch, blurArea, animation,
+  toGif, frames, extractSubtitles, snapshot, burnSubtitles, normalize, cropVideo, addAudio, loop, volume, reverse, fade, pitch, blurArea,
   imagesToVideo, imagesToGif, convertSubtitles, thumbnail, VIDEO_TARGETS, AUDIO_TARGETS,
 };
