@@ -1,18 +1,18 @@
 import { icon, GROUP_ICON } from './icons.js';
-import { petal, labelAt, arc, limeSvg } from './petal.js';
+import { wedge, labelAt, arc, limeSvg, hitIndex } from './petal.js';
 import { api, $, $$, h, esc, nameOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
-const R_IN = 50, R_OUT = 120, R_LABEL = 86;
+const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 450;
 const TAB = 76;
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['more', 'More']];
 const isMac = api.platform === 'darwin';
-const stage = $('#stage'), svg = $('.dial'), petalsG = $('.petals'), center = $('.center'), pill = $('.pill'), card = $('.card');
+const stage = $('#stage'), wheelEl = $('.wheel'), svg = $('.dial'), petalsG = $('.petals'), center = $('.center'), pill = $('.pill'), card = $('.card');
 const capName = $('.caption .name'), capMeta = $('.caption .meta');
 
 let settings = await applyTheme();
 const catalog = Object.fromEntries((await api.invoke('catalog')).map((t) => [t.id, t]));
-const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, depth: 0 };
+const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, depth: 0, peek: null, baseMode: 'convert', modKey: null };
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -34,7 +34,8 @@ async function layout() {
   shown = open ? 'open' : 'tab';
   const r = await api.invoke('wheel:layout', { w: Math.ceil(L.w * k), h: Math.ceil(L.h * k), ax: Math.round(L.cx * k), ay: Math.round(L.cy * k), mode: open ? 'open' : 'tab', at: at || undefined });
   if (r) geo = r;
-  if (growing) bloomFrom(at || r?.tab);
+  if (growing) { if (S.pop) popIn(); else bloomFrom(at || r?.tab); }
+  S.pop = false;
   return r;
 }
 function offsetTo(pt) {
@@ -50,6 +51,13 @@ function bloomFrom(pt) {
   requestAnimationFrame(() => stage.classList.remove('pre'));
   clearTimeout(bloomFrom.t);
   bloomFrom.t = setTimeout(() => stage.classList.remove('blooming'), 900);
+}
+function popIn() {
+  stage.classList.remove('folding');
+  stage.classList.add('popping');
+  requestAnimationFrame(() => stage.classList.remove('pre'));
+  clearTimeout(popIn.t);
+  popIn.t = setTimeout(() => stage.classList.remove('popping'), 500);
 }
 async function fold({ keepJob = false } = {}) {
   if (S.state === 'idle') return;
@@ -67,6 +75,9 @@ async function fold({ keepJob = false } = {}) {
   if (!keepJob) { S.files = []; S.items = null; S.result = null; }
   S.hot = -1;
   S.dragSummon = false;
+  S.peek = null;
+  peekSeq++;
+  dwellOn(null);
   setState('idle');
   stage.classList.remove('folding');
   drawRing([]);
@@ -76,10 +87,13 @@ async function fold({ keepJob = false } = {}) {
   setTimeout(() => stage.classList.remove('tuck-in'), 700);
 }
 const armFold = (ms) => { clearTimeout(foldT); foldT = setTimeout(() => { if (S.state === 'ready' && !S.depth && !stage.matches(':hover')) fold(); }, ms); };
-function expand(why, at) {
+function expand(why, at, peek) {
   if (S.state !== 'idle') return;
   S.bloomAt = at || null;
+  S.pop = why === 'shift';
   S.dragSummon = ['shift', 'corner', 'edge'].includes(why);
+  S.peek = null;
+  S.items = null;
   setState('ready');
   S.hot = -1;
   drawPill();
@@ -88,6 +102,28 @@ function expand(why, at) {
   drawCaption();
   layout();
   if (!S.dragSummon) armFold(12000);
+  if (peek?.length) setPeek(peek);
+  else if (S.dragSummon) api.invoke('wheel:peek').then((p) => p?.length && setPeek(p)).catch(() => {});
+}
+let peekSeq = 0;
+async function setPeek(files) {
+  if (S.state !== 'ready' || !files?.length || S.peek?.join('\n') === files.join('\n')) return;
+  const seq = ++peekSeq;
+  const items = await api.invoke('wheel:items', files).catch(() => null);
+  if (seq !== peekSeq || S.state !== 'ready' || !items) return;
+  S.peek = files;
+  S.items = items;
+  S.baseMode = items.convert.length ? 'convert' : items.tools.length ? 'tools' : 'more';
+  S.mode = S.baseMode;
+  S.modKey = null;
+  S.hot = -1;
+  S.info = null;
+  stage.classList.add('live');
+  drawPill();
+  drawRing(ringFor(S.mode));
+  drawCenter();
+  drawCaption();
+  if (files.length === 1) api.invoke('files:describe', files[0]).then((info) => { if (S.peek === files) { S.info = info; drawCenter(); } }).catch(() => {});
 }
 function tabProgress(p) {
   const t = $('.tab');
@@ -97,27 +133,30 @@ function tabProgress(p) {
 function setState(state) {
   S.state = state;
   stage.className = state;
+  if (S.depth > 0) stage.classList.add('over');
+  if (state === 'ready' && S.peek) stage.classList.add('live');
   if (!card.hidden) stage.classList.add('card-open');
 }
 
 function drawRing(list, { dim = false } = {}) {
   S.ring = list || [];
-  const n = S.ring.length;
+  const n = S.ring.length, count = n || 8;
   petalsG.classList.toggle('dense', n > 8);
-  if (!n) {
-    petalsG.innerHTML = Array.from({ length: 8 }, (_, i) => `<g class="petal" style="--i:${i}"><path d="${petal(i, 8, R_IN, R_OUT, 4)}"/></g>`).join('');
-    return;
-  }
-  petalsG.innerHTML = S.ring.map((it, i) => {
-    const [x, y] = labelAt(i, n, R_LABEL);
-    const hasHint = !!it.hint;
-    return `<g class="petal${it.danger ? ' danger' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="--i:${i}"><path d="${petal(i, n, R_IN, R_OUT, 4)}"/><text class="l" x="${x.toFixed(1)}" y="${(y - (hasHint ? 5.5 : 0)).toFixed(1)}">${esc(it.label)}</text>${hasHint ? `<text class="h" x="${x.toFixed(1)}" y="${(y + 8).toFixed(1)}">${esc(String(it.hint).toUpperCase())}</text>` : ''}</g>`;
+  petalsG.classList.toggle('settled', !!S.settle);
+  petalsG.innerHTML = Array.from({ length: count }, (_, i) => {
+    const it = S.ring[i], d = wedge(i, count, R_IN, R_OUT), a = (i * Math.PI * 2) / count, lift = count === 1 ? 0 : LIFT;
+    const body = `<path class="glass" d="${d}"/><path class="tint" d="${d}"/><path class="sheen" d="${d}"/>`;
+    const style = `--i:${i};--dx:${(Math.sin(a) * lift).toFixed(2)}px;--dy:${(-Math.cos(a) * lift).toFixed(2)}px`;
+    if (!it) return `<g class="petal" style="${style}">${body}</g>`;
+    const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : R_LABEL);
+    const hint = it.hint ? `<text class="h" x="${x.toFixed(1)}" y="${(y + 9).toFixed(1)}">${esc(String(it.hint).toUpperCase())}</text>` : '';
+    return `<g class="petal${it.danger ? ' danger' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 6 : 0)).toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
   }).join('');
-  fitLabels(n);
+  fitLabels(count);
   setHot(S.hot >= n ? -1 : S.hot, true);
 }
 function fitLabels(n) {
-  const max = Math.max(36, 2 * R_LABEL * Math.sin(Math.PI / Math.max(n, 2)) - 12);
+  const max = Math.max(36, Math.min(R_OUT - R_IN - 12, 2 * R_LABEL * Math.sin(Math.PI / Math.max(n, 2)) - 16));
   $$('.petal text', petalsG).forEach((t) => {
     const len = t.getComputedTextLength?.() || 0;
     if (len > max) t.style.fontSize = `${(parseFloat(getComputedStyle(t).fontSize) * max) / len}px`;
@@ -125,6 +164,7 @@ function fitLabels(n) {
 }
 function setHot(i, force) {
   if (i === S.hot && !force) return;
+  if (i >= 0 && i !== S.hot && S.state === 'ready') api.invoke('wheel:haptic').catch(() => {});
   S.hot = i;
   $$('.petal', petalsG).forEach((g) => g.classList.toggle('hot', Number(g.dataset.i) === i));
   drawCenter();
@@ -145,18 +185,28 @@ async function fileVisual(p) {
   return url ? `<img class="thumb" src="${url}" alt="">` : `<div class="glyph">${icon(GROUP_ICON[groupOfFile(p)] || 'doc', 'lg')}</div>`;
 }
 let centerSeq = 0;
+const capsule = (html, cls = '') => `<div class="cap ${cls}">${html}</div>`;
+function sizeText(files) {
+  if (files.length > 1) return `${files.length} files`;
+  const i = S.info;
+  if (!i) return extOf(files[0]).toUpperCase() || 'File';
+  return i.isDir ? 'Folder' : fmtBytes(i.size);
+}
 async function drawCenter() {
   const seq = ++centerSeq;
   const it = S.ring[S.hot];
-  let html = '';
-  if (S.state === 'idle' || S.state === 'ready') html = limeSvg(58, 'c').replace('<svg', '<svg class="logo"');
-  else if (S.state === 'busy') {
+  const files = S.files.length ? S.files : S.peek || [];
+  const hot = it ? capsule(esc(it.label), 'hot') : '';
+  let html;
+  if (S.state === 'busy') {
     const j = S.job || {};
-    html = `<div><div class="pct">${Math.round((j.progress || 0) * 100)}%</div><div class="small">${esc(j.status === 'queued' ? 'Waiting' : (j.label || 'Working').replace(/ · .*/, ''))}</div><div class="cancel">${icon('close')}Cancel</div></div>`;
-  } else if (it) html = `<div><div class="big">${esc(it.label)}</div>${it.hint ? `<div class="small">${esc(it.hint)}</div>` : ''}</div>`;
-  else if (S.state === 'done') html = S.result?.outs?.[0] && !S.result.inPlace ? `${await fileVisual(S.result.outs[0])}<div class="tick">${icon('check', 'sm')}</div>` : `<div class="ok">${icon('check', 'lg')}</div>`;
-  else if (S.state === 'failed') html = `<div class="bad">${icon('warning', 'lg')}</div>`;
-  else if (S.files.length) html = `${await fileVisual(S.files[0])}${S.files.length > 1 ? `<div class="badge">${S.files.length}</div>` : ''}`;
+    html = `${files[0] ? await fileVisual(files[0]) : ''}${capsule(`<span class="p">${j.status === 'queued' ? 'Waiting' : `${Math.round((j.progress || 0) * 100)}%`}</span><span class="x">${icon('close', 'sm')}Cancel</span>`)}`;
+  } else if (S.state === 'done') {
+    const out = S.result?.outs?.[0];
+    html = `${out && !S.result.inPlace ? await fileVisual(out) : `<div class="glyph">${icon('check', 'lg')}</div>`}<div class="tick">${icon('check', 'sm')}</div>${hot}`;
+  } else if (S.state === 'failed') html = `<div class="glyph bad">${icon('warning', 'lg')}</div>${hot || capsule('Didn’t finish', 'bad')}`;
+  else if (files.length && (S.state === 'open' || S.state === 'ready')) html = `${await fileVisual(files[0])}${files.length > 1 ? `<div class="badge">${files.length}</div>` : ''}${hot || capsule(esc(sizeText(files)))}`;
+  else html = limeSvg(62, 'c').replace('<svg', '<svg class="logo"');
   if (seq !== centerSeq) return;
   center.innerHTML = html;
   center.draggable = S.state === 'done' && !!S.result?.outs?.length;
@@ -196,14 +246,27 @@ async function drawCaption() {
   } else if (S.state === 'failed') {
     capName.textContent = `${S.result?.title || 'That'} didn’t finish`;
     capMeta.textContent = S.result?.error || '';
+  } else if (S.state === 'ready' && S.peek && S.ring.length) {
+    capName.textContent = S.peek.length === 1 ? nameOf(S.peek[0]) : `${S.peek.length} files`;
+    capMeta.textContent = it ? `Release to ${actionText(it)}` : `Drop on a choice${modHint()}`;
   } else if (S.state === 'ready') {
     capName.textContent = 'Drop files here';
     capMeta.textContent = 'or click the lime to choose';
   }
 }
 
+function actionText(it) {
+  const t = it.tool && catalog[it.tool];
+  const v = t ? verbFor(t, { ...defaultsFor(t), ...(it.opts || {}) }) : it.label;
+  return /^[A-Z][a-z]/.test(v) ? v[0].toLowerCase() + v.slice(1) : v;
+}
+const KEYS = isMac ? { tools: '⌥', more: '⌃' } : { tools: 'Alt', more: 'Ctrl' };
+function modHint() {
+  const bits = ['tools', 'more'].filter((m) => m !== S.mode && ringFor(m).length).map((m) => `${KEYS[m]} ${m === 'tools' ? 'Tools' : 'More'}`);
+  return bits.length ? ` · hold ${bits.join(', ')}` : '';
+}
 function drawPill() {
-  const modes = S.state === 'open' ? MODES : [];
+  const modes = S.state === 'open' ? MODES : S.state === 'ready' && S.peek ? MODES.filter(([m]) => ringFor(m).length) : [];
   pill.innerHTML = `${modes.map(([id, l]) => `<button role="tab" data-m="${id}" aria-selected="${S.mode === id}">${l}</button>`).join('')}<button class="x" data-a="close" title="Close (Esc)">${icon('close', 'sm')}</button>`;
 }
 function ringFor(mode) {
@@ -215,20 +278,21 @@ function setMode(m) {
   S.hot = -1;
   drawPill();
   drawRing(ringFor(m));
-  stage.classList.remove('open');
-  void stage.offsetWidth;
-  stage.classList.add('open');
+  drawCenter();
+  drawCaption();
 }
 
-async function openWith(files) {
+async function openWith(files, { mode } = {}) {
   if (!files?.length) return;
   clearTimeout(collapseT);
   closeCard(true);
   S.files = files;
   S.result = null;
   S.info = null;
+  S.peek = null;
   S.items = await api.invoke('wheel:items', files);
-  if (!S.items.convert.length && S.items.tools.length) S.mode = 'tools'; else S.mode = S.items.convert.length ? 'convert' : 'more';
+  if (mode && ringFor(mode).length) S.mode = mode;
+  else if (!S.items.convert.length && S.items.tools.length) S.mode = 'tools'; else S.mode = S.items.convert.length ? 'convert' : 'more';
   setState('open');
   await layout();
   drawPill();
@@ -304,7 +368,7 @@ async function run(tool, opts) {
 function drawProgress(p) {
   const prog = $('.prog');
   prog.style.opacity = p == null ? 0 : 1;
-  prog.setAttribute('d', p == null ? '' : arc(139, Math.max(0.015, p)));
+  prog.setAttribute('d', p == null ? '' : arc(R_PROG, Math.max(0.015, p)));
 }
 api.on('jobs', (list) => {
   if (!S.job) return;
@@ -527,18 +591,21 @@ function showText() {
   openCard(node);
 }
 
-function petalFromEvent(e) {
-  const g = e.target.closest?.('.petal[data-i]');
-  return g ? Number(g.dataset.i) : -1;
+function toWheel(x, y) {
+  const r = svg.getBoundingClientRect(), k2 = 300 / r.width;
+  return [(x - (r.left + r.width / 2)) * k2, (y - (r.top + r.height / 2)) * k2];
 }
-svg.addEventListener('pointermove', (e) => { if (!['idle', 'busy', 'ready'].includes(S.state)) setHot(petalFromEvent(e)); });
-svg.addEventListener('pointerleave', () => { if (!['idle', 'busy', 'ready'].includes(S.state)) setHot(-1); });
+const ringIndexAt = (x, y) => hitIndex(...toWheel(x, y), S.ring.length, R_IN - 2, R_OUT + 14);
+const inCenter = (x, y) => Math.hypot(...toWheel(x, y)) < R_IN - 4;
+const petalAt = (e) => (['open', 'done', 'failed'].includes(S.state) ? ringIndexAt(e.clientX, e.clientY) : -1);
+wheelEl.addEventListener('pointermove', (e) => { if (['open', 'done', 'failed'].includes(S.state)) setHot(petalAt(e)); });
+wheelEl.addEventListener('pointerleave', () => { if (['open', 'done', 'failed'].includes(S.state)) setHot(-1); });
 let downAt = null, dragging = false;
 stage.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || e.target.closest('.pill, .card, input, button, select, textarea')) return;
-  const onBtn = e.target.classList?.contains('btn');
-  const onPetal = petalFromEvent(e) >= 0;
-  downAt = { x: e.screenX, y: e.screenY, onBtn, onPetal, i: petalFromEvent(e) };
+  const onBtn = e.target.classList?.contains('btn') || inCenter(e.clientX, e.clientY);
+  const onPetal = petalAt(e) >= 0;
+  downAt = { x: e.screenX, y: e.screenY, onBtn, onPetal, i: petalAt(e) };
   dragging = false;
   if (onPetal) $(`.petal[data-i="${downAt.i}"]`)?.classList.add('press');
 });
@@ -556,7 +623,7 @@ window.addEventListener('pointerup', async (e) => {
   $$('.petal.press').forEach((g) => g.classList.remove('press'));
   if (!d) return;
   if (dragging) { dragging = false; api.invoke('wheel:dragEnd'); return; }
-  if (d.onPetal) { const i = petalFromEvent(e); if (i === d.i) pick(S.ring[i], { options: e.altKey }); return; }
+  if (d.onPetal) { const i = petalAt(e); if (i === d.i) pick(S.ring[i], { options: e.altKey }); return; }
   if (S.state === 'idle' && e.target.closest('.tab')) { expand('click'); return; }
   if (d.onBtn || e.target.closest('.center')) {
     if (S.state === 'ready') { S.asking = true; const files = await api.invoke('dialog:open', { title: 'Choose files for Lime' }).finally(() => { S.asking = false; }); if (files.length) openWith(files); }
@@ -567,7 +634,7 @@ window.addEventListener('pointerup', async (e) => {
 });
 svg.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  const i = petalFromEvent(e);
+  const i = petalAt(e);
   if (i >= 0 && S.state === 'open' && S.ring[i]?.tool) pick(S.ring[i], { options: true });
   else api.invoke('wheel:menu');
 });
@@ -612,6 +679,25 @@ document.addEventListener('keydown', (e) => {
 });
 
 const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+const itemKey = (it) => JSON.stringify([it.tool || null, it.opts || null, it.action || null, it.act || null, it.label]);
+let dwellBtn = null, dwellT = null;
+function dwellOn(btn) {
+  if (btn === dwellBtn) return;
+  dwellBtn?.classList.remove('dwell');
+  clearTimeout(dwellT);
+  dwellBtn = btn;
+  if (!btn || btn.dataset.m === S.mode) return;
+  btn.style.setProperty('--dwell', `${DWELL}ms`);
+  btn.classList.add('dwell');
+  dwellT = setTimeout(() => { const m = btn.dataset.m; dwellBtn = null; S.modKey = 'dwell'; S.baseMode = m; setMode(m); }, DWELL);
+}
+function dragMods(e) {
+  const key = e.altKey ? 'tools' : e.ctrlKey ? 'more' : null;
+  if (key === S.modKey || (S.modKey === 'dwell' && !key)) return;
+  S.modKey = key;
+  const m = key && ringFor(key).length ? key : S.baseMode;
+  if (m !== S.mode) setMode(m);
+}
 window.addEventListener('dragenter', (e) => {
   if (!isFiles(e)) return;
   e.preventDefault();
@@ -622,15 +708,42 @@ window.addEventListener('dragenter', (e) => {
     if (S.state === 'idle') expand('edge');
   }
 });
-window.addEventListener('dragover', (e) => { if (isFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
-window.addEventListener('dragleave', () => { if (--S.depth <= 0) { S.depth = 0; stage.classList.remove('over'); if (S.state === 'ready') armFold(1400); } });
+window.addEventListener('dragover', (e) => {
+  if (!isFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  if (S.state !== 'ready' || !S.peek) return;
+  dragMods(e);
+  const tab = e.target.closest?.('.pill button[data-m]');
+  dwellOn(tab || null);
+  setHot(tab ? -1 : ringIndexAt(e.clientX, e.clientY));
+});
+window.addEventListener('dragleave', () => {
+  if (--S.depth > 0) return;
+  S.depth = 0;
+  stage.classList.remove('over');
+  dwellOn(null);
+  if (S.state === 'ready') { setHot(-1); armFold(1400); }
+});
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   S.depth = 0;
   clearTimeout(foldT);
+  dwellOn(null);
   stage.classList.remove('over');
-  const files = [...(e.dataTransfer?.files || [])].map((f) => api.pathFor(f)).filter(Boolean);
-  if (files.length) openWith(files);
+  const real = [...(e.dataTransfer?.files || [])].map((f) => api.pathFor(f)).filter(Boolean);
+  const files = real.length ? real : S.peek || [];
+  if (!files.length) return;
+  const it = S.state === 'ready' && S.peek ? S.ring[ringIndexAt(e.clientX, e.clientY)] : null;
+  S.dropping = true;
+  if (!it) { openWith(files).finally(() => { S.dropping = false; }); return; }
+  const want = itemKey(it);
+  S.settle = true;
+  await openWith(files, { mode: S.mode }).finally(() => { S.settle = false; S.dropping = false; });
+  const match = [S.mode, 'convert', 'tools', 'more'].flatMap((m) => ringFor(m)).find((x) => itemKey(x) === want);
+  if (!match) { flash(`${it.label} isn’t available for ${files.length === 1 ? nameOf(files[0]) : 'these files'}`); return; }
+  setHot(S.ring.indexOf(match));
+  pick(match);
 });
 window.addEventListener('blur', () => { if ((S.state === 'open' || (S.state === 'ready' && !S.dragSummon)) && card.hidden && !S.asking) armCollapse(900); });
 window.addEventListener('focus', () => { if (S.state === 'open' || S.state === 'ready') clearTimeout(collapseT); });
@@ -638,8 +751,9 @@ stage.addEventListener('pointerenter', () => { clearTimeout(collapseT); clearTim
 stage.addEventListener('pointerleave', () => { if (S.state === 'done') armCollapse(6000); if (S.state === 'ready' && !S.depth) armFold(2500); });
 
 api.on('wheel:files', (files) => openWith(files));
-api.on('wheel:summon', ({ why, at }) => { if (S.state === 'idle') expand(why, at); else if (why === 'show') window.focus(); });
-api.on('wheel:dragEnded', () => { if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.depth) fold(); }, 260); });
+api.on('wheel:summon', ({ why, at, peek }) => { if (S.state === 'idle') expand(why, at, peek); else if (why === 'show') window.focus(); else if (S.state === 'ready' && peek?.length) setPeek(peek); });
+api.on('wheel:peek', (files) => { if (S.state === 'ready') setPeek(files); });
+api.on('wheel:dragEnded', () => { if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.depth && !S.dropping) fold(); }, 260); });
 api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
 api.on('settings', (s) => { settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; layout(); } });
 
@@ -647,4 +761,4 @@ setState('idle');
 drawRing([]);
 drawCenter();
 layout();
-window.__lime = { S, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, catalog, geo: () => geo };
+window.__lime = { S, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo };

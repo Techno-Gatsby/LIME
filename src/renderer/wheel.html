@@ -14,21 +14,21 @@
   <div class="wheel">
     <svg class="dial" viewBox="-150 -150 300 300" aria-hidden="true">
       <defs>
-        <radialGradient id="gBody" cx="50%" cy="38%" r="62%"><stop offset="0" class="s-body-hi"/><stop offset="1" class="s-body-lo"/></radialGradient>
-        <linearGradient id="gPetal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s-petal-hi"/><stop offset="1" class="s-petal-lo"/></linearGradient>
-        <radialGradient id="gHot" cx="50%" cy="30%" r="80%"><stop offset="0" class="s-hot-hi"/><stop offset="1" class="s-hot-lo"/></radialGradient>
-        <radialGradient id="gBtn" cx="50%" cy="28%" r="75%"><stop offset="0" class="s-btn-hi"/><stop offset="1" class="s-btn-lo"/></radialGradient>
-        <linearGradient id="gProg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5aad3c"/><stop offset="1" stop-color="#24561a"/></linearGradient>
+        <linearGradient id="gGlass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s-glass-hi"/><stop offset="1" class="s-glass-lo"/></linearGradient>
+        <linearGradient id="gHot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s-hot-hi"/><stop offset="1" class="s-hot-lo"/></linearGradient>
+        <linearGradient id="gSheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" class="s-sheen"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+        <linearGradient id="gEdge" gradientUnits="userSpaceOnUse" x1="0" y1="-150" x2="0" y2="150"><stop offset="0" class="s-edge-hi"/><stop offset=".55" class="s-edge-lo"/><stop offset="1" class="s-edge-hi" stop-opacity=".5"/></linearGradient>
+        <radialGradient id="gBezel" r=".5"><stop offset=".36" class="s-bezel-in"/><stop offset=".9" class="s-bezel"/><stop offset="1" class="s-bezel-out"/></radialGradient>
+        <linearGradient id="gProg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a6dc5e"/><stop offset="1" stop-color="#3f8a1c"/></linearGradient>
       </defs>
-      <circle class="halo" r="141"/>
-      <circle class="body" r="132"/>
-      <circle class="rim" r="131.2"/>
-      <circle class="edge" r="132"/>
+      <circle class="bezel" r="147"/>
+      <circle class="bezel-edge" r="146.5"/>
+      <circle class="bezel-line" r="147.5"/>
+      <circle class="hole" r="54"/>
+      <circle class="halo" r="147"/>
       <g class="petals"></g>
-      <circle class="track" r="139"/>
       <path class="prog" d=""/>
-      <circle class="btn" r="42"/>
-      <circle class="btn-rim" r="42"/>
+      <circle class="btn" r="54"/>
     </svg>
     <div class="center" draggable="false"></div>
   </div>

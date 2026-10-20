@@ -111,7 +111,8 @@ async function loadInto(win, { file, url }) {
   await sleep(url ? 1800 : 400);
 }
 async function runHost(method, p) {
-  const win = new BrowserWindow({ show: false, width: method === 'urlToImage' ? 1366 : 1100, height: method === 'urlToImage' ? 900 : 1400, useContentSize: true, webPreferences: { sandbox: true, javascript: !!p.url || !!p.js } });
+  const win = new BrowserWindow({ show: false, width: method === 'urlToImage' ? 1366 : 1100, height: method === 'urlToImage' ? 900 : 1400, useContentSize: true, webPreferences: { sandbox: true, javascript: !!p.url || !!p.js, ...(p.offline ? { partition: 'lime-offline' } : {}) } });
+  if (p.offline) win.webContents.session.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }));
   try {
     await loadInto(win, p);
     if (method === 'htmlToPdf') {
@@ -228,7 +229,7 @@ function placeWheel() {
 }
 function summon(why, at, focus) {
   if (!wheel) createWheel();
-  const go = () => { if (!wheel.isVisible()) wheel.showInactive(); if (focus) wheel.focus(); wheel.webContents.send('wheel:summon', { why, at: at || null }); };
+  const go = () => { if (!wheel.isVisible()) wheel.showInactive(); if (focus) wheel.focus(); wheel.webContents.send('wheel:summon', { why, at: at || null, peek }); };
   if (wheel.webContents.isLoading()) wheel.webContents.once('did-finish-load', () => setTimeout(go, 120)); else go();
 }
 const cornerPoint = () => { const wa = screen.getPrimaryDisplay().workArea; return { x: wa.x + 200, y: wa.y + wa.height - 240 }; };
@@ -251,12 +252,23 @@ function applyCorner() {
     sensor.on('closed', () => { sensor = null; });
   } else if (!settings.corner && sensor) sensor.destroy();
 }
+let peek = [], peekSeq = 0;
+function sendPeek(files) {
+  peek = files.filter((f) => { try { return fs.existsSync(f); } catch (_) { return false; } });
+  if (peek.length) wheel?.webContents.send('wheel:peek', peek);
+}
 function startWatcher() {
   watcher = require('./dragwatch').start({
+    onDrag: () => {
+      const seq = ++peekSeq;
+      peek = [];
+      watcher?.files().then((f) => { if (seq === peekSeq) sendPeek(f); }).catch(log);
+    },
     onShift: () => { if (settings.shiftDrag !== false && mode === 'tab') summon('shift', screen.getCursorScreenPoint()); },
-    onEnd: () => wheel?.webContents.send('wheel:dragEnded'),
+    onEnd: () => { peekSeq++; peek = []; wheel?.webContents.send('wheel:dragEnded'); },
     onError: log,
   });
+  if (watcher && process.platform === 'win32' && settings.shiftDrag !== false) setTimeout(() => require('./shellsel').warm(), 4000);
 }
 function createWheel() {
   wheel = new BrowserWindow({
@@ -419,6 +431,8 @@ function registerIpc() {
     if (m) mode = m;
     return placeWheel();
   });
+  h('wheel:peek', () => peek);
+  h('wheel:haptic', () => { try { watcher?.probe.haptic?.(); } catch (_) {} });
   h('sensor:enter', () => { if (mode === 'tab') summon('corner', cornerPoint()); });
   h('sensor:drop', (files) => takeFiles(files));
   h('wheel:hide', () => setSettings({ hidden: true }));
@@ -543,10 +557,10 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', () => { placeWheel(); placeSensor(); });
   screen.on('display-added', placeSensor);
   if (process.env.LIME_TEST && !app.isPackaged) require(path.join(ROOT, 'test', 'tools.test'))({ submit, jobs, app, tools, dir: process.env.LIME_TEST });
-  if (process.env.LIME_UI && !app.isPackaged) require(path.join(ROOT, 'test', 'ui.test'))({ wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, screen, dir: process.env.LIME_UI });
-  if (process.env.LIME_SHOTS && !app.isPackaged) require(path.join(ROOT, 'test', 'shots'))({ wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, dir: process.env.LIME_SHOTS });
+  if (process.env.LIME_UI && !app.isPackaged) require(path.join(ROOT, 'test', 'ui.test'))({ wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen, dir: process.env.LIME_UI });
+  if (process.env.LIME_SHOTS && !app.isPackaged) require(path.join(ROOT, 'test', 'shots'))({ wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen, dir: process.env.LIME_SHOTS });
 });
 app.on('activate', () => showWheel());
 app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });
 app.on('before-quit', () => { app.isQuitting = true; });
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => { globalShortcut.unregisterAll(); if (process.platform === 'win32') require('./shellsel').stop(); });

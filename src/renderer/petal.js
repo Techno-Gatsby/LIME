@@ -21,6 +21,24 @@ export function petal(i, n, rIn, rOut, gap = 4, cOut = rOut * 0.065, cIn = rIn *
   const large = span - (2 * co) / rOut > Math.PI ? 1 : 0;
   return `M${P(A)}L${P(B)}Q${P(O0)} ${P(C)}A${f(rOut)} ${f(rOut)} 0 ${large} 1 ${P(D)}Q${P(O1)} ${P(E)}L${P(F)}Q${P(I1)} ${P(G)}A${f(rIn)} ${f(rIn)} 0 0 0 ${P(H)}Q${P(I0)} ${P(A)}Z`;
 }
+export function wedge(i, n, rIn, rOut, gap = 7, kOut = 20, kIn = 12) {
+  if (n === 1) return `M0 ${-rOut}A${rOut} ${rOut} 0 1 1 0 ${rOut}A${rOut} ${rOut} 0 1 1 0 ${-rOut}ZM0 ${-rIn}A${rIn} ${rIn} 0 1 0 0 ${rIn}A${rIn} ${rIn} 0 1 0 0 ${-rIn}Z`;
+  const step = (Math.PI * 2) / n, g = gap / 2, half = Math.sin(Math.min(step, Math.PI) * 0.42);
+  const ko = Math.max(2, Math.min(kOut, (rOut * half - g) / (1 + half), (rOut - rIn) * 0.42));
+  const ki = Math.max(2, Math.min(kIn, (rIn * half - g) / (1 - half), (rOut - rIn) * 0.3));
+  const u = (a) => [Math.sin(a), -Math.cos(a)], t = (a) => [Math.cos(a), Math.sin(a)];
+  const pt = (a, s, d) => { const [ux, uy] = u(a), [tx, ty] = t(a); return [ux * s + tx * d, uy * s + ty * d]; };
+  const scale = ([x, y], m) => [x * m, y * m];
+  const corner = (a, side, r, k, outer) => {
+    const s = Math.sqrt((outer ? r - k : r + k) ** 2 - (g + k) ** 2);
+    const c = pt(a, s, side * (g + k));
+    return { line: pt(a, s, side * g), arc: scale(c, r / (outer ? r - k : r + k)) };
+  };
+  const a0 = i * step - step / 2, a1 = i * step + step / 2;
+  const o0 = corner(a0, 1, rOut, ko, true), o1 = corner(a1, -1, rOut, ko, true), i0 = corner(a0, 1, rIn, ki, false), i1 = corner(a1, -1, rIn, ki, false);
+  const large = step > Math.PI ? 1 : 0;
+  return `M${P(i0.line)}L${P(o0.line)}A${f(ko)} ${f(ko)} 0 0 1 ${P(o0.arc)}A${f(rOut)} ${f(rOut)} 0 ${large} 1 ${P(o1.arc)}A${f(ko)} ${f(ko)} 0 0 1 ${P(o1.line)}L${P(i1.line)}A${f(ki)} ${f(ki)} 0 0 1 ${P(i1.arc)}A${f(rIn)} ${f(rIn)} 0 ${large} 0 ${P(i0.arc)}A${f(ki)} ${f(ki)} 0 0 1 ${P(i0.line)}Z`;
+}
 export function labelAt(i, n, r) {
   const a = n === 1 ? Math.PI : (i * Math.PI * 2) / n;
   return at(a, n === 1 ? (r) : r);

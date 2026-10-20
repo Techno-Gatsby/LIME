@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, dir }) => {
+module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek, screen, dir }) => {
   fs.mkdirSync(dir, { recursive: true });
   const samples = process.env.LIME_SAMPLES || path.join(dir, 'samples');
   const steps = (process.env.LIME_STEPS || 'all').split(',');
@@ -42,6 +42,29 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       await frame('b4-tucked-again');
     }
     const img = path.join(samples, 'photo.jpg');
+    if (want('drag')) {
+      const a = screen.getPrimaryDisplay().workArea, at = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
+      const over = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); const b = el.getBoundingClientRect(), x = b.x + b.width / 2, y = b.y + b.height / 2; const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt')); document.elementFromPoint(x, y).dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true })); })()`);
+      await js('window.__lime.fold()');
+      await sleep(900);
+      summon('edge', at);
+      await shot('20-ready-empty');
+      await js('window.__lime.fold()');
+      await sleep(900);
+      peek([img]);
+      summon('shift', at);
+      await until('window.__lime.S.peek && window.__lime.S.ring.length > 0');
+      await shot('21-drag-live');
+      await over('.petal[data-i="1"] text.l');
+      await shot('22-drag-hover');
+      await js('window.__lime.fold()');
+      await sleep(900);
+      await js(`window.__lime.openWith(${JSON.stringify([path.join(samples, 'doc.pdf')])}).then(() => window.__lime.setMode('tools'))`);
+      await sleep(600);
+      await shot('23-dense-tools');
+      await js('window.__lime.collapse()');
+      await sleep(600);
+    }
     if (want('menu')) {
       await js(`window.__lime.openWith(${JSON.stringify([img])})`);
       await shot('02-menu-convert');

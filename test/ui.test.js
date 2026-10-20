@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, screen, dir }) => {
+module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -144,8 +144,124 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     const p = w.probe();
     if (typeof p.left !== 'boolean' || typeof p.shift !== 'boolean') throw new Error(`probe ${JSON.stringify(p)}`);
     if (process.platform === 'darwin' && !Number.isFinite(p.count)) throw new Error(`drag pasteboard count ${p.count}`);
+    if (process.platform === 'darwin') w.probe.haptic();
     if (process.platform === 'win32' && !(Number.isFinite(p.x) && typeof p.at() === 'string' && typeof p.shellDrag() === 'boolean')) throw new Error('cursor or window lookup failed');
     return JSON.stringify({ left: p.left, shift: p.shift, ...(p.count != null ? { count: p.count } : { x: p.x, y: p.y, under: p.at() }) });
+  });
+  const dragAt = (type, sel, extra = {}) => js(`(() => {
+    const L = window.__lime, el = document.querySelector(${JSON.stringify(sel)});
+    if (!el) return null;
+    const b = el.getBoundingClientRect(), x = b.x + b.width / 2, y = b.y + b.height / 2;
+    const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt', { type: 'text/plain' }));
+    (document.elementFromPoint(x, y) || window).dispatchEvent(new DragEvent(${JSON.stringify(type)}, { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true, ...${JSON.stringify(extra)} }));
+    return { x, y, hot: L.S.hot, mode: L.S.mode, state: L.S.state };
+  })()`);
+  const summonWith = async (files) => {
+    const a = wa();
+    peek(files);
+    summon('shift', { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) });
+    if (!(await until('return L.S.state === "ready" && !!L.S.peek && L.S.ring.length > 0', 6000))) throw new Error('no choices while dragging');
+    await sleep(500);
+    await dragAt('dragenter', '.center');
+  };
+  const endDrag = async () => { await dragAt('dragleave', '.center'); wheel().webContents.send('wheel:dragEnded'); await until('return L.S.state === "idle"', 3000); };
+  if (fs.existsSync(fx('photo.jpg'))) {
+    await check('Shift-drag shows choices for the dragged file', async () => {
+      await summonWith([fx('photo.jpg')]);
+      const r = await lime('return { labels: L.S.ring.map((x) => x.label), shown: [...document.querySelectorAll(".petal text.l")].filter((t) => getComputedStyle(t).display !== "none").length, cap: document.querySelector(".caption .name").textContent };');
+      if (!r.labels.includes('PNG')) throw new Error(`ring ${r.labels}`);
+      if (r.shown !== r.labels.length) throw new Error(`${r.shown} of ${r.labels.length} labels visible`);
+      if (r.cap !== 'photo.jpg') throw new Error(`caption ${r.cap}`);
+      await endDrag();
+      return `${r.labels.length} choices: ${r.labels.join(', ')}`;
+    });
+    await check('hovering a slice while dragging highlights it', async () => {
+      await summonWith([fx('photo.jpg')]);
+      const i = await lime('return L.S.ring.findIndex((x) => x.label === "PNG");');
+      const r = await dragAt('dragover', `.petal[data-i="${i}"] text.l`);
+      const meta = await lime('return document.querySelector(".caption .meta").textContent;');
+      await endDrag();
+      if (r.hot !== i) throw new Error(`hot ${r.hot}, wanted ${i}`);
+      if (!/^Release to convert to PNG/.test(meta)) throw new Error(`caption says ${meta}`);
+      return meta;
+    });
+    await check('Option or Alt switches to Tools while dragging', async () => {
+      await summonWith([fx('photo.jpg')]);
+      const a = await dragAt('dragover', '.center', { altKey: true });
+      const b = await dragAt('dragover', '.center', { altKey: false });
+      const c = await dragAt('dragover', '.center', { ctrlKey: true });
+      await endDrag();
+      if (a.mode !== 'tools' || b.mode !== 'convert' || c.mode !== 'more') throw new Error(`modes ${a.mode}, ${b.mode}, ${c.mode}`);
+      return 'Alt → Tools, release → Convert, Ctrl → More';
+    });
+    await check('holding over a tab switches the ring', async () => {
+      await summonWith([fx('photo.jpg')]);
+      const t = Date.now();
+      let r;
+      while (Date.now() - t < 900) { r = await dragAt('dragover', '.pill button[data-m="tools"]'); if (r?.mode === 'tools') break; await sleep(50); }
+      const ms = Date.now() - t;
+      await endDrag();
+      if (r?.mode !== 'tools') throw new Error(`still ${r?.mode}`);
+      return `switched after ${ms} ms`;
+    });
+    await check('dropping on a slice converts in one gesture', async () => {
+      await summonWith([fx('photo.jpg')]);
+      const i = await lime('return L.S.ring.findIndex((x) => x.label === "PNG");');
+      await dragAt('dragover', `.petal[data-i="${i}"] text.l`);
+      asked = [];
+      await dragAt('drop', `.petal[data-i="${i}"] text.l`);
+      const end = await settle();
+      const r = await lime('return { outs: L.S.result?.outs || [], error: L.S.result?.error || "" };');
+      if (end !== 'done') throw new Error(`${end} ${r.error}`);
+      const [o] = r.outs;
+      if (!o || !fs.existsSync(o) || !inside(o)) throw new Error(`output ${o}`);
+      if (fs.readFileSync(o).subarray(1, 4).toString() !== 'PNG') throw new Error('not a PNG');
+      return `${asked.join('+')} → ${path.relative(OUT, o)}`;
+    });
+    await check('dropping in the middle opens all choices', async () => {
+      await summonWith([fx('photo.jpg')]);
+      await dragAt('drop', '.center');
+      const ok = await until('return L.S.state === "open" && L.S.files.length === 1', 4000);
+      if (!ok) throw new Error(`state ${await lime('return L.S.state;')}`);
+      await lime('await L.collapse();');
+      return 'open with photo.jpg';
+    });
+  }
+  await check('reads the files being dragged from the system', async () => {
+    const w = watcher();
+    if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('only on Mac and Windows'), { skip: true });
+    if (!w) throw new Error('drag watcher did not start');
+    const want = fx('photo.jpg');
+    if (process.platform === 'darwin') {
+      const koffi = require('koffi'), objc = koffi.load('/usr/lib/libobjc.A.dylib');
+      const cls = objc.func('void *objc_getClass(const char *name)'), sel = objc.func('void *sel_registerName(const char *name)');
+      const obj = objc.func('objc_msgSend', 'void *', ['void *', 'void *']), withStr = objc.func('objc_msgSend', 'void *', ['void *', 'void *', 'const char *']), withObj = objc.func('objc_msgSend', 'void *', ['void *', 'void *', 'void *']);
+      const board = withObj(cls('NSPasteboard'), sel('pasteboardWithName:'), withStr(cls('NSString'), sel('stringWithUTF8String:'), 'Apple CFPasteboard drag'));
+      const url = withObj(cls('NSURL'), sel('fileURLWithPath:'), withStr(cls('NSString'), sel('stringWithUTF8String:'), want));
+      obj(board, sel('clearContents'));
+      withObj(board, sel('writeObjects:'), withObj(cls('NSArray'), sel('arrayWithObject:'), url));
+    } else {
+      require('child_process').spawn('explorer.exe', [`/select,${want}`], { detached: true, stdio: 'ignore' }).unref();
+      await sleep(4000);
+    }
+    let got = [];
+    if (process.platform === 'darwin') got = await w.files();
+    else {
+      const koffi = require('koffi'), user32 = koffi.load('user32.dll');
+      const find = user32.func('void * __stdcall FindWindowW(const char16_t *cls, const char16_t *title)');
+      const child = user32.func('void * __stdcall FindWindowExW(void *parent, void *after, const char16_t *cls, const char16_t *title)');
+      const text = user32.func('int __stdcall GetWindowTextW(void *hwnd, _Out_ uint16_t *buf, int max)');
+      const post = user32.func('bool __stdcall PostMessageW(void *hwnd, uint32_t msg, uintptr_t w, intptr_t l)');
+      const h = find('CabinetWClass', null);
+      if (!h) throw new Error('Explorer did not open a window');
+      const tab = child(h, null, 'ShellTabWindowClass', null), b = new Uint16Array(260);
+      const title = tab ? String.fromCharCode(...b.subarray(0, text(tab, b, 260))) : '';
+      const t = Date.now();
+      while (!got.length && Date.now() - t < 15000) { got = await require(path.join(__dirname, '..', 'src', 'main', 'shellsel')).query([{ hwnd: Number(koffi.address(h)), tab: title }]); if (!got.length) await sleep(1000); }
+      post(h, 0x0010, 0, 0);
+    }
+    if (!got.some((g) => path.resolve(g).toLowerCase() === path.resolve(want).toLowerCase())) throw new Error(`got ${JSON.stringify(got)}`);
+    return got.join(', ');
   });
   for (const [setName, files, modes, skipTools = [], onlyTools = null] of sets) {
     for (const mode of modes) {

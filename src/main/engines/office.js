@@ -325,7 +325,7 @@ async function htmlToPdf(html, out, ctx, opts = {}) {
   const tmp = await U.tmpDir('html');
   const file = path.join(tmp, 'page.html');
   await fsp.writeFile(file, html, 'utf8');
-  try { await ctx.host('htmlToPdf', { file, out, landscape: !!opts.landscape, pageSize: opts.pageSize || 'A4', margins: opts.margins }); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+  try { await ctx.host('htmlToPdf', { file, out, landscape: !!opts.landscape, pageSize: opts.pageSize || 'A4', margins: opts.margins, offline: !!opts.offline }); } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
   return out;
 }
 

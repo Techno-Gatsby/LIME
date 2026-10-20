@@ -13,7 +13,26 @@ function macProbe(koffi) {
   const name = withStr(cls('NSString'), sel('stringWithUTF8String:'), 'Apple CFPasteboard drag');
   const board = obj(withObj(cls('NSPasteboard'), sel('pasteboardWithName:'), name), sel('retain'));
   const sButtons = sel('pressedMouseButtons'), sFlags = sel('modifierFlags'), sCount = sel('changeCount');
-  return () => ({ left: (Number(num(NSEvent, sButtons)) & 1) === 1, shift: (Number(num(NSEvent, sFlags)) & 0x20000) !== 0, count: Number(num(board, sCount)) });
+  const probe = () => ({ left: (Number(num(NSEvent, sButtons)) & 1) === 1, shift: (Number(num(NSEvent, sFlags)) & 0x20000) !== 0, count: Number(num(board, sCount)) });
+  const cstr = objc.func('objc_msgSend', 'const char *', ['void *', 'void *']);
+  const atIndex = objc.func('objc_msgSend', 'void *', ['void *', 'void *', 'uint64_t']);
+  const fileUrl = obj(withStr(cls('NSString'), sel('stringWithUTF8String:'), 'public.file-url'), sel('retain'));
+  const NSURL = cls('NSURL'), sItems = sel('pasteboardItems'), sN = sel('count'), sAt = sel('objectAtIndex:'), sStr = sel('stringForType:'), sUrl = sel('URLWithString:'), sFile = sel('filePathURL'), sPath = sel('path'), sUtf8 = sel('UTF8String');
+  const perform = objc.func('objc_msgSend', 'void', ['void *', 'void *', 'int64_t', 'uint64_t']);
+  const haptics = obj(cls('NSHapticFeedbackManager'), sel('defaultPerformer')), sPerform = sel('performFeedbackPattern:performanceTime:');
+  probe.haptic = () => { if (haptics) perform(haptics, sPerform, 1, 2); };
+  probe.files = () => {
+    const items = obj(board, sItems), out = [];
+    for (let i = 0, n = items ? Number(num(items, sN)) : 0; i < n; i++) {
+      const s = withObj(atIndex(items, sAt, i), sStr, fileUrl);
+      const url = s && withObj(NSURL, sUrl, s);
+      const p = url && obj(obj(url, sFile) || url, sPath);
+      const c = p && cstr(p, sUtf8);
+      if (c) out.push(c);
+    }
+    return out;
+  };
+  return probe;
 }
 
 function winProbe(koffi) {
@@ -28,6 +47,11 @@ function winProbe(koffi) {
   const open = kernel32.func('void * __stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)');
   const imageName = kernel32.func('bool __stdcall QueryFullProcessImageNameW(void *h, uint32_t flags, _Out_ uint16_t *buf, _Inout_ uint32_t *size)');
   const close = kernel32.func('bool __stdcall CloseHandle(void *h)');
+  const foreground = user32.func('void * __stdcall GetForegroundWindow()');
+  const className = user32.func('int __stdcall GetClassNameW(void *hwnd, _Out_ uint16_t *buf, int max)');
+  const windowText = user32.func('int __stdcall GetWindowTextW(void *hwnd, _Out_ uint16_t *buf, int max)');
+  const childOf = user32.func('void * __stdcall FindWindowExW(void *parent, void *after, const char16_t *cls, const char16_t *title)');
+  const text16 = (fn, h) => { const b = new Uint16Array(260); return String.fromCharCode(...b.subarray(0, Math.max(0, fn(h, b, b.length)))); };
   const FILE_MANAGERS = new Set(['explorer.exe', 'files.exe', 'dopus.exe', 'totalcmd.exe', 'totalcmd64.exe', 'xyplorer.exe', 'onecommander.exe', 'q-dir.exe', 'freecommander.exe']);
   const processAt = (pt) => {
     const hwnd = atPoint(pt);
@@ -42,11 +66,27 @@ function winProbe(koffi) {
       return imageName(h, 0, buf, size) ? path.win32.basename(String.fromCharCode(...buf.subarray(0, size[0]))).toLowerCase() : '';
     } finally { close(h); }
   };
-  return () => {
+  const probe = () => {
     const pt = {};
     cursor(pt);
     return { left: (key(0x01) & 0x8000) !== 0, shift: (key(0x10) & 0x8000) !== 0, x: pt.x, y: pt.y, at: () => processAt(pt), shellDrag: () => !!findWindow('SysDragImage', null), fileManager: (name) => FILE_MANAGERS.has(name) };
   };
+  probe.targets = () => {
+    const pt = {};
+    cursor(pt);
+    const out = [], seen = new Set();
+    for (const w of [foreground(), atPoint(pt)]) {
+      const root = w && ancestor(w, 2);
+      const id = root ? Number(koffi.address(root)) : 0;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const cls = text16(className, root);
+      if (cls === 'Progman' || cls === 'WorkerW') out.push({ desktop: true });
+      else if (cls === 'CabinetWClass' || cls === 'ExploreWClass') { const tab = childOf(root, null, 'ShellTabWindowClass', null); out.push({ hwnd: id, tab: tab ? text16(windowText, tab) : '' }); }
+    }
+    return out;
+  };
+  return probe;
 }
 
 function detector(probe, { onDrag, onShift, onEnd }, threshold = 8) {
@@ -86,7 +126,12 @@ function start(handlers, { interval = 40 } = {}) {
   }
   const tick = detector(probe, handlers);
   const t = setInterval(() => { try { tick(); } catch (e) { clearInterval(t); handlers.onError?.(e); } }, interval);
-  return { stop: () => clearInterval(t), probe };
+  const files = async () => {
+    if (probe.files) return probe.files();
+    const targets = probe.targets();
+    return targets.length ? require('./shellsel').query(targets) : [];
+  };
+  return { stop: () => clearInterval(t), probe, files };
 }
 
 module.exports = { start, detector };
