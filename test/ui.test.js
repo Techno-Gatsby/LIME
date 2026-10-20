@@ -259,6 +259,9 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
       const post = user32.func('bool __stdcall PostMessageW(void *hwnd, uint32_t msg, uintptr_t w, intptr_t l)');
       const h = find('CabinetWClass', null);
       if (!h) throw new Error('Explorer did not open a window');
+      // Select the file through Explorer's own selection API (select it alone, focus it): Explorer's /select switch
+      // isn't applied reliably on CI machines, and this is what the reader must report.
+      require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$w = @((New-Object -ComObject Shell.Application).Windows() | Where-Object { [int64]$_.HWND -eq ${Number(koffi.address(h))} })[0]; $w.Document.SelectItem($w.Document.Folder.ParseName('${path.basename(want)}'), 29)`], { windowsHide: true, timeout: 20000 });
       const tab = child(h, null, 'ShellTabWindowClass', null), b = new Uint16Array(260);
       const title = tab ? String.fromCharCode(...b.subarray(0, text(tab, b, 260))) : '';
       const t = Date.now();

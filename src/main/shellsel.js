@@ -12,8 +12,8 @@ $shell = New-Object -ComObject Shell.Application
 function Read-Selection($doc) {
   $out = @()
   if ($doc -eq $null) { return ,$out }
+  # Only what is selected: a drag always selects what it carries, and the focused item alone may be something else.
   foreach ($item in @($doc.SelectedItems())) { if ($item.Path) { $out += [string]$item.Path } }
-  if ($out.Count -eq 0 -and $doc.FocusedItem) { $out += [string]$doc.FocusedItem.Path }
   return ,$out
 }
 while ($true) {
