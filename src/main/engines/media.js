@@ -568,7 +568,7 @@ async function burnSubtitles(p, opts, ctx) {
 }
 async function normalize(p, opts, ctx) {
   const rate = (await probe(p)).audio?.rate || 48000;
-  return simpleFilter(p, ctx, 'normalized', null, `loudnorm=I=-16:TP=-1.5:LRA=11,aresample=${rate}`, 'Leveling loudness');
+  return simpleFilter(p, ctx, 'normalized', null, `loudnorm=I=-16:TP=-1.5:LRA=11,aformat=sample_rates=${rate}`, 'Leveling loudness');
 }
 const evenDown = (x) => Math.max(2, Math.floor(x / 2) * 2);
 async function videoOnly(p) {

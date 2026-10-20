@@ -12,7 +12,7 @@ export const rm = (...p) => fs.rmSync(path.join(...p), { recursive: true, force:
 export const ls = (d) => (fs.existsSync(d) ? fs.readdirSync(d) : []);
 
 const KEEP = /^\/(src|build|assets|node_modules|package\.json)(\/|$)/;
-const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests__|docs?|examples?|benchmarks?|\.github)\/|\/(?!licen[cs]e|copying|notice)[^/]*\.(md|markdown|map|ts|tsbuildinfo|flow)$/i;
+const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests__|docs|examples?|benchmarks?|\.github)\/|\/(?!licen[cs]e|copying|notice)[^/]*\.(md|markdown|map|ts|tsbuildinfo|flow)$/i;
 
 export async function pack(platform, arch, opts) {
   const T = `${platform}-${arch}`;
