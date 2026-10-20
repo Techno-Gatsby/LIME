@@ -84,7 +84,14 @@ function run(cmd, args, opts = {}) {
     let stdout = '';
     let stderr = '';
     let killedForCancel = false, timedOut = false;
-    const timer = opts.timeout && setTimeout(() => { timedOut = true; child.kill(); }, opts.timeout);
+    // A program that stops responding is stopped with everything it started, and not waited for: on Windows its
+    // helpers can keep its output open, so it might never report closing.
+    const timer = opts.timeout && setTimeout(() => {
+      timedOut = true;
+      if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on('error', () => child.kill());
+      else child.kill('SIGKILL');
+      reject(Object.assign(new Error(`${opts.errorMessage || path.basename(cmd)} (it stopped responding)`), { code: 'TIMEOUT' }));
+    }, opts.timeout);
     if (opts.signal) {
       if (opts.signal.aborted) child.kill();
       opts.signal.addEventListener('abort', () => { killedForCancel = true; child.kill(); }, { once: true });

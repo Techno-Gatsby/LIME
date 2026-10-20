@@ -39,7 +39,10 @@ async function cli(id) {
 }
 function quiet(s) { return String(s).split(/\r?\n/).filter((l) => l && !/WARN|warning:/.test(l)).slice(-2).join(' — '); }
 async function run(id, args, ctx, label, opts = {}) {
-  const bin = await cli(id);
+  // The time limit also covers unpacking the engine, which happens before it can start.
+  let limit;
+  const late = opts.timeout && new Promise((_, rej) => { limit = setTimeout(() => rej(Object.assign(new Error(`${APPS[id].name} couldn’t finish (it stopped responding)`), { code: 'TIMEOUT' })), opts.timeout); });
+  const bin = await (late ? Promise.race([cli(id), late]) : cli(id)).finally(() => clearTimeout(limit));
   ctx?.progress?.(0.15, label);
   let tick = 0.15;
   const t = setInterval(() => { tick = Math.min(0.92, tick + (0.95 - tick) * 0.06); ctx?.progress?.(tick, label); }, 400);
@@ -59,7 +62,7 @@ async function photo(p, opts, ctx) {
   const args = ['convert', p, out];
   if (opts.quality && ['jpg', 'webp'].includes(to)) args.push('--quality', String(opts.quality));
   if (to === 'tif' && opts.layers) args.push('--tiff-layers');
-  await run('photocraft', args, ctx, `Rendering with PhotoCraft`, { timeout: 120000 });
+  await run('photocraft', args, ctx, `Rendering with PhotoCraft`, { timeout: 90000 });
   return out;
 }
 async function render(p, out, opts = {}, ctx) {
