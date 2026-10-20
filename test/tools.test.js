@@ -369,6 +369,49 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('page numbers', 'page-numbers', ['doc.pdf'], { position: 'bottom-center', format: 'Page {n} of {total}', start: 1, size: 11, pages: 'all', color: '#333333' }, async ([o]) => ok((await pdfText(o)).includes('Page 2 of 3'), 'numbers missing'));
   T('watermark pdf', 'watermark-pdf', ['doc.pdf'], { kind: 'text', text: 'CONFIDENTIAL', layout: 'single', opacity: 30, rotation: 45, color: '#d13438', pages: 'all' }, async ([o]) => pages(o, 3));
   T('crop pdf', 'crop-pdf', ['doc.pdf'], { top: 10, bottom: 10, left: 10, right: 10, pages: 'all' }, async ([o]) => { const d = await require('pdf-lib').PDFDocument.load(read(o)); const b = d.getPage(0).getCropBox?.() || d.getPage(0).getMediaBox(); ok(b.width < 595, `width ${b.width}`); });
+  // PDF24-style page tools.
+  const sheets = async (o) => { const d = await require('pdf-lib').PDFDocument.load(read(o)); return d.getPages().map((p) => p.getSize()); };
+  const pageText = async (o, i = 0) => (await E('pdf').readPdf(o)).doc.loadPage(i).toStructuredText().asText();
+  T('pages per sheet: 2 up turns the sheet', 'pages-per-sheet', ['doc.pdf'], { n: '2', paper: 'auto', orientation: 'auto', order: 'across', margin: 10, border: false, pages: 'all' }, async ([o]) => {
+    const s = await sheets(o), t = await pageText(o);
+    ok(s.length === 2 && s[0].width > s[0].height, `sheets ${JSON.stringify(s)}`);
+    ok(/Page 1\b/.test(t) && /Page 2\b/.test(t), `sheet 1 text: ${t.slice(0, 120)}`);
+  });
+  T('pages per sheet: 4 up on letter, down first, with borders', 'pages-per-sheet', ['doc.pdf'], { n: '4', paper: 'letter', orientation: 'portrait', order: 'down', margin: 5, border: true, pages: '1-3' }, async ([o]) => {
+    const s = await sheets(o);
+    ok(s.length === 1 && Math.round(s[0].width) === 612 && Math.round(s[0].height) === 792, `sheets ${JSON.stringify(s)}`);
+  });
+  T('change page size: letter, turned like each page', 'pdf-page-size', ['doc.pdf'], { paper: 'letter', orientation: 'auto', scale: 'fit', margin: 0 }, async ([o]) => {
+    const s = await sheets(o);
+    ok(s.length === 3 && s.every((x) => Math.round(x.width) === 612 && Math.round(x.height) === 792), `sizes ${JSON.stringify(s)}`);
+    ok(/Page 1 of the Lime test document/.test(await pageText(o)), 'text kept');
+  });
+  T('change page size: custom 150 × 100 mm, landscape', 'pdf-page-size', ['doc.pdf'], { paper: 'custom', width: 150, height: 100, orientation: 'landscape', scale: 'fill', margin: 0 }, async ([o]) => {
+    const s = await sheets(o);
+    ok(s.every((x) => Math.abs(x.width - 425.2) < 1 && Math.abs(x.height - 283.5) < 1), `sizes ${JSON.stringify(s)}`);
+  });
+  const streams = async (o, i) => {
+    const { PDFDocument, PDFArray, decodePDFRawStream } = require('pdf-lib'), d = await PDFDocument.load(read(o)), c = d.getPage(i).node.Contents();
+    return (c instanceof PDFArray ? c.asArray() : [c]).map((r) => Buffer.from(decodePDFRawStream(d.context.lookup(r)).decode()).toString('latin1'));
+  };
+  T('overlay pdf underneath, first page on every page', 'overlay-pdf', ['doc.pdf'], { overlay: fx('images.pdf'), position: 'under', repeat: 'first', scale: 'fit', pages: 'all' }, async ([o]) => {
+    for (const i of [0, 2]) { const st = await streams(o, i); ok(/\/\S+ Do/.test(st[0]) && !/\/\S+ Do/.test(st[st.length - 1]), `page ${i + 1}: overlay not first`); }
+    ok(/Page 1 of the Lime test document/.test(await pageText(o)), 'text kept');
+  });
+  T('overlay pdf on top, page by page, chosen pages only', 'overlay-pdf', ['doc.pdf'], { overlay: fx('doc.pdf'), position: 'over', repeat: 'each', scale: 'fit', pages: '2' }, async ([o]) => {
+    const one = await streams(o, 0), two = await streams(o, 1);
+    ok(!one.some((x) => /\/\S+ Do/.test(x) && /cm/.test(x) && x.length < 400), 'page 1 untouched');
+    ok(/\/\S+ Do/.test(two[two.length - 1]), 'page 2 has the overlay on top');
+    ok((await pageText(o, 1)).match(/Page 2 of the Lime test document/g)?.length === 2, 'overlay page 2 drawn on page 2');
+  });
+  F('overlay pdf needs the PDF to lay on', 'overlay-pdf', ['doc.pdf'], { overlay: '', position: 'over', repeat: 'first', scale: 'fit', pages: 'all' }, /Choose the PDF/);
+  T('grayscale pdf: no colour left, text kept', 'grayscale-pdf', ['images.pdf'], {}, async ([o]) => {
+    const tint = async (f) => { const { doc, m } = await E('pdf').readPdf(f), px = doc.loadPage(0).toPixmap(m.Matrix.scale(0.5, 0.5), m.ColorSpace.DeviceRGB, false, true).getPixels(); let t = 0; for (let i = 0; i < px.length; i += 3) t = Math.max(t, Math.abs(px[i] - px[i + 1]), Math.abs(px[i + 1] - px[i + 2])); return t; };
+    ok(await tint(fx('images.pdf')) > 60, 'fixture has colour');
+    const t = await tint(o);
+    ok(t <= 3, `colour left: ${t}`);
+  });
+  T('grayscale pdf keeps text and tables', 'grayscale-pdf', ['layout-bars.pdf'], {}, async ([o]) => ok(/Memory\s+800 MB\s+300 MB/.test(await pageText(o)), (await pageText(o)).slice(0, 80)));
   T('compress pdf by drawn size, graphics lossless', 'compress-pdf', ['images.pdf'], { level: 'recommended' }, async ([o]) => {
     const { PDFDocument, PDFRawStream, PDFName } = require('pdf-lib');
     const d = await PDFDocument.load(read(o)), imgs = d.context.enumerateIndirectObjects().map(([, x]) => x).filter((x) => x instanceof PDFRawStream && String(x.dict.get(PDFName.of('Subtype'))) === '/Image');

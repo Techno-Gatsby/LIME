@@ -209,6 +209,148 @@ async function handouts(input, o, out) {
   }
   return saveLib(doc, out);
 }
+// Pages as they are shown: the crop box, turned by the page's rotation.
+async function embedShown(doc, src, idx) {
+  const pages = idx.map((i) => src.getPage(i));
+  const es = await doc.embedPages(pages, pages.map((p) => { const b = p.getCropBox(); return { left: b.x, bottom: b.y, right: b.x + b.width, top: b.y + b.height }; }));
+  return es.map((e, k) => {
+    const rot = (((pages[k].getRotation().angle || 0) % 360) + 360) % 360, turned = rot % 180 !== 0;
+    return { e, rot, w: turned ? e.height : e.width, h: turned ? e.width : e.height };
+  });
+}
+// Draws a shown page into a box, centred: "fit" scales it to fit, "fill" to cover, "actual" keeps its size.
+function place(page, { e, rot, w: ew, h: eh }, x, y, w, h, mode = 'fit') {
+  const s = mode === 'actual' ? 1 : (mode === 'fill' ? Math.max : Math.min)(w / ew, h / eh), dw = ew * s, dh = eh * s, px = x + (w - dw) / 2, py = y + (h - dh) / 2;
+  const [ax, ay] = { 0: [px, py], 90: [px, py + dh], 180: [px + dw, py + dh], 270: [px + dw, py] }[rot];
+  page.drawPage(e, { x: ax, y: ay, xScale: s, yScale: s, rotate: degrees(-rot) });
+  return { x: px, y: py, width: dw, height: dh };
+}
+const MM = 2.834645669;
+const sheetSize = (o, first) => {
+  if (o.paper === 'custom') return [Math.max(20, Number(o.width) || 210) * MM, Math.max(20, Number(o.height) || 297) * MM];
+  return PAPER_PT[o.paper] || [Math.min(first.w, first.h), Math.max(first.w, first.h)];
+};
+// Several pages on each sheet, like printing 2, 4 or 16 pages per sheet.
+const UP = { 2: [1, 2], 4: [2, 2], 6: [2, 3], 8: [2, 4], 9: [3, 3], 16: [4, 4] };
+async function pagesPerSheet(input, o, out) {
+  const src = await loadLib(input, o.password), idx = U.parseRanges(o.pages || 'all', src.getPageCount());
+  if (!idx.length) throw new Error('None of those pages exist.');
+  const doc = await PDFDocument.create(), list = await embedShown(doc, src, idx), n = Number(o.n) || 2;
+  const m = (Number(o.margin) || 0) * MM, gap = o.gap == null ? m / 2 : (Number(o.gap) || 0) * MM, [pw, ph] = sheetSize(o, list[0]);
+  // Portrait or landscape: whichever shows the pages bigger, unless chosen.
+  const layout = (land) => {
+    const [W, H] = land ? [ph, pw] : [pw, ph], [cols, rows] = land ? [...UP[n] || UP[2]].reverse() : UP[n] || UP[2];
+    const cw = (W - 2 * m - gap * (cols - 1)) / cols, ch = (H - 2 * m - gap * (rows - 1)) / rows;
+    return { W, H, cols, rows, cw, ch, s: Math.min(cw / list[0].w, ch / list[0].h) };
+  };
+  const L = o.orientation === 'portrait' ? layout(false) : o.orientation === 'landscape' ? layout(true) : [layout(false), layout(true)].sort((a, b) => b.s - a.s)[0];
+  if (L.cw < 10 || L.ch < 10) throw new Error('The margins leave no room for the pages. Make them smaller.');
+  const line = rgb(0.55, 0.57, 0.53);
+  for (let k = 0; k < list.length; k += n) {
+    const page = doc.addPage([L.W, L.H]);
+    list.slice(k, k + n).forEach((p, j) => {
+      const [c, r] = o.order === 'down' ? [Math.floor(j / L.rows), j % L.rows] : [j % L.cols, Math.floor(j / L.cols)];
+      const box = place(page, p, m + c * (L.cw + gap), L.H - m - (r + 1) * L.ch - r * gap, L.cw, L.ch);
+      if (o.border) page.drawRectangle({ ...box, borderColor: line, borderWidth: 0.6 });
+    });
+  }
+  return saveLib(doc, out);
+}
+// Every page onto one paper size; the content is scaled to fit, to fill, or kept at its size.
+async function pageSize(input, o, out) {
+  const src = await loadLib(input, o.password), doc = await PDFDocument.create();
+  const list = await embedShown(doc, src, [...Array(src.getPageCount()).keys()]), m = (Number(o.margin) || 0) * MM;
+  const [pw, ph] = sheetSize({ ...o, paper: o.paper || 'a4' }, list[0]);
+  for (const p of list) {
+    const land = o.orientation === 'landscape' || (o.orientation !== 'portrait' && p.w > p.h), [W, H] = land ? [Math.max(pw, ph), Math.min(pw, ph)] : [Math.min(pw, ph), Math.max(pw, ph)];
+    if (W - 2 * m < 20 || H - 2 * m < 20) throw new Error('Those margins are larger than the page.');
+    place(doc.addPage([W, H]), p, m, m, W - 2 * m, H - 2 * m, o.scale || 'fit');
+  }
+  return saveLib(doc, out);
+}
+// Another PDF drawn over or under the pages, like a letterhead or a form background.
+async function overlay(input, o, out) {
+  if (!o.overlay) throw new Error('Choose the PDF to lay over the pages.');
+  const doc = await loadLib(input, o.password), top = await loadLib(o.overlay), pages = doc.getPages();
+  const want = new Set(U.parseRanges(o.pages || 'all', pages.length)), each = o.repeat === 'each';
+  const list = await embedShown(doc, top, each ? [...Array(Math.min(top.getPageCount(), pages.length)).keys()] : [0]);
+  pages.forEach((page, i) => {
+    const p = each ? list[i] : list[0];
+    if (!p || !want.has(i)) return;
+    const b = page.getCropBox(), turn = (((page.getRotation().angle || 0) % 360) + 360) % 360, rot = (p.rot - turn + 360) % 360;
+    place(page, { ...p, rot, ...(rot % 180 !== p.rot % 180 ? { w: p.h, h: p.w } : {}) }, b.x, b.y, b.width, b.height, o.scale || 'fit');
+    if (o.position === 'under') {
+      // Drawing always lands on top; moving the new content stream first puts it underneath.
+      const arr = page.node.Contents();
+      if (arr instanceof PDFArray && arr.size() > 1) { const last = arr.get(arr.size() - 1); arr.remove(arr.size() - 1); arr.insert(0, last); }
+    }
+  });
+  return saveLib(doc, out);
+}
+// Every colour turned to grey by its brightness. Text and drawings stay sharp and selectable; photos
+// are greyed pixel by pixel and gradients are drawn as grey pictures. Links and bookmarks are not kept.
+async function grayscale(input, o, out, ctx) {
+  const { doc, m } = await readPdf(input, o.password), G = m.ColorSpace.DeviceGray, buf = new m.Buffer(), writer = new m.DocumentWriter(buf, 'pdf', 'compress');
+  const luma = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b, images = new Map();
+  const grey = (cs, c) => {
+    if (!cs || !c?.length) return c;
+    if (cs.isGray()) return [c[0]];
+    if (cs.isRGB()) return [luma(c[0], c[1], c[2])];
+    if (cs.isCMYK()) { const k = 1 - c[3]; return [luma((1 - c[0]) * k, (1 - c[1]) * k, (1 - c[2]) * k)]; }
+    if (cs.isLab()) return [c[0] / 100];
+    return [cs.isSubtractive() ? 1 - Math.max(...c) : c.reduce((a, v) => a + v, 0) / c.length];
+  };
+  const greyImage = (img) => {
+    if (img.getImageMask() || img.getNumberOfComponents() === 1) return img;
+    const key = img.pointer;
+    if (!images.has(key)) images.set(key, new m.Image(img.toPixmap().convertToColorSpace(G, true), img.getMask() || undefined));
+    return images.get(key);
+  };
+  const n = doc.countPages();
+  for (let i = 0; i < n; i++) {
+    const page = doc.loadPage(i), area = page.getBounds(), dev = writer.beginPage(area);
+    const cs = (c) => (c ? G : c);
+    page.run(new m.Device({
+      fillPath: (p, eo, t, c, col, a) => dev.fillPath(p, eo, t, G, grey(c, col), a),
+      strokePath: (p, s, t, c, col, a) => dev.strokePath(p, s, t, G, grey(c, col), a),
+      clipPath: (p, eo, t) => dev.clipPath(p, eo, t),
+      clipStrokePath: (p, s, t) => dev.clipStrokePath(p, s, t),
+      fillText: (x, t, c, col, a) => dev.fillText(x, t, G, grey(c, col), a),
+      strokeText: (x, s, t, c, col, a) => dev.strokeText(x, s, t, G, grey(c, col), a),
+      clipText: (x, t) => dev.clipText(x, t),
+      clipStrokeText: (x, s, t) => dev.clipStrokeText(x, s, t),
+      ignoreText: (x, t) => dev.ignoreText(x, t),
+      fillShade: (sh, t, a) => {
+        // A gradient can't be recoloured in place, so it is drawn into a grey picture of its area.
+        const r = m.Rect.transform(sh.getBounds(), t), x0 = Math.max(r[0], area[0]), y0 = Math.max(r[1], area[1]), x1 = Math.min(r[2], area[2]), y1 = Math.min(r[3], area[3]);
+        if (!(x1 > x0 && y1 > y0)) return;
+        const k = 150 / 72, w = Math.ceil((x1 - x0) * k), h = Math.ceil((y1 - y0) * k), pix = new m.Pixmap(G, [0, 0, w, h], true);
+        pix.clear(0);
+        const draw = new m.DrawDevice(m.Matrix.concat(m.Matrix.translate(-x0, -y0), m.Matrix.scale(k, k)), pix);
+        draw.fillShade(sh, t, 1);
+        draw.close();
+        dev.fillImage(new m.Image(pix), [x1 - x0, 0, 0, y1 - y0, x0, y0], a);
+      },
+      fillImage: (img, t, a) => dev.fillImage(greyImage(img), t, a),
+      fillImageMask: (img, t, c, col, a) => dev.fillImageMask(img, t, G, grey(c, col), a),
+      clipImageMask: (img, t) => dev.clipImageMask(img, t),
+      popClip: () => dev.popClip(),
+      beginMask: (r, lum, c, col) => dev.beginMask(r, lum, cs(c), grey(c, col)),
+      endMask: () => dev.endMask(),
+      beginGroup: (r, c, iso, ko, bm, a) => dev.beginGroup(r, cs(c), iso, ko, bm, a),
+      endGroup: () => dev.endGroup(),
+      beginTile: (r, v, xs, ys, t, id, d) => dev.beginTile(r, v, xs, ys, t, id, d),
+      endTile: () => dev.endTile(),
+      beginLayer: (name) => dev.beginLayer(name),
+      endLayer: () => dev.endLayer(),
+    }), m.Matrix.identity);
+    writer.endPage();
+    ctx?.progress((i + 1) / n, `Page ${i + 1} of ${n}`);
+  }
+  writer.close();
+  await fsp.writeFile(out, Buffer.from(buf.asUint8Array()));
+  return out;
+}
 async function extract(input, spec, out) {
   const n = await pageCount(input);
   return subset(input, U.parseRanges(spec, n), out);
@@ -896,7 +1038,7 @@ async function thumbnail(input, width = 240) {
 
 module.exports = {
   mupdf, readPdf, loadLib, saveLib, unpredict, pageCount, pageFrame, fontCache, hex, extractLines, quadRect, STD, FONT_FILES,
-  merge, subset, split, removePages, extract, handouts, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
+  merge, subset, split, removePages, extract, handouts, pagesPerSheet, pageSize, overlay, grayscale, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
   repair, flatten, protect, unlock, redact, toImages, toTiff, toComic, toMarkdown, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
   compress, ocr, imagesToPdf, thumbnail,
 };
