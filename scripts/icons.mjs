@@ -49,7 +49,8 @@ async function fruit(file) {
   return sharp(padded).extract({ left: Math.round((x0 + x1 - side) / 2) + pad, top: Math.round((y0 + y1 - side) / 2) + pad, width: side, height: side }).png().toBuffer();
 }
 const lime = await fruit(SRC);
-const at = (px) => sharp(lime).resize(px, px, { kernel: 'lanczos3' }).png().toBuffer();
+// Scaling down softens fine detail, so small sizes get a light sharpen (too light to leave halos).
+const at = (px) => { const r = sharp(lime).resize(px, px, { kernel: 'lanczos3' }); return (px <= 384 ? r.sharpen({ sigma: 0.5, m1: 0.6, m2: 2 }) : r).png().toBuffer(); };
 // A soft neutral shadow from the fruit's outline; it is blurry anyway, so SVG rendering is fine for it.
 const shadow = (size, x, y, d, blur, dy, opacity) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><defs><filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="${blur}"/><feOffset dy="${dy}"/><feComponentTransfer><feFuncA type="linear" slope="${opacity}"/></feComponentTransfer></filter></defs><image href="data:image/png;base64,${lime.toString('base64')}" x="${x}" y="${y}" width="${d}" height="${d}" filter="url(#s)"/></svg>`)).png().toBuffer();
 async function compose(file, base, d, x, y, sh) {
@@ -74,8 +75,8 @@ await compose('icon-win.png', await sharp(clear).png().toBuffer(), 944, 40, 30, 
 for (const [file, px] of [['logo.png', 512], ['tray.png', 32], ['drag.png', 64], ['drag@2x.png', 128]]) fs.writeFileSync(path.join(out, file), await at(px));
 await png(tray(18), 'trayTemplate.png', 18);
 await png(tray(36), 'trayTemplate@2x.png', 36);
-// In-app logos at their exact sizes for 1x, 2x and 3x screens.
-for (const size of [52, 96]) for (const k of [1, 2, 3]) fs.writeFileSync(path.join(assets, `lime-${size}${k > 1 ? `@${k}x` : ''}.png`), await at(size * k));
+// In-app logos at their exact sizes for 1x to 4x (a 3x screen with the large wheel needs more than 3x).
+for (const size of [52, 96]) for (const k of [1, 2, 3, 4]) fs.writeFileSync(path.join(assets, `lime-${size}${k > 1 ? `@${k}x` : ''}.png`), await at(size * k));
 
 const icns = async () => {
   const types = [['icp4', 16], ['icp5', 32], ['ic11', 32], ['icp6', 64], ['ic12', 64], ['ic07', 128], ['ic13', 256], ['ic08', 256], ['ic14', 512], ['ic09', 512], ['ic10', 1024]];

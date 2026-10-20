@@ -39,7 +39,9 @@ export function arc(r, frac) {
   return `M0 ${-r}A${r} ${r} 0 ${a > Math.PI ? 1 : 0} 1 ${f(x)} ${f(y)}`;
 }
 // The lime photo, downsampled ahead of time for each screen density so it stays sharp (sizes 52 and 96 exist).
-export function limeSvg(size = 52, cls = '') {
+// The wheel is scaled as a whole for its Small and Large sizes, so `scale` makes the browser pick
+// a bitmap for the size the logo really appears at instead of stretching one made for 1x.
+export function limeSvg(size = 52, cls = '', scale = 1) {
   const f = (k) => `assets/lime-${size}${k > 1 ? `@${k}x` : ''}.png`;
-  return `<img class="lime${cls ? ` ${cls}` : ''}" src="${f(1)}" srcset="${f(1)} 1x, ${f(2)} 2x, ${f(3)} 3x" width="${size}" height="${size}" alt="" draggable="false">`;
+  return `<img class="lime${cls ? ` ${cls}` : ''}" src="${f(1)}" srcset="${[1, 2, 3, 4].map((k) => `${f(k)} ${size * k}w`).join(', ')}" sizes="${Math.ceil(size * scale)}px" width="${size}" height="${size}" alt="" draggable="false">`;
 }

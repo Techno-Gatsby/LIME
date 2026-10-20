@@ -16,7 +16,7 @@ const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, rin
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-$('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52));
+$('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, '', k));
 
 async function layout() {
   const open = S.state !== 'idle';
@@ -206,7 +206,7 @@ async function drawCenter() {
     html = `${out && !S.result.inPlace ? await fileVisual(out) : `<div class="glyph">${icon('check', 'lg')}</div>`}<div class="tick">${icon('check', 'sm')}</div>${hot}`;
   } else if (S.state === 'failed') html = `<div class="glyph bad">${icon('warning', 'lg')}</div>${hot || capsule('Didn’t finish', 'bad')}`;
   else if (files.length && (S.state === 'open' || S.state === 'ready')) html = `${await fileVisual(files[0])}${files.length > 1 ? `<div class="badge">${files.length}</div>` : ''}${hot || capsule(esc(sizeText(files)))}`;
-  else html = limeSvg(96, 'logo');
+  else html = limeSvg(96, 'logo', k);
   if (seq !== centerSeq) return;
   center.innerHTML = html;
   center.draggable = S.state === 'done' && !!S.result?.outs?.length;
@@ -755,7 +755,7 @@ api.on('wheel:summon', ({ why, at, peek }) => { if (S.state === 'idle') expand(w
 api.on('wheel:peek', (files) => { if (S.state === 'ready') setPeek(files); });
 api.on('wheel:dragEnded', () => { if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.depth && !S.dropping) fold(); }, 260); });
 api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
-api.on('settings', (s) => { settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; layout(); } });
+api.on('settings', (s) => { settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
 
 setState('idle');
 drawRing([]);
