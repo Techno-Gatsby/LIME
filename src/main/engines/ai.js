@@ -5,7 +5,7 @@
 const U = require('./util');
 const { fs, fsp, path } = U;
 
-const NAMES = { whisper: 'Speech recognition', espeak: 'Phonemes', denoise: 'Voice clean-up', stems: 'Stem splitter' };
+const NAMES = { whisper: 'Speech recognition', 'whisper-small': 'Speech recognition (more languages)', espeak: 'Pronunciation', denoise: 'Voice clean-up', stems: 'Stem splitter' };
 const dir = () => process.env.LIME_AI || U.cfg.ai || path.join(__dirname, '../../../vendor/ai', `${process.platform}-${process.arch}`);
 const root = () => path.join(U.cfg.user, 'helpers');
 const have = (id) => !!require('../helpers').bundled(id, dir());

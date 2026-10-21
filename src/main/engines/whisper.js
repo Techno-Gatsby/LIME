@@ -8,7 +8,8 @@ const { fsp, path } = U;
 const LANGS = [['auto', 'Detect'], ['en', 'English'], ['hi', 'Hindi'], ['ar', 'Arabic'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['pl', 'Polish'], ['tr', 'Turkish'],
   ['ur', 'Urdu'], ['bn', 'Bengali'], ['ta', 'Tamil'], ['zh', 'Chinese'], ['ja', 'Japanese'], ['ko', 'Korean'], ['id', 'Indonesian'], ['vi', 'Vietnamese'], ['th', 'Thai'], ['fa', 'Persian'], ['he', 'Hebrew'], ['el', 'Greek'], ['sv', 'Swedish']];
 const ready = () => ai.have('whisper');
-const model = (o) => (o.model === 'small' && ai.have('whisper-small') ? 'whisper-small' : 'whisper');
+// English goes to the base model (fast, near-perfect); every other language, and detection, to small when it ships.
+const model = (o = {}) => (o.model === 'base' || (o.lang === 'en' && o.model !== 'small') || !ai.have('whisper-small') ? 'whisper' : 'whisper-small');
 const args = (o = {}) => ({ lang: o.lang || 'auto', translate: !!o.translate, prompt: o.prompt || '', accurate: o.accurate === true || o.accuracy === 'high' });
 
 async function transcribePcm(samples, opts = {}, ctx = {}) {

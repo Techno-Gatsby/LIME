@@ -4,7 +4,7 @@ const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
 const word = lazy('word'), excel = lazy('excel'), slides = lazy('slides'), kit = lazy('officekit');
-const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email'), web = lazy('web');
+const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email'), web = lazy('web'), voice = lazy('voice');
 
 const MORE_GROUPS = { subtitle: ['smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc'], data: ['jsonl', 'ndjson', 'jsonc', 'toml'], contacts: ['vcf', 'vcard'],
   font: ['ttf', 'otf', 'woff', 'woff2', 'eot', 'ttc'], mail: ['eml', 'msg'], webarchive: ['mht', 'mhtml'], comic: ['cbz', 'cbr', 'cb7', 'cbt', 'cbc'], ebook: ['epub', 'kepub', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'fb2', 'htmlz', 'txtz'] };
@@ -114,6 +114,8 @@ const lightExt = (o, files) => (['png', 'tif', 'tiff'].includes(U.ext(files[0] |
 const LIGHT_LOOK_CHOICES = craft().LIGHT_PRESETS.map((id) => [id, id.replace(/^lc\./, '').replace(/^bw-/, 'B&W ').replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()).replace('70s', '70s')]);
 const VIDEO_LOOK_CHOICES = craft().VIDEO_LOOKS.map((l) => [l, l]);
 const notMidi = (files) => !files.some((f) => ['mid', 'midi'].includes(U.ext(f)));
+const whisperLangs = () => require('./engines/whisper').LANGS.map(([c, n]) => [c, c === 'auto' ? 'Detect automatically' : n]);
+const VOICE_LIST = [['en-GB', 'English (British)'], ['en-US', 'English (American)'], ['ar', 'Arabic'], ['hi', 'Hindi'], ['fr', 'French'], ['de', 'German'], ['es', 'Spanish']];
 const WORD_EDIT = [...WORD_IN, 'odt', 'rtf'], WORD_DOCS = [...WORD_EDIT, 'doc'];
 const wordExt = (o, files) => (['docx', 'odt', 'rtf'].includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'docx');
 const CSV_IN = ['csv', 'tsv'], GRID_IN = [...XLSX_IN, 'ods', 'xls', 'xlsb', ...CSV_IN], DECK_IN = ['pptx', 'deckcraft'];
@@ -701,6 +703,21 @@ const TOOLS = [
     run: each((f, o, c) => web().pageToPdf(f, o, c)) },
   { id: 'web-text', cat: 'docs', name: 'Extract text', desc: 'The words of the page as plain text, without the markup.', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 20, petal: ['Text', 'Extract'], ext: 'txt', suffix: '', run: each((f, o, c) => web().extractText(f, o, c)) },
   { id: 'validate-html', cat: 'docs', name: 'Validate', desc: 'Unclosed tags, ids used twice, pictures without alt text and more.', tags: 'validator lint html errors', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 22, petal: ['Validate', 'Errors'], save: 'none', run: each((f, o, c) => web().validateFile(f, o, c)) },
+  // Speech tools on the bundled models (whisper, DeepFilterNet, Spleeter and Piper on the ONNX runtime), all offline.
+  { id: 'speech-to-text', cat: 'media', name: 'Subtitles from speech', desc: 'Listens to the speech and writes subtitles (SRT, VTT) or a transcript. Works offline.', tags: 'transcribe transcription captions subtitles srt vtt speech recognition whisper dictation', accepts: ['video', 'audio'], ok: notMidi, ai: 'whisper', ext: (o) => o.to,
+    options: [select('to', 'Save as', [['srt', 'Subtitles (SRT)'], ['vtt', 'Subtitles (VTT)'], ['txt', 'Transcript (text)']]), select('lang', 'Language', whisperLangs()), toggle('translate', 'Give me English', false), toggle('accurate', 'Slower, more careful', false, { advanced: true })],
+    run: each((f, o, c) => voice().transcribe(f, o, c)) },
+  { id: 'subtitle-video', cat: 'media', name: 'Add subtitles from speech', desc: 'Listens to the speech and adds subtitles to the video, as a track you can switch off or burned into the picture.', tags: 'captions subtitles srt transcribe burn soft whisper', accepts: ['video'], ai: 'whisper', suffix: '-subtitled', ext: (o, files) => (['mp4', 'm4v', 'mov'].includes(U.ext(files[0] || '')) && o.how !== 'burn' ? U.ext(files[0]) : o.how === 'burn' ? undefined : 'mkv'),
+    options: [choice('how', 'Add as', [['soft', 'A track (can be switched off)'], ['burn', 'Burned into the picture']]), select('lang', 'Language', whisperLangs()), toggle('translate', 'Give me English', false), range('size', 'Text size', 22, 12, 48, { when: { how: 'burn' } })],
+    run: each((f, o, c) => voice().subtitleVideo(f, o, c)) },
+  { id: 'clean-voice', cat: 'media', name: 'Clean up voice noise', desc: 'Takes hiss, hum, wind and room noise out of speech, in audio or a video’s soundtrack.', tags: 'denoise noise reduction background hiss hum clean speech deepfilternet', accepts: ['audio', 'video'], ok: notMidi, ai: 'denoise', suffix: '-clean',
+    options: [choice('strength', 'Strength', [['full', 'Full'], ['gentle', 'Gentle, keeps some room tone']])], run: each((f, o, c) => voice().cleanVoice(f, o, c)) },
+  { id: 'split-stems', cat: 'media', name: 'Split song into stems', desc: 'Vocals and backing as separate tracks in a folder. Slow on a CPU: about half the song’s length.', tags: 'stems vocals instrumental backing karaoke separate spleeter acapella', accepts: ['audio', 'video'], ok: notMidi, ai: 'stems', save: 'folder', suffix: ' - stems',
+    options: [choice('format', 'Format', [['wav', 'WAV'], ['mp3', 'MP3'], ['flac', 'FLAC']])], run: each((f, o, c) => voice().splitStems(f, o, c)) },
+  { id: 'remove-vocals', cat: 'media', name: 'Remove vocals', desc: 'The backing track without the singer, for karaoke or a remix.', tags: 'karaoke instrumental backing vocals stems spleeter', accepts: ['audio', 'video'], ok: notMidi, ai: 'stems', suffix: '-no-vocals', run: each((f, o, c) => voice().removeVocals(f, o, c)) },
+  { id: 'read-aloud', cat: 'docs', name: 'Read text aloud', desc: 'A natural voice reads the text of a document, Markdown, Word or PDF file into an MP3 or WAV. Works offline.', tags: 'tts text to speech audio voice narrate listen audiobook piper', accepts: ['doc', 'pdf', 'ebook'], ai: 'espeak', ext: (o) => (o.to === 'wav' ? 'wav' : 'mp3'),
+    options: [select('voice', 'Voice', VOICE_LIST), choice('to', 'Format', [['mp3', 'MP3'], ['wav', 'WAV']]), choice('speed', 'Speed', [['0.85', 'Slower'], ['1', 'Normal'], ['1.2', 'Faster']], '1')],
+    run: each((f, o, c) => voice().readAloud(f, o, c)) },
 ];
 function keepExt(f) { const e = U.ext(f || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'png'; }
 
@@ -711,7 +728,7 @@ const HASH = W('file-hash', 'Checksum', 'Verify');
 const WHEELS = {
   pdf: {
     convert: [W('pdf-to-word', 'DOCX', 'Word'), W('pdf-to-jpg', 'JPG', 'Pages', { format: 'jpg' }, { full: true }), W('pdf-to-jpg', 'PNG', 'Pages', { format: 'png' }, { full: true }), W('pdf-to-excel', 'XLSX', 'Excel', { to: 'xlsx' }), W('pdf-to-powerpoint', 'PPTX', 'PowerPoint'), W('pdf-to-text', 'TXT', 'Text'), W('pdf-to-html', 'HTML', 'Web'), W('pdf-to-svg', 'SVG', 'Vector'), W('pdf-to-markdown', 'MD', 'Markdown'), W('pdf-to-tiff', 'TIFF', 'All pages')],
-    tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Reorder'), W('split-pdf', 'Split', 'Pages'), W('protect-pdf', 'Protect', 'Password'), W('page-numbers', 'Numbers', 'Pages'), W('watermark-pdf', 'Watermark', 'Text'), W('ocr-pdf', 'Searchable', 'Read scans'), W('rotate-pdf', 'Rotate', '90°')],
+    tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Reorder'), W('split-pdf', 'Split', 'Pages'), W('protect-pdf', 'Protect', 'Password'), W('page-numbers', 'Numbers', 'Pages'), W('watermark-pdf', 'Watermark', 'Text'), W('ocr-pdf', 'Searchable', 'Read scans'), W('rotate-pdf', 'Rotate', '90°'), W('read-aloud', 'Read aloud', 'To MP3')],
   },
   image: {
     tools: [W('remove-background', 'Remove BG', 'Background'), W('compress-image', 'Compress', 'Smaller'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('edit-image', 'Edit', 'Crop & adjust'), W('enhance-photo', 'Enhance', 'Auto'), W('upscale-image', 'Upscale', 'Sharper 2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('image-to-text', 'Text', 'Copy text'), W('strip-metadata', 'Private', 'No location'), W('scan-to-pdf', 'Scan', 'Clean PDF')],
@@ -722,16 +739,16 @@ const WHEELS = {
   },
   video: {
     convert: [W('convert-video', 'MP4', 'Universal', { to: 'mp4' }), W('convert-video', 'MOV', 'Apple', { to: 'mov' }), W('convert-video', 'WebM', 'Web', { to: 'webm' }), W('video-to-gif', 'GIF', 'Clip', {}, { full: true }), W('extract-audio', 'MP3', 'Audio', { to: 'mp3' }), W('convert-video', 'HEVC', 'Smaller', { to: 'hevc' }), W('convert-video', 'MKV', 'Archive', { to: 'mkv' }), W('extract-audio', 'M4A', 'Audio', { to: 'm4a' }), W('extract-audio', 'WAV', 'Audio', { to: 'wav' })],
-    tools: [W('compress-video', 'Compress', 'Smaller'), W('edit-video', 'Edit', 'Trim & more'), W('trim-media', 'Trim', 'Cut'), W('crop-video', 'Crop', 'Shape'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('volume-media', 'Volume', 'Louder')],
+    tools: [W('compress-video', 'Compress', 'Smaller'), W('edit-video', 'Edit', 'Trim & more'), W('subtitle-video', 'Subtitles', 'From speech'), W('speech-to-text', 'Transcript', 'Speech to text'), W('clean-voice', 'Clean voice', 'Less noise'), W('trim-media', 'Trim', 'Cut'), W('crop-video', 'Crop', 'Shape'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('volume-media', 'Volume', 'Louder')],
   },
   audio: {
     convert: [W('convert-audio', 'MP3', 'Universal', { to: 'mp3' }), W('convert-audio', 'M4A', 'Apple', { to: 'm4a' }), W('convert-audio', 'WAV', 'Studio', { to: 'wav' }), W('convert-audio', 'FLAC', 'Lossless', { to: 'flac' }), W('convert-audio', 'ALAC', 'iTunes', { to: 'alac' }), W('convert-audio', 'AIFF', 'Mac', { to: 'aiff' }), W('convert-audio', 'OGG', 'Open', { to: 'ogg' }), W('convert-audio', 'Opus', 'Voice', { to: 'opus' }), W('convert-audio', 'WMA', 'Windows', { to: 'wma' })],
-    tools: [W('compress-audio', 'Compress', 'Smaller'), W('edit-audio', 'Edit', 'Trim & more'), W('normalize-audio', 'Level', 'Loudness'), W('volume-media', 'Volume', 'Louder'), W('trim-media', 'Trim', 'Cut'), W('fade-audio', 'Fade', 'In & out'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('pitch-audio', 'Pitch', 'Semitones'), W('loop-media', 'Loop', 'Repeat'), W('reverse-media', 'Reverse', 'Backwards')],
+    tools: [W('compress-audio', 'Compress', 'Smaller'), W('edit-audio', 'Edit', 'Trim & more'), W('speech-to-text', 'Subtitles', 'From speech'), W('clean-voice', 'Clean voice', 'Less noise'), W('split-stems', 'Stems', 'Vocals & backing'), W('remove-vocals', 'Karaoke', 'No vocals'), W('normalize-audio', 'Level', 'Loudness'), W('volume-media', 'Volume', 'Louder'), W('trim-media', 'Trim', 'Cut'), W('fade-audio', 'Fade', 'In & out'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('pitch-audio', 'Pitch', 'Semitones'), W('loop-media', 'Loop', 'Repeat'), W('reverse-media', 'Reverse', 'Backwards')],
   },
   doc: {
     convert: [W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'DOCX', 'Word', { to: 'docx' }), W('convert-document', 'MD', 'Markdown', { to: 'md' }), W('convert-document', 'TXT', 'Text', { to: 'txt' }), W('convert-document', 'HTML', 'Web', { to: 'html' }), W('convert-document', 'EPUB', 'eBook', { to: 'epub' }), W('convert-document', 'RTF', 'Rich text', { to: 'rtf' })],
     tools: [W('edit-web', 'Edit', 'Web page', {}, { only: WEB_PAGE }), W('replace-text', 'Replace', 'Find', {}, { ask: true }), W('track-changes', 'Accept', 'All edits', { action: 'accept' }), W('clean-office', 'Clean', 'Personal info'), W('doc-stats', 'Stats', 'Words'), W('watermark-doc', 'Watermark', 'Draft', {}, { ask: true }),
-      W('mail-merge', 'Mail merge', 'From a list', {}, { ask: true }), W('split-doc', 'Split', 'Headings'), W('office-media', 'Images', 'Extract'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
+      W('mail-merge', 'Mail merge', 'From a list', {}, { ask: true }), W('split-doc', 'Split', 'Headings'), W('read-aloud', 'Read aloud', 'To MP3'), W('office-media', 'Images', 'Extract'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
   comic: { convert: [W('convert-comic', 'PDF', 'Document', { to: 'pdf' }), W('convert-comic', 'EPUB', 'Fixed layout', { to: 'epub' }), W('convert-comic', 'CBZ', 'Repack', { to: 'cbz' }), W('convert-comic', 'Pages', 'Pictures', { to: 'images' }, { full: true })], tools: [ZIP, HASH] },
   ebook: {

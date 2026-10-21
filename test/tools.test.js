@@ -1681,7 +1681,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       }
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
-    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : undefined;
+    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.ai && !E('ai').have(t.ai) ? 'the speech models are not in this build' : undefined;
     for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map(fx), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
@@ -1903,6 +1903,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./accuracy.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./apps2.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./web.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./audio.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));

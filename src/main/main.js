@@ -20,6 +20,7 @@ const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : process.env.LIME_CRAF
 const APPS = app.isPackaged ? path.join(RES, 'apps') : path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
 const WEB = app.isPackaged ? path.join(RES, 'web') : process.env.LIME_WEB || path.join(ROOT, 'vendor', 'web');
 const HELPERS = app.isPackaged ? path.join(RES, 'helpers') : path.join(ROOT, 'vendor', 'helpers', `${process.platform}-${process.arch}`);
+const AI = app.isPackaged ? path.join(RES, 'ai') : process.env.LIME_AI || path.join(ROOT, 'vendor', 'ai', `${process.platform}-${process.arch}`);
 const helperRoot = () => path.join(app.getPath('userData'), 'helpers');
 const asset = (n) => path.join(ROOT, 'build', n);
 
@@ -79,7 +80,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, ai: AI, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
