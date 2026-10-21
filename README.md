@@ -68,10 +68,10 @@ Click the lime and pick an app, or drop files and open **Apps**. **Open** starts
 
 - **PhotoCraft** — auto tone, sharpen, reduce noise, lift shadows, paint looks (oil, watercolour, poster, ink, pencil), split a scan into photos, export PSD layers, layer list.
 - **LightCraft** — 41 looks, smart black & white, straighten, remove dust, develop RAW, auto enhance, HDR, panorama, HDR sets for a whole folder.
-- **VectorCraft** — trace a picture or logo to SVG/AI/PDF/EPS, outline text, export artboards, a logo package (SVG, PNG 1×/2×, PDF, print PDF), vector info.
-- **DesignCraft** — preflight, print PDF (PDF/X-4, bleed, marks) or web PDF, package for hand-over, fixed-layout EPUB, booklet.
-- **EffectCraft** — poster frame, transparent GIF or ProRes 4444 MOV, PNG frames, animation info, render to video.
-- **FilmCraft** — split into scenes, clean up voices, film-look colour grades, edit-ready ProRes/DNxHR copies, media info, timeline conversion.
+- **VectorCraft** — trace a picture or logo to SVG/AI/PDF/EPS, outline text, export artboards, a logo package (SVG, PNG 1×/2×, PDF, print PDF), vector info. **Edit** opens SVG, AI, EPS, PDF and VectorCraft files in Lime: select and move objects, recolour the artwork, align, flip, outline strokes, simplify, combine shapes, live effects, text, layers, artboards and image trace.
+- **DesignCraft** — preflight, print PDF (PDF/X-4, bleed, marks) or web PDF, package for hand-over, fixed-layout EPUB, booklet. **Edit** opens IDML and DesignCraft layouts: edit stories, find and change (with GREP), swatches, fonts, page size, margins and pages, picture fitting, and preflight with fixes.
+- **EffectCraft** — poster frame, transparent GIF or ProRes 4444 MOV, PNG frames, animation info, render to video. **Edit** opens Lottie and EffectCraft projects with a frame monitor and a layer timeline: text, colours, speed, trim, frame size, effects, transparency, then Lottie, MP4, GIF, WebM, ProRes or PNG frames.
+- **FilmCraft** — split into scenes, clean up voices, film-look colour grades, edit-ready ProRes/DNxHR copies, media info, timeline conversion. **Edit** opens OTIO, FCPXML, XML, EDL and AAF timelines on a track view: trim, split, reorder, remove, speed, transitions, effects, looks, titles, markers and sequence settings, then MP4 or any of those formats.
 - **PdfCraft** — optimise, remove hidden data, PDF/A, fillable forms, check redactions, Bates numbers, word count, print check, link web addresses, split at bookmarks, accessibility check, comment summary, compare.
 
 ## Engines
