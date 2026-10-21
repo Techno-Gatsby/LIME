@@ -782,6 +782,8 @@ function fuzzy(q, text) {
   return score - Math.floor(t.length / 8);
 }
 const recentTools = () => { try { return JSON.parse(localStorage.getItem('lime.recentTools') || '[]'); } catch (_) { return []; } };
+// What people reach for most, shown first in the full list.
+const POPULAR = ['remove-background', 'compress-pdf', 'merge-pdf', 'compress-image', 'resize-image', 'convert-image', 'edit-pdf', 'sign-pdf', 'split-pdf', 'pdf-to-word', 'convert-video', 'compress-video', 'trim-media', 'extract-audio', 'convert-audio', 'image-to-text', 'jpg-to-pdf', 'protect-pdf'];
 function rememberTool(id) { try { localStorage.setItem('lime.recentTools', JSON.stringify([id, ...recentTools().filter((x) => x !== id)].slice(0, 8))); } catch (_) {} }
 function showAll({ app } = {}) {
   // From an app's More slice: just that app's actions (all of them with no files yet, else the ones that fit).
@@ -796,13 +798,14 @@ function showAll({ app } = {}) {
     const tools = ids.map((id) => catalog[id]).filter(Boolean);
     if (term) {
       const hits = tools.map((t) => {
-        const name = fuzzy(term, t.name), rest = `${t.desc} ${CRAFT[t.craft] || ''}`.toLowerCase().includes(term);
+        const name = fuzzy(term, t.name), rest = `${t.desc} ${t.tags || ''} ${t.id.replace(/-/g, ' ')} ${CRAFT[t.craft] || ''}`.toLowerCase().includes(term);
         return { t, score: name == null ? (rest ? -50 : null) : name + (t.name.toLowerCase() === term ? 1000 : 0) };
       }).filter((x) => x.score != null).sort((a, b) => b.score - a.score);
       list.innerHTML = hits.length ? `<div class="grp">Best matches</div>${hits.map((x) => row(x.t)).join('')}` : '<p class="muted" style="padding:8px">No tools match.</p>';
     } else {
       const recent = recentTools().map((id) => catalog[id]).filter((t) => t && ids.includes(t.id)).slice(0, 4);
-      list.innerHTML = (recent.length ? `<div class="grp">Used lately</div>${recent.map(row).join('')}` : '') + CATS.map(([c, label]) => {
+      const popular = POPULAR.map((id) => catalog[id]).filter((t) => t && ids.includes(t.id) && !recent.includes(t)).slice(0, 6);
+      list.innerHTML = (recent.length ? `<div class="grp">Used lately</div>${recent.map(row).join('')}` : '') + (popular.length ? `<div class="grp">Most used</div>${popular.map(row).join('')}` : '') + CATS.map(([c, label]) => {
         const ts = tools.filter((t) => t.cat === c);
         return ts.length ? `<div class="grp">${label}</div>${ts.map(row).join('')}` : '';
       }).join('');

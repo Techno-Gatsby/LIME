@@ -203,7 +203,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await click(`.petal[data-i="${i}"] text.l`);
     if (!(await until('return L.S.app === "pdfcraft" && L.S.ring[0]?.label === "Open"', 3000))) throw new Error('PdfCraft did not open its ring');
     const ring = await lime('return { labels: L.S.ring.map((x) => x.label), back: document.querySelector(".pill [data-a=home]")?.textContent, cap: document.querySelector(".center .cap").textContent };');
-    if (!ring.labels.includes('Optimize')) throw new Error(`PdfCraft ring ${ring.labels}`);
+    if (!ring.labels.includes('Repair')) throw new Error(`PdfCraft ring ${ring.labels}`);
     if (!/All apps/.test(ring.back || '')) throw new Error('no way back to the apps');
     // The middle of the ring is the app itself: a click there opens it (or says why it can't) and stays on its ring.
     await click('.center');
@@ -269,7 +269,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await click('.petal[data-i="0"] text.l');
     if (!(await until('return L.S.app === "pdfcraft"', 2000))) throw new Error('PdfCraft did not open');
     const r = await lime('return { labels: L.S.ring.map((x) => x.label), tab: document.querySelector(".pill button[data-m=apps]").textContent };');
-    if (!r.labels.includes('PDF/A') || r.tab !== 'PdfCraft') throw new Error(JSON.stringify(r));
+    if (!r.labels.includes('Archive') || r.tab !== 'PdfCraft') throw new Error(JSON.stringify(r));
     return `apps: ${list.join(', ')} · PdfCraft: ${r.labels.join(', ')}`;
   });
   await check('system mouse and Shift readings', async () => {
