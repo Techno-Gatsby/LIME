@@ -79,7 +79,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, models: process.env.LIME_MODELS || path.join(RES, 'models'), user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;

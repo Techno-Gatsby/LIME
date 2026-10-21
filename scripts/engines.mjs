@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
@@ -242,11 +243,54 @@ async function helpers() {
   }
 }
 
+// Upscale and object-removal models, the same for every platform. scripts/models.py writes them as ONNX from the
+// published PyTorch weights (it needs Python 3 with numpy and onnx, fetched here if missing).
+const MODELS_V = '1';
+const MODELS = {
+  upscale: {
+    'photo.onnx': ['compact', 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth', '8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292'],
+    'drawing.onnx': ['compact', 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth', 'b8a8376811077954d82ca3fcf476f1ac3da3e8a68a4f4d71363008000a18b75d'],
+  },
+  lama: { 'lama.onnx': ['lama', 'https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt', '344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9'] },
+};
+async function models() {
+  const dir = mk(path.join(V, 'models')), file = path.join(dir, 'manifest.json');
+  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  const todo = Object.keys(MODELS).filter((id) => !(has(path.join(dir, `${id}.tar.br`)) && manifest[id]?.version === MODELS_V));
+  if (!todo.length) return;
+  const py = which('python3', 'python'), env = { ...process.env };
+  if (!py) throw new Error('Python 3 is needed to build the upscale and object-removal models');
+  try { execFileSync(py, ['-c', 'import numpy, onnx'], { stdio: 'ignore' }); } catch {
+    const lib = path.join(CACHE, 'py');
+    sh(py, ['-m', 'pip', 'install', '--quiet', '--target', lib, 'numpy>=1.26', 'onnx>=1.16,<2']);
+    env.PYTHONPATH = lib;
+  }
+  for (const id of todo) {
+    const tmp = path.join(CACHE, `${id}-model`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    mk(tmp);
+    for (const [name, [kind, url, sum]] of Object.entries(MODELS[id])) {
+      const src = await get(url);
+      if (crypto.createHash('sha256').update(fs.readFileSync(src)).digest('hex') !== sum) { fs.rmSync(src); throw new Error(`${url}: the download doesn't match its checksum`); }
+      execFileSync(py, [path.join(ROOT, 'scripts', 'models.py'), kind, src, path.join(tmp, name)], { stdio: ['ignore', 'ignore', 'inherit'], env });
+    }
+    const tar = path.join(CACHE, `${id}.tar`), dest = path.join(dir, `${id}.tar.br`);
+    sh(TAR, ['-cf', tar, '-C', tmp, ...Object.keys(MODELS[id])]);
+    await new Promise((ok, no) => fs.createReadStream(tar).pipe(zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 } })).pipe(fs.createWriteStream(dest)).on('finish', ok).on('error', no));
+    fs.rmSync(tar, { force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    manifest[id] = { version: MODELS_V, file: Object.keys(MODELS[id])[0] };
+    console.log('▣', id, `${(fs.statSync(dest).size / 1048576).toFixed(1)} MB`);
+    fs.writeFileSync(file, JSON.stringify(manifest));
+  }
+}
+
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
 if (!only || only === 'apps') await apps();
 if (!only || only === 'web') await webs();
 if (!only || only === 'helpers') await helpers();
+if (!only || only === 'models') await models();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);
