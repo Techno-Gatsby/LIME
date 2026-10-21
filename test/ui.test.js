@@ -971,6 +971,97 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${stamp.status} ${stamp.name.padEnd(44)}        ${stamp.detail}`);
   results.push(stamp);
 
+  // The audio and video editor: drive it as a person would (keys, the timeline, the panels), save, then read the file.
+  const mediaEditor = async (src) => {
+    openEditor(src, 'media');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!window.__media?.st.ready'))) throw new Error('the editor did not load');
+    const key = (k) => ejs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+    const at = async (t, k) => { await ejs(`window.__media.seek(${t})`); await sleep(120); await key(k); await sleep(120); };
+    const slide = (label, v) => ejs(`(() => { const r = document.querySelector('.props input[type=range][aria-label=${JSON.stringify(label)}]'); r.value = ${v}; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    const press = (text) => ejs(`(() => { const b = [...document.querySelectorAll('.props button')].find((x) => x.textContent.trim() === ${JSON.stringify(text)}); b.click(); return true; })()`);
+    return { win, wc, ejs, wait, key, at, slide, press };
+  };
+  const probeMedia = (p) => require(path.join(__dirname, '..', 'src', 'main', 'engines', 'media')).probe(p);
+  const ffmpegBin = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).binPath('ffmpeg');
+  const frameAt = async (p, t) => {
+    const png = path.join(OUT, `frame-${Date.now()}-${Math.round(t * 1000)}.png`);
+    require('child_process').execFileSync(ffmpegBin, ['-v', 'error', '-y', '-ss', String(t), '-i', p, '-frames:v', '1', png]);
+    return require('sharp')(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  };
+  const loudness = (p, from, len) => {
+    const r = require('child_process').spawnSync(ffmpegBin, ['-hide_banner', '-ss', String(from), '-t', String(len), '-i', p, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' });
+    return Number((/mean_volume:\s*(-?[\d.]+) dB/.exec(r.stderr) || [])[1]);
+  };
+  await check('edit video · trim, cut, title, fade, save', async () => {
+    const src = path.join(OUT, 'clipedit.mp4');
+    fs.copyFileSync(fx('clip.mp4'), src);
+    const ed = await mediaEditor(src), { ejs, at, key } = ed;
+    await at(0.5, 'i');
+    await at(3.5, 'o');
+    await at(1.5, 's');
+    await at(2.0, 's');
+    // Pick the middle part on the timeline, then cut it out with Delete.
+    await ejs(`(() => { const c = document.querySelector('.me-tl canvas'), r = c.getBoundingClientRect(), M = window.__media, x = r.left + 14 + 1.75 * M.st.zoom - M.st.scroll, y = r.top + 50;
+      c.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1 })); c.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, pointerId: 1 })); })()`);
+    await sleep(150);
+    await key('Delete');
+    const keep = await ejs('JSON.stringify(window.__media.kept())');
+    if (keep !== '[[0.5,1.5],[2,3.5]]') throw new Error(`kept ${keep}`);
+    await ejs(`document.querySelector('[data-tool="titles"]').click()`);
+    await ed.press('Add title');
+    await sleep(200);
+    await ejs(`(() => { const ta = document.querySelector('.props textarea'); ta.value = 'Lime'; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const title = await ejs('JSON.stringify(window.__media.E().titles.map((t) => [t.text, t.start, t.end]))');
+    await ejs(`document.querySelector('[data-tool="fade"]').click()`);
+    await sleep(200);
+    await ed.slide('Fade in', 0.5);
+    await ed.slide('Fade out', 0.5);
+    if (!(await ejs('!document.querySelector(".dirty").hidden'))) throw new Error('no Unsaved mark after editing');
+    await ejs(`document.querySelector('[data-a="save"]').click()`);
+    const out = path.join(OUT, 'clipedit (edited).mp4');
+    if (!(await ed.wait(`!window.__media.st.busy && ${JSON.stringify(out)} === window.__media.st.savePath`, 120000))) throw new Error('Save did not finish');
+    if (!fs.existsSync(out)) throw new Error('Save wrote nothing');
+    const info = await probeMedia(out);
+    if (!info.video || !info.audio) throw new Error(`saved streams: video ${!!info.video}, audio ${!!info.audio}`);
+    if (Math.abs(info.duration - 2.5) > 0.15) throw new Error(`saved ${info.duration.toFixed(2)} s, expected 2.5 s`);
+    // Fade from black at the start; the title drawn at the bottom centre, where the saved picture differs from the source.
+    const luma = ({ data, info: i }, y0, y1, x0 = 0, x1 = 1) => { let s = 0, n = 0; for (let y = Math.floor(i.height * y0); y < i.height * y1; y += 2) for (let x = Math.floor(i.width * x0); x < i.width * x1; x += 2) { const o = (y * i.width + x) * 3; s += i.channels === 3 ? (data[o] + data[o + 1] + data[o + 2]) / 3 : 0; n++; } return s / n; };
+    const first = luma(await frameAt(out, 0.02), 0, 1), mid = luma(await frameAt(out, 1.2), 0, 1);
+    if (!(first < mid * 0.35)) throw new Error(`no fade in: first frame ${first.toFixed(0)}, later ${mid.toFixed(0)}`);
+    const [a, b] = [await frameAt(out, 1.6), await frameAt(src, 2.6)];
+    const diff = (y0, y1, x0, x1) => { let s = 0, n = 0; for (let y = Math.floor(a.info.height * y0); y < a.info.height * y1; y++) for (let x = Math.floor(a.info.width * x0); x < a.info.width * x1; x++) { const o = (y * a.info.width + x) * 3; s += Math.abs(a.data[o] - b.data[o]) + Math.abs(a.data[o + 1] - b.data[o + 1]) + Math.abs(a.data[o + 2] - b.data[o + 2]); n++; } return s / n / 3; };
+    const inTitle = diff(0.76, 0.88, 0.42, 0.58), elsewhere = diff(0.1, 0.4, 0.1, 0.4);
+    if (!(inTitle > 12 && inTitle > elsewhere * 4)) throw new Error(`title not found: ${inTitle.toFixed(1)} under it, ${elsewhere.toFixed(1)} elsewhere (${title})`);
+    ed.win.destroy();
+    return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${info.video.width}×${info.video.height} with sound; fade ${first.toFixed(0)}→${mid.toFixed(0)}, title ${inTitle.toFixed(0)} vs ${elsewhere.toFixed(1)}`;
+  });
+  await check('edit audio · trim, gain, fade, save', async () => {
+    const src = path.join(OUT, 'toneedit.wav');
+    fs.copyFileSync(fx('tone.wav'), src);
+    const ed = await mediaEditor(src), { ejs, at } = ed;
+    await at(0.2, 'i');
+    await at(2.5, 'o');
+    await ejs(`document.querySelector('[data-tool="volume"]').click()`);
+    await sleep(150);
+    await ed.slide('Gain', 6);
+    await ejs(`document.querySelector('[data-tool="fade"]').click()`);
+    await sleep(150);
+    await ed.slide('Fade in', 0.5);
+    await ejs(`document.querySelector('[data-a="save"]').click()`);
+    const out = path.join(OUT, 'toneedit (edited).wav');
+    if (!(await ed.wait(`!window.__media.st.busy && ${JSON.stringify(out)} === window.__media.st.savePath`, 60000))) throw new Error('Save did not finish');
+    const info = await probeMedia(out);
+    if (!info.audio || Math.abs(info.duration - 2.3) > 0.05) throw new Error(`saved ${info.duration} s`);
+    const was = loudness(src, 1.2, 1), now = loudness(out, 1.0, 1), start = loudness(out, 0, 0.1);
+    if (!(now - was > 5 && now - was < 7)) throw new Error(`gain ${(now - was).toFixed(1)} dB, expected +6`);
+    if (!(start < now - 10)) throw new Error(`no fade in: ${start} dB at the start, ${now} dB later`);
+    ed.win.destroy();
+    return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${(now - was).toFixed(1)} dB louder, fades in from ${start.toFixed(0)} dB`;
+  });
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
