@@ -104,7 +104,7 @@ export function openEditor(view, { file }, ctx) {
     <div class="ed-status" hidden></div>
   </div>`);
   view.append(root);
-  const stage = $('.stage', root), pad = $('.pad', root), sheet = $('.sheet', root), props = $('.props', root), status = $('.ed-status', root);
+  const stage = $('.stage', root), sheet = $('.sheet', root), props = $('.props', root), status = $('.ed-status', root);
   let disposed = false;
   const photo = h('<img class="photo" alt="" draggable="false">');
   const ink = h('<canvas class="ink"></canvas>');
@@ -190,12 +190,10 @@ export function openEditor(view, { file }, ctx) {
     if (i < 0 || i >= st.hist.length) return;
     st.at = i;
     const s = clone(st.hist[i].state);
-    const turned = s.dev.orientation !== st.dev.orientation;
     Object.assign(st, { base: s.base, dev: s.dev, output: s.output, overlays: s.overlays, sel: null, spotSel: -1, eyeSel: -1, look: null });
     endText(true);
-    if (turned) layout();
+    layout();
     renderProps();
-    refresh();
     chrome();
   }
   const undo = () => { if (editing) { endText(); return; } restore(st.at - 1); };
@@ -256,9 +254,11 @@ export function openEditor(view, { file }, ctx) {
     return keyOf([mode === 'before' ? 0 : st.base, mode, size, mode === 'before' ? g : mode === 'frame' ? { ...d, crop: { ...d.crop, geometry: null }, vignette: null } : d]);
   }
   let refreshT = null;
+  const later = (ms, draft = false) => { clearTimeout(refreshT); refreshT = setTimeout(() => { refreshT = null; refresh(draft); }, ms); };
   // Renders the newest state; while one rendering is under way, later changes wait for it and only the last is drawn.
   async function refresh(draft = false) {
     clearTimeout(refreshT);
+    refreshT = null;
     pv.draft = draft;
     if (pv.busy) { pv.again = true; return; }
     if (!st.sess) return;
@@ -282,7 +282,7 @@ export function openEditor(view, { file }, ctx) {
         drawHistogram(im);
       } while (pv.again);
       // A quick rendering while dragging is followed by a sharp one once things settle.
-      if (pv.draft) { pv.draft = false; refreshT = setTimeout(() => refresh(false), 220); }
+      if (pv.draft) { pv.draft = false; later(220); }
     } catch (e) {
       if (!disposed) tip(plain(e));
     } finally { pv.busy = false; }
@@ -301,7 +301,7 @@ export function openEditor(view, { file }, ctx) {
     const before = at && photo.getBoundingClientRect();
     const cropping = st.tool === 'crop';
     kd = cropping || st.zoom === 'fit' ? fitScale() : st.zoom / dpr();
-    $$('.frame, .canvasbg', sheet).forEach((x) => x.remove());
+    $$('.frame', sheet).forEach((x) => x.remove());
     if (cropping) {
       const [W, H] = frame();
       Object.assign(sheet.style, { width: `${W * kd}px`, height: `${H * kd}px`, background: '' });
@@ -333,8 +333,7 @@ export function openEditor(view, { file }, ctx) {
     }
     drawInk();
     drawMarks();
-    clearTimeout(layout.t);
-    layout.t = setTimeout(() => refresh(), at ? 160 : 0);
+    later(at ? 160 : 0);
   }
   const ZOOMS = [0.25, 0.5, 1, 2, 4];
   function zoomMenu() {
@@ -410,6 +409,8 @@ export function openEditor(view, { file }, ctx) {
   }
   function drawText(cx, o, t) {
     const px = o.size * t.k, [x0, y0] = P(t, o.x, o.y), m = textMetrics(cx, o, px), bh = m.lines.length * m.lh;
+    // A font not loaded yet draws as a stand-in; draw again once it has arrived.
+    if (!document.fonts.check(cx.font)) document.fonts.load(cx.font).then(() => { if (document.fonts.check(cx.font)) drawInk(); }).catch(() => {});
     o._b = [o.x, o.y, m.bw / t.k, bh / t.k];
     if (o.textStyle === 'label') {
       const p = px * 0.28;
@@ -530,6 +531,8 @@ export function openEditor(view, { file }, ctx) {
         const p = sp.points[0], r = Math.max(4, sp.size * l * sc);
         const pts = sp.points.map((q) => outFromNorm(q.x, q.y).map((v) => v * sc));
         const [tx, ty] = pts[0];
+        // A brushed spot shows the path it covers.
+        if (pts.length > 1) marks.append(h(`<svg class="spotpath" width="100%" height="100%"><polyline points="${pts.map((q) => q.join(',')).join(' ')}" stroke-width="${2 * r}"/></svg>`));
         const el = h(`<div class="spot${i === st.spotSel ? ' sel' : ''}" title="Spot ${i + 1}: click to select, Delete removes it" style="left:${tx}px;top:${ty}px;width:${2 * r}px;height:${2 * r}px"></div>`);
         el.addEventListener('pointerdown', (e) => { e.stopPropagation(); st.spotSel = i; drawMarks(); renderProps(); });
         marks.append(el);
@@ -654,7 +657,7 @@ export function openEditor(view, { file }, ctx) {
       drawCropBox();
       $('.cropbox', marks)?.classList.add('live', 'fine');
     }
-    if (!live) { cropIntent = null; commit('Straighten'); if (st.tool !== 'crop') layout(); else renderProps(); }
+    if (!live) { cropIntent = null; commit('Straighten'); if (st.tool !== 'crop') layout(); else { drawMarks(); renderProps(); } }
   }
   // Drag outside the crop to turn the picture, as in Lightroom.
   function dragRotate(e) {
@@ -875,11 +878,10 @@ export function openEditor(view, { file }, ctx) {
   function dragSource(e, i) {
     e.preventDefault();
     e.stopPropagation();
-    const sp = st.dev.spots[i], p0 = sp.points[0], start = { ...sp.source_offset }, [sx, sy] = outPt(e);
+    const sp = st.dev.spots[i], start = { ...sp.source_offset }, [sx, sy] = outPt(e);
     const [ux, uy] = normFromOut(sx, sy);
     const move = (ev) => { const [u, v] = normFromOut(...outPt(ev)); sp.source_offset = { x: start.x + u - ux, y: start.y + v - uy }; drawMarks(); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (sp.source_offset.x !== start.x || sp.source_offset.y !== start.y) { commit('Move source'); refresh(); } };
-    void p0;
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   }
@@ -1487,7 +1489,10 @@ export function openEditor(view, { file }, ctx) {
   $('.zoom', root).addEventListener('change', (e) => setZoom(e.target.value === 'fit' ? 'fit' : Number(e.target.value)));
   const onKey = (e) => {
     if (document.querySelector('.scrim') || editing) return;
-    if (e.target.matches?.('input, textarea, select')) return;
+    // A slider keeps its arrow keys, but the shortcuts still work after dragging one.
+    const slid = e.target.matches?.('input[type=range], input[type=checkbox]');
+    if (e.target.matches?.('input, textarea, select') && !slid) return;
+    if (slid && (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End')) return;
     const c = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
     if (e.key === '\\' && !c) { e.preventDefault(); showBefore(e.type === 'keydown'); return; }
     if (e.type !== 'keydown') return;
@@ -1537,7 +1542,7 @@ export function openEditor(view, { file }, ctx) {
   const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(() => { if (st.zoom === 'fit' || st.tool === 'crop') layout(); }, 60); });
   ro.observe(stage);
   // For the tests: the edit as data, and a way to wait for the preview to catch up.
-  root.__imged = { st, refresh, layout, commit, selectTool, idle: () => !pv.busy && !st.busy && !pv.again, normFromOut, outFromNorm };
+  root.__imged = { st, refresh, layout, commit, selectTool, idle: () => !pv.busy && !st.busy && !pv.again && !refreshT, normFromOut, outFromNorm };
 
   load();
 

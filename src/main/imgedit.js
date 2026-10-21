@@ -17,8 +17,8 @@ const get = (id) => { const s = sessions.get(id); if (!s) throw new Error('This 
 // What LightCraft opens itself; anything else is decoded by Lime first.
 const LC_READS = new Set(['jpg', 'jpeg', 'jfif', 'png', 'gif', 'webp', 'heic', 'heif', 'hif', 'jxl', 'tif', 'tiff', ...U.GROUPS.raw]);
 const SHARP_READS = new Set(['jpg', 'jpeg', 'jfif', 'png', 'webp', 'tif', 'tiff', 'avif']);
-// Previews come from a copy no larger than this, unless zoomed in further.
-const PROXY = 2560;
+// Previews come from the smallest of these copies that has enough pixels, else from the image itself.
+const PROXIES = [1280, 2560];
 // Formats Save can keep; others are saved as PNG (RAW as JPG).
 const KEEP = { jpg: 'jpg', jpeg: 'jpg', jfif: 'jpg', png: 'png', webp: 'webp', avif: 'avif', tif: 'tiff', tiff: 'tiff', heic: 'heic', heif: 'heic', hif: 'heic', gif: 'gif', bmp: 'bmp', jxl: 'jxl', tga: 'tga', qoi: 'qoi', jp2: 'jp2' };
 const EXIF_FORMATS = new Set(['jpg', 'png', 'webp', 'avif', 'heic']);
@@ -82,12 +82,21 @@ function spaceOf(icc) {
   return null;
 }
 
-async function makeProxy(s, file, tag) {
-  const m = await sharp()(file, { failOn: 'none' }).metadata();
-  if (Math.max(m.width, m.height) <= PROXY) return file;
-  const out = path.join(s.dir, `${tag}-proxy.tif`);
-  await sharp()(file, { failOn: 'none' }).keepIccProfile().resize(PROXY, PROXY, { fit: 'inside' }).tiff({ compression: 'none' }).toFile(out);
-  return out;
+async function makeProxies(s, file, tag) {
+  const m = await sharp()(file, { failOn: 'none' }).metadata(), list = [];
+  for (const side of PROXIES) {
+    if (Math.max(m.width, m.height) <= side) break;
+    const out = path.join(s.dir, `${tag}-${side}.tif`);
+    await sharp()(file, { failOn: 'none' }).keepIccProfile().resize(side, side, { fit: 'inside' }).tiff({ compression: 'none' }).toFile(out);
+    list.push({ side, file: out });
+  }
+  return list;
+}
+// The copy to render from for an output of `size` pixels on its long edge, given how much of the frame is kept.
+function sourceFor(b, size, dev, mask) {
+  const r = dev?.crop?.geometry?.rect, keep = r ? Math.max(0.05, Math.max(r.x1 - r.x0, r.y1 - r.y0)) : 1;
+  const need = size / keep, list = mask ? b.maskProxies : b.proxies;
+  return (list || []).find((p) => p.side >= need)?.file || (mask ? b.mask : b.path);
 }
 // A base is a picture LightCraft can read (RGB), with its transparency kept beside it as a grey mask.
 async function addBase(s, file, { raw = false } = {}) {
@@ -106,7 +115,8 @@ async function addBase(s, file, { raw = false } = {}) {
     }
   }
   const info = (await lightRun(s, pathRgb, [['photo.inspect']]))[0];
-  const b = { path: pathRgb, mask, w: info.width, h: info.height, raw, proxy: raw ? pathRgb : await makeProxy(s, pathRgb, tag), maskProxy: mask && await makeProxy(s, mask, `${tag}m`), info };
+  const proxies = raw ? [] : await makeProxies(s, pathRgb, tag);
+  const b = { path: pathRgb, mask, w: info.width, h: info.height, raw, proxies, proxy: proxies[proxies.length - 1]?.file || pathRgb, maskProxies: mask ? await makeProxies(s, mask, `${tag}m`) : [], info };
   s.bases.push(b);
   return { base: i, w: b.w, h: b.h, alpha: !!mask, raw };
 }
@@ -152,7 +162,7 @@ async function open(file) {
 async function preview(id, state, opts = {}) {
   const s = get(id), b = opts.mode === 'before' ? s.bases[0] : s.bases[state.base];
   const size = Math.max(16, Math.round(opts.size || 1600));
-  const src = size <= PROXY && b.proxy ? b.proxy : b.path, k = ++s.n;
+  const geo = opts.mode === 'frame' ? null : state.dev, src = sourceFor(b, size, geo), k = ++s.n;
   const out = path.join(s.dir, `view-${k}.jpg`);
   try {
     await render(s, src, out, settingsFor(state.dev, opts.mode), ['--size', String(size), '--quality', opts.draft ? '70' : '86', '--opt', 'metadata=none']);
@@ -162,7 +172,7 @@ async function preview(id, state, opts = {}) {
     }
     const am = path.join(s.dir, `view-${k}-a.png`);
     try {
-      await render(s, size <= PROXY && b.maskProxy ? b.maskProxy : b.mask, am, geometryOnly(opts.mode === 'frame' ? settingsFor(state.dev, 'frame') : state.dev), ['--size', String(size), '--opt', 'metadata=none']);
+      await render(s, sourceFor(b, size, geo, true), am, geometryOnly(opts.mode === 'frame' ? settingsFor(state.dev, 'frame') : state.dev), ['--size', String(size), '--opt', 'metadata=none']);
       const m = await sharp()(out).metadata();
       const alpha = await sharp()(am).resize(m.width, m.height, { fit: 'fill' }).extractChannel(0).toBuffer();
       const data = await sharp()(out).joinChannel(alpha).png({ compressionLevel: 1 }).toBuffer();
@@ -190,7 +200,7 @@ async function lookThumb(id, preset, size = 112) {
   const s = get(id), b = s.bases[0], out = path.join(s.dir, `look-${++s.n}.jpg`);
   s.thumbSrc ||= (async () => {
     const small = path.join(s.dir, 'thumb.jpg'), tif = path.join(s.dir, 'thumb.tif');
-    await render(s, b.proxy, small, {}, ['--size', '320', '--quality', '92', '--opt', 'metadata=none']);
+    await render(s, b.proxies[0]?.file || b.path, small, {}, ['--size', '320', '--quality', '92', '--opt', 'metadata=none']);
     await sharp()(small).tiff({ compression: 'none' }).toFile(tif);
     return tif;
   })();

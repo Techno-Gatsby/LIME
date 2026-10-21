@@ -120,3 +120,5 @@
 .imged .props canvas { max-width: 100%; }
 .imged .swatches button[data-c="transparent"] { background: repeating-conic-gradient(#c8cbd1 0% 25%, #fff 0% 50%) 0 0 / 8px 8px !important; }
 .imged .props { overflow-x: hidden; }
+.imged .spotpath { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.imged .spotpath polyline { fill: none; stroke: rgba(255, 255, 255, .22); stroke-linecap: round; stroke-linejoin: round; }
