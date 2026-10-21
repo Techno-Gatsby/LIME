@@ -18,6 +18,8 @@ const BIN = app.isPackaged ? path.join(RES, 'bin') : path.join(ROOT, 'vendor', '
 const DATA = path.join(RES, 'data');
 const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
 const APPS = app.isPackaged ? path.join(RES, 'apps') : path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
+const HELPERS = app.isPackaged ? path.join(RES, 'helpers') : path.join(ROOT, 'vendor', 'helpers', `${process.platform}-${process.arch}`);
+const helperRoot = () => path.join(app.getPath('userData'), 'helpers');
 const asset = (n) => path.join(ROOT, 'build', n);
 
 app.setName('Lime');
@@ -63,7 +65,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '', pandoc: settings.pandoc || '' });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '', pandoc: settings.pandoc || '' });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -730,8 +732,8 @@ function registerIpc() {
   h('engines:status', () => call('enginesStatus'));
   // Settings can fetch LibreOffice and Pandoc from their makers into Lime's own folder; progress goes back to the page.
   hE('helpers:get', async (e, id) => {
-    const helpers = require('./helpers');
-    const exe = await helpers.get(id, path.join(app.getPath('userData'), 'helpers'), (p) => { if (!e.sender.isDestroyed()) e.sender.send('helpers:progress', p); });
+    const helpers = require('./helpers'), tell = (p) => { if (!e.sender.isDestroyed()) e.sender.send('helpers:progress', p); };
+    const exe = helpers.bundled(id, HELPERS) ? await helpers.ensure(id, HELPERS, helperRoot(), tell) : await helpers.get(id, helperRoot(), tell);
     await setSettings({ [id]: exe });
     return exe;
   });
@@ -777,6 +779,8 @@ function appMenu() {
 }
 
 app.whenReady().then(async () => {
+  // LibreOffice and Pandoc come packed with Lime; they are laid out once, a moment after the first launch.
+  setTimeout(async () => { const helpers = require('./helpers'); for (const id of ['soffice', 'pandoc']) await helpers.ensure(id, HELPERS, helperRoot()).catch(log); }, 4000);
   loadSettings();
   nativeTheme.themeSource = settings.theme;
   if (isMac && !settings.dock) app.dock.hide();

@@ -20,7 +20,7 @@ async function render() {
   const eng = await api.invoke('engines:status').catch(() => ({ crafts: [] }));
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
   const SIZE = { soffice: 350, pandoc: 40 };
-  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">Found</span>` : `<button class="btn primary" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key]} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
+  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : `<button class="btn primary" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key]} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
   <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">

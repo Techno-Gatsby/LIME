@@ -12,11 +12,14 @@ const programDirs = () => [...new Set([env.ProgramFiles, env.ProgramW6432, env['
 function regDefault(key) {
   try { return /REG_(?:EXPAND_)?SZ\s+(.+)/.exec(require('child_process').execFileSync('reg', ['query', key, '/ve'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 4000 }))?.[1].trim() || null; } catch (_) { return null; }
 }
+const B = require('../helpers');
+const shipped = (id) => B.unpacked(id, U.cfg.helpers, path.join(U.cfg.user, 'helpers'));
 let loFound = null;
 function libreOfficePath() {
   if (env.LIME_NO_LO) return null;
   if (isFile(U.cfg.soffice)) return U.cfg.soffice;
   if (isFile(loFound)) return loFound;
+  if (shipped('soffice')) return (loFound = shipped('soffice'));
   const c = ['/Applications/LibreOffice.app/Contents/MacOS/soffice', path.join(home, 'Applications/LibreOffice.app/Contents/MacOS/soffice'), '/usr/bin/soffice', '/usr/local/bin/soffice', '/opt/libreoffice/program/soffice', '/snap/bin/libreoffice'];
   if (U.isWin) {
     for (const b of programDirs()) for (const d of subdirs(b, /^libreoffice/i)) c.push(path.join(d, 'program', 'soffice.exe'));
@@ -28,6 +31,7 @@ let pandocFound = null;
 function pandocPath() {
   if (isFile(U.cfg.pandoc)) return U.cfg.pandoc;
   if (isFile(pandocFound)) return pandocFound;
+  if (shipped('pandoc')) return (pandocFound = shipped('pandoc'));
   const c = ['/opt/homebrew/bin/pandoc', '/usr/local/bin/pandoc', '/usr/bin/pandoc', '/opt/local/bin/pandoc', path.join(home, '.local/bin/pandoc'), path.join(home, '.cabal/bin/pandoc')];
   if (U.isWin) c.push(env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Pandoc', 'pandoc.exe'), ...programDirs().map((b) => path.join(b, 'Pandoc', 'pandoc.exe')), env.ProgramData && path.join(env.ProgramData, 'chocolatey', 'bin', 'pandoc.exe'), path.join(home, 'scoop', 'shims', 'pandoc.exe'), env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'pandoc.exe'));
   return (pandocFound = c.find(isFile) || onPath([U.isWin ? 'pandoc.exe' : 'pandoc']));
@@ -730,6 +734,6 @@ async function urlToPdf(url, opts, ctx) {
   await ctx.host(opts.format === 'png' ? 'urlToImage' : 'htmlToPdf', { url: u, out, landscape: opts.landscape, pageSize: opts.pageSize || 'A4' });
   return out;
 }
-const status = () => ({ libreoffice: libreOfficePath(), pandoc: pandocPath(), pages: !!iworkPath('Pages'), keynote: !!iworkPath('Keynote'), numbers: !!iworkPath('Numbers'), textutil: isMac });
+const status = () => ({ libreoffice: libreOfficePath(), pandoc: pandocPath(), bundled: { soffice: !!B.bundled('soffice', U.cfg.helpers), pandoc: !!B.bundled('pandoc', U.cfg.helpers) }, pages: !!iworkPath('Pages'), keynote: !!iworkPath('Keynote'), numbers: !!iworkPath('Numbers'), textutil: isMac });
 
 module.exports = { libreOfficePath, pandocPath, viaLibreOffice, convertDocument, convertSheet, convertSlides, mergeSheets, anyToPdf, urlToPdf, htmlToPdf, readHtml, htmlToDocx, htmlToEpub, htmlToMd, htmlToText, htmlToRtf, rtfToHtml, pptxToHtml, readBook, status, parseHtml, blocks };

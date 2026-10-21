@@ -40,6 +40,6 @@ export async function pack(platform, arch, opts) {
 }
 
 export function addResources(res, T) {
-  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], ['data', 'data']]) if (fs.existsSync(path.join(V, from))) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
+  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], [`helpers/${T}`, 'helpers'], ['data', 'data']]) if (fs.existsSync(path.join(V, from))) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
   fs.cpSync(path.join(ROOT, 'LICENSES'), path.join(res, 'LICENSES'), { recursive: true });
 }

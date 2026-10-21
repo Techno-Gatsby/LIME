@@ -71,6 +71,41 @@ const HELPERS = {
   },
 };
 
+// Helpers that came with Lime, packed by scripts/engines.mjs like the apps; they unpack into the same place a
+// download would go, so everything else treats the two alike.
+const tarExe = isWin ? sys32('tar.exe') : '/usr/bin/tar';
+const manifestOf = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
+const bundled = (id, vendor) => { const m = manifestOf(vendor)[id]; return m && fs.existsSync(path.join(vendor, `${id}.tar.br`)) ? m : null; };
+// The unpacked program of a bundled helper, if it is there already.
+function unpacked(id, vendor, root) { const m = bundled(id, vendor); const exe = m && path.join(root, id, m.file); return exe && fs.existsSync(exe) ? exe : null; }
+const settle = async (fn) => { for (let i = 0; ; i++) { try { return await fn(); } catch (e) { if (i >= 12 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise((r) => setTimeout(r, 250 * (i + 1))); } } };
+// Unpacks a bundled helper (once; a second caller finds it done) and gives back its program's path.
+async function ensure(id, vendor, root, progress = () => {}) {
+  const m = bundled(id, vendor);
+  if (!m) return null;
+  const dir = path.join(root, id), exe = path.join(dir, m.file);
+  if (fs.existsSync(exe)) return exe;
+  const part = `${dir}.part-${process.pid}-${Date.now()}`;
+  await fsp.mkdir(part, { recursive: true });
+  try {
+    progress({ id, phase: 'unpack' });
+    await new Promise((ok, no) => {
+      const tar = spawn(tarExe, ['-xf', '-', '-C', part], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+      let err = '';
+      tar.stderr.on('data', (d) => { err += d; });
+      tar.on('error', no);
+      tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
+      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch(no);
+    });
+    if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id].name} was not in its archive`);
+    if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }
+    await settle(() => fsp.rm(dir, { recursive: true, force: true }));
+    await settle(() => fsp.rename(part, dir));
+    return exe;
+  } catch (e) { await fsp.rm(part, { recursive: true, force: true }).catch(() => {}); throw e; }
+}
+// A version can be pinned from outside (the build does, when a release list cannot be read).
+const latest = (id, signal) => process.env[`LIME_${id.toUpperCase()}_VERSION`] || HELPERS[id].latest(signal);
 const jobs = new Map();
 // Fetches a helper into <root>/<id>, telling `progress` how it is going, and gives back the program's path.
 async function get(id, root, progress = () => {}, { version } = {}) {
@@ -84,7 +119,7 @@ async function get(id, root, progress = () => {}, { version } = {}) {
     await fsp.rm(part, { recursive: true, force: true });
     await fsp.mkdir(part, { recursive: true });
     progress({ id, phase: 'start' });
-    const v = version || await H.latest(ctl.signal), url = H.url(v), file = path.join(part, path.basename(new URL(url).pathname));
+    const v = version || await latest(id, ctl.signal), url = H.url(v), file = path.join(part, path.basename(new URL(url).pathname));
     const r = await fetch(url, { signal: ctl.signal, redirect: 'follow' });
     if (!r.ok || !r.body) throw new Error(`${r.status} from ${new URL(url).host}`);
     const total = Number(r.headers.get('content-length')) || H.size * 1048576;
@@ -104,4 +139,4 @@ async function get(id, root, progress = () => {}, { version } = {}) {
   } finally { jobs.delete(id); }
 }
 const cancel = (id) => { const j = jobs.get(id); if (j) j.abort(); return !!j; };
-module.exports = { HELPERS, get, cancel };
+module.exports = { HELPERS, latest, get, cancel, bundled, unpacked, ensure };

@@ -14,7 +14,7 @@ const [PLAT, ARCH] = TARGET.split('-');
 const WIN = PLAT === 'win32';
 const V = path.join(ROOT, 'vendor');
 const CACHE = path.join(V, '.cache');
-const BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
+const BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), HELPERS = path.join(V, 'helpers', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
 const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0' };
 const FF = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1';
 const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
@@ -188,10 +188,38 @@ async function natives() {
   }
 }
 
-// A third argument runs one step alone: engines, crafts or apps.
+// LibreOffice and Pandoc, laid out as they are after installing and packed like the apps, so Lime ships them and
+// has them ready a moment after its first launch (Linux packs Pandoc only; LibreOffice comes from the distribution).
+async function helpers() {
+  const H = createRequire(import.meta.url)('../src/main/helpers.js');
+  mk(HELPERS);
+  const file = path.join(HELPERS, 'manifest.json');
+  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  for (const id of PLAT === 'darwin' || WIN ? ['soffice', 'pandoc'] : ['pandoc']) {
+    const dest = path.join(HELPERS, `${id}.tar.br`), v = await H.latest(id);
+    if (has(dest) && manifest[id]?.version === v) continue;
+    const tmp = mk(path.join(CACHE, `${id}-helper`));
+    fs.rmSync(tmp, { recursive: true, force: true });
+    mk(tmp);
+    const exe = await H.HELPERS[id].unpack(await get(H.HELPERS[id].url(v)), tmp);
+    if (!exe) throw new Error(`${id}: the program was not in the download`);
+    const root = id === 'soffice' ? (WIN ? path.dirname(path.dirname(exe)) : path.join(tmp, 'LibreOffice.app')) : path.join(tmp, path.relative(tmp, exe).split(/[\\/]/)[0]);
+    const tar = path.join(CACHE, `${id}.tar`);
+    sh(TAR, ['-cf', tar, '-C', path.dirname(root), path.basename(root)]);
+    await new Promise((ok, no) => fs.createReadStream(tar).pipe(zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 7, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 } })).pipe(fs.createWriteStream(dest)).on('finish', ok).on('error', no));
+    fs.rmSync(tar, { force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+    manifest[id] = { version: v, file: path.relative(path.dirname(root), exe) };
+    console.log('▣', manifest[id].file, v, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
+    fs.writeFileSync(file, JSON.stringify(manifest));
+  }
+}
+
+// A third argument runs one step alone: engines, crafts, apps or helpers.
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
 if (!only || only === 'apps') await apps();
+if (!only || only === 'helpers') await helpers();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);
