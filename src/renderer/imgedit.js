@@ -1,6 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
-import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore, remember } from './editor-kit.js';
 
 const TOOLS = [
   ['adjust', 'sliders', 'Adjust', 'Light, colour, detail and effects. Double-click a slider’s name to reset it.'],
@@ -68,6 +68,7 @@ export function openEditor(view, { file }, ctx) {
   const { icon, toast, api, go } = ctx;
   ctx.onClose?.(close);
   const call = (m, ...a) => api.invoke('edit:call', 'image', m, ...a);
+  const mem = remember(api, ctx.settings, 'image');
   if (!document.querySelector('link[href="imgedit.css"]')) document.head.append(h('<link rel="stylesheet" href="imgedit.css">'));
   const st = {
     sess: null, base: 0, dims: [], dev: null, output: { resize: null, canvas: null }, overlays: [],
@@ -220,7 +221,9 @@ export function openEditor(view, { file }, ctx) {
     st.hist = [{ label: 'Open', state: snap() }];
     st.at = 0;
     st.savedKey = keyOf(snap());
-    selectTool('adjust');
+    const t = mem.get('tool'), z = mem.get('zoom');
+    if (z === 'fit' || typeof z === 'number') st.zoom = z;
+    selectTool(t !== 'crop' && TOOLS.some((x) => x[0] === t) ? t : 'adjust');
     layout();
     await refresh();
     chrome();
@@ -353,6 +356,7 @@ export function openEditor(view, { file }, ctx) {
     const nz = z === 'fit' ? 'fit' : clamp(z, 0.05, 8);
     if (nz !== 'fit' && Math.abs(nz - cur) < 1e-4) return;
     st.zoom = nz;
+    mem.set({ zoom: nz });
     layout(at || (nz === 'fit' ? null : { x: stage.getBoundingClientRect().left + stage.clientWidth / 2, y: stage.getBoundingClientRect().top + stage.clientHeight / 2 }));
   }
 
@@ -1046,6 +1050,7 @@ export function openEditor(view, { file }, ctx) {
     endText();
     const was = st.tool;
     st.tool = t;
+    mem.set({ tool: t });
     st.sel = MARKUP.has(t) ? st.sel : null;
     $$('[data-tool]', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.tool === t));
     stage.className = `stage t-${t}`;

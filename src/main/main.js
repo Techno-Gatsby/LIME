@@ -701,6 +701,8 @@ function registerIpc() {
   h('jobs:list', () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt));
   h('editor:open', (file, mode) => openEditor(file, mode));
   hE('editor:data', (e) => BrowserWindow.fromWebContents(e.sender)?.editorData || null);
+  h('editor:modeFor', (file) => tools.TOOLS.find((t) => t.editor && tools.accepts(t, [file]))?.editor || null);
+  hE('editor:switched', (e, file, mode) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.editorData = { file, mode }; return true; });
   hE('editor:closeNow', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (!w || w.isDestroyed()) return false; w.closing = true; w.close(); if (w.quitAfter) { app.isQuitting = true; app.quit(); } return true; });
   hE('editor:closeCancel', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w?.quitAfter && !wheel) createWheel(); if (w) w.quitAfter = false; return true; });
   h('cells:pick', (file, value) => (file ? pickCells(file, value || '') : null));

@@ -2,7 +2,7 @@ import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 import { sidePanels, kindOf } from './editor-side.js';
 import { docTools } from './editor-doc.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
-import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore, remember } from './editor-kit.js';
 
 const PT = 96 / 72;
 const TOOLS = [
@@ -54,8 +54,10 @@ export function openEditor(view, { file, mode }, ctx) {
   const MUTATES = new Set(['apply', 'pageOp', 'annotOp', 'linkOp', 'setOutline', 'fill', 'fieldOp', 'docOp', 'setProps', 'recognise', 'undo', 'redo']);
   const call = (m, ...a) => api.invoke('editor:call', m, ...a).then((r) => { if (MUTATES.has(m)) st.rev++; return r; });
   const pref = ctx.settings() || {};
+  const mem = remember(api, ctx.settings, 'pdf');
+  const known = (t) => TOOLS.some((x) => x[0] === t) || SHAPES.includes(t);
   const st = {
-    sess: null, file, savePath: null, rev: 0, restored: false, history: [{ label: 'Opened' }], histAt: 0, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext', shape: 'rect',
+    sess: null, file, savePath: null, rev: 0, restored: false, history: [{ label: 'Opened' }], histAt: 0, zoom: 1, tool: mode !== 'edit' ? 'select' : known(mem.get('tool')) ? mem.get('tool') : 'edittext', shape: 'rect',
     pending: [], sel: null, pick: null, pages: [], renders: new Map(), lines: new Map(), paras: new Map(), objs: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
     fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', border: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff',
       markup: 'highlight', ul: '#d13438', stamp: 'APPROVED', stampText: '', stampColor: '#d13438', mark: '#107c10', note: '#ffd400', measure: '#d13438' },
@@ -135,8 +137,10 @@ export function openEditor(view, { file, mode }, ctx) {
       go();
       return false;
     }
+    const z = mem.get('zoom'), s = mem.get('side');
+    if (s === 'off') { body.classList.add('no-thumbs'); $('[data-a=thumbs]', root).setAttribute('aria-pressed', 'false'); } else if (s && s !== 'pages' && $(`[data-side="${s}"]`, root)) side.show(s);
     layout(true);
-    fitWidth();
+    if (z === 'page') fitPage(); else if (typeof z === 'number') setZoom(z); else fitWidth();
     selectTool(st.tool);
     if (mode === 'sign') setTimeout(signDialog, 200);
     if (mode === 'pages') tip('Drag pages in the panel to reorder. Select several with Ctrl or Shift.');
@@ -262,6 +266,7 @@ export function openEditor(view, { file, mode }, ctx) {
     const page = st.pages.find((p) => { const b = p.el.getBoundingClientRect(); return ay >= b.top - 12 && ay <= b.bottom + 12; }) || st.pages.find((p) => p.visible) || st.pages[0];
     const b0 = page.el.getBoundingClientRect(), fx = (ax - b0.left) / b0.width, fy = (ay - b0.top) / b0.height;
     st.zoom = nz;
+    mem.set({ zoom: fit || nz });
     sizePages(true);
     const b1 = page.el.getBoundingClientRect();
     pagesEl.scrollLeft += b1.left + fx * b1.width - ax;
@@ -991,7 +996,7 @@ export function openEditor(view, { file, mode }, ctx) {
     side.draw();
     if (fields.length && !st.formTip && mode === 'edit') {
       st.formTip = true;
-      if (st.tool === 'edittext' && !st.pending.length) selectTool('select');
+      if (st.tool !== 'field' && st.tool !== 'select' && !st.pending.length) selectTool('select');
       tip('This PDF is a form: click a field to fill it in.');
     }
     if (!props.contains(document.activeElement)) renderProps();
@@ -1185,6 +1190,7 @@ export function openEditor(view, { file, mode }, ctx) {
     commitEditing();
     if (st.draft) finishDraft();
     st.tool = t;
+    if (mode === 'edit') mem.set({ tool: t });
     if (SHAPES.includes(t)) { st.shape = t; $('[data-shapes]', root).dataset.tool = t; }
     if (st.sel) select(null);
     st.linkDraft = null; st.linkSel = null; st.crop = null;
@@ -1770,7 +1776,7 @@ export function openEditor(view, { file, mode }, ctx) {
     toast(n ? `Replaced in ${n} line${n === 1 ? '' : 's'}. Save to keep it.` : `“${q}” wasn’t found.`, { type: n ? 'success' : undefined });
   }
   const ed = {
-    st, root, icon, call, toast, api, busy, flush, refresh, updateChrome, visiblePage, goTo, linesOf, marksChanged, focusField, flattenForm, docChange, record, goToStep,
+    st, root, icon, call, toast, api, mem, busy, flush, refresh, updateChrome, visiblePage, goTo, linesOf, marksChanged, focusField, flattenForm, docChange, record, goToStep,
     author, setAuthor: (v) => api.invoke('settings:set', { author: v }),
   };
   const side = sidePanels(ed);
@@ -1795,7 +1801,7 @@ export function openEditor(view, { file, mode }, ctx) {
     if (a === 'saveopts') doc.saveMenu(e.target.closest('button'));
     if (a === 'docmenu') doc.menu(e.target.closest('button'));
     if (a === 'help') keys.help();
-    if (a === 'thumbs') { const on = body.classList.toggle('no-thumbs'); e.target.closest('button').setAttribute('aria-pressed', !on); }
+    if (a === 'thumbs') { const on = body.classList.toggle('no-thumbs'); e.target.closest('button').setAttribute('aria-pressed', !on); mem.set({ side: on ? 'off' : side.tab }); }
   });
   const keys = shortcuts([
     ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true }), key('Mod+F', 'Find', () => find.focus()), key('Mod+H', 'Find and replace', replaceDialog)]],

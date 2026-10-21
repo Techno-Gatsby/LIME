@@ -1,6 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, form, defaultsFor, clean } from './ui.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
-import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore, remember } from './editor-kit.js';
 
 const PT = 96 / 72;
 const MORE = {
@@ -73,6 +73,7 @@ export function openEditor(view, { file, mode }, ctx) {
   const app = String(mode || '').split(':')[1];
   const icon = (n, size = '') => (MORE[n] ? svg(MORE[n], size) : ctx.icon(n, size));
   const call = (m, ...a) => api.invoke('edit:call', 'studio', m, ...a);
+  const mem = remember(api, ctx.settings, `studio:${app}`);
   if (!document.querySelector('link[href="studio.css"]')) document.head.append(h('<link rel="stylesheet" href="studio.css">'));
   const st = { sess: null, model: null, tool: null, busy: false, savePath: null, restored: false, families: [], formats: [], tools: null, toolOpts: {}, disposed: false };
   let root, stageWrap, propsEl, sideEl, statusEl, bodyEl;
@@ -204,6 +205,7 @@ export function openEditor(view, { file, mode }, ctx) {
   function selectTool(t) {
     if (!A.tools.flatMap(([, ids]) => ids).some((x) => x[0] === t)) return;
     st.tool = t;
+    mem.set({ tool: t });
     $$('[data-tool]', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.tool === t));
     root.dataset.on = t;
     A.onTool?.(t);
@@ -332,7 +334,7 @@ export function openEditor(view, { file, mode }, ctx) {
     });
   }
 
-  const E = { st, ui, icon, call, api, toast, tip, busy, act, query, setSess, refresh, drawProps, selectTool, ask, file, app, saveAs, root: () => root, side: () => sideEl, wrap: () => stageWrap };
+  const E = { st, ui, icon, call, api, mem, toast, tip, busy, act, query, setSess, refresh, drawProps, selectTool, ask, file, app, saveAs, root: () => root, side: () => sideEl, wrap: () => stageWrap };
   const A = (APPS[app] || APPS.vectorcraft)(E);
 
   root = h(`<div class="editor studio s-${esc(app)}" data-on="">
@@ -416,7 +418,7 @@ export function openEditor(view, { file, mode }, ctx) {
       setSess(s);
       A.ready?.();
       const tools = A.tools.flatMap(([, ids]) => ids.map((x) => x[0]));
-      selectTool(back && tools.includes(rec.meta?.tool) ? rec.meta.tool : tools[0]);
+      selectTool(back && tools.includes(rec.meta?.tool) ? rec.meta.tool : tools.includes(mem.get('tool')) ? mem.get('tool') : tools[0]);
       if (back) toast('Your unsaved edits are back. Save to keep them.', { type: 'success' });
     } catch (e) {
       toast(clean(e), { type: 'error' });
@@ -506,7 +508,7 @@ function pageStage(E, cfg) {
   }
   function refresh() {
     const list = cfg.pages(), sig = list.map((p) => `${r1(p.w)}x${r1(p.h)}`).join(',');
-    if (sig !== ps.sig) { const first = !ps.sig; ps.sig = sig; build(); if (first) requestAnimationFrame(fitWidth); return; }
+    if (sig !== ps.sig) { const first = !ps.sig; ps.sig = sig; build(); if (first) requestAnimationFrame(() => (typeof E.mem.get('zoom') === 'number' ? setZoom(E.mem.get('zoom')) : fitWidth())); return; }
     ps.pages.forEach((p, i) => { Object.assign(p, list[i]); p.el.querySelector('.num').textContent = list[i].label ?? i + 1; if (p.visible) renderPage(p, i); });
     decorate();
   }
@@ -518,8 +520,9 @@ function pageStage(E, cfg) {
     sel.value = String(ZOOMS.includes(z / 100) ? z / 100 : ps.zoom);
   }
   let rerenderT = null;
-  function setZoom(z, at) {
+  function setZoom(z, at, fit) {
     const old = ps.zoom, nz = Math.min(12, Math.max(0.1, z));
+    E.mem.set({ zoom: fit || nz });
     if (Math.abs(nz - old) < 1e-4 || !ps.pages.length) { zoomMenu(); return; }
     const r = el.getBoundingClientRect(), ax = at ? at.x : r.left + el.clientWidth / 2, ay = at ? at.y : r.top + el.clientHeight / 2;
     const page = ps.pages.find((p) => { const b = p.el.getBoundingClientRect(); return ay >= b.top - 12 && ay <= b.bottom + 12; }) || ps.pages.find((p) => p.visible) || ps.pages[0];
@@ -535,7 +538,7 @@ function pageStage(E, cfg) {
   function fitWidth() {
     if (!ps.pages.length) return;
     const w = Math.max(...ps.pages.map((p) => p.w)), hh = Math.max(...ps.pages.map((p) => p.h));
-    setZoom(Math.min(cfg.fitMax || 3, (el.clientWidth - 96) / (w * PT), ps.pages.length === 1 ? (el.clientHeight - 72) / (hh * PT) : Infinity));
+    setZoom(Math.min(cfg.fitMax || 3, (el.clientWidth - 96) / (w * PT), ps.pages.length === 1 ? (el.clientHeight - 72) / (hh * PT) : Infinity), undefined, 'width');
   }
   function fitPage() {
     const p = ps.pages.find((x) => x.visible) || ps.pages[0];

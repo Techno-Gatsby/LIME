@@ -1118,6 +1118,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     try {
       const src = path.join(OUT, srcName);
       if (typeof make === 'function') fs.writeFileSync(src, await make()); else fs.copyFileSync(fx(make), src);
+      await js('window.lime.invoke("settings:set", { editors: {} })');
       openEditor(src, 'edit');
       win = [...editors].pop();
       const wc = win.webContents, ejs = (code) => js(code, wc);
@@ -1524,6 +1525,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
     const idle = () => wait('(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()');
     if (!(await idle())) throw new Error('the editor did not show the image');
+    await ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
     const slide = (key, v) => ejs(`(() => { const r = document.querySelector('.props [data-k="${key}"] input'); r.value = ${v}; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     const press = (fx_, fy, to) => ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(), p = (x, y) => ({ bubbles: true, button: 0, clientX: b.left + b.width * x, clientY: b.top + b.height * y }); m.dispatchEvent(new PointerEvent('pointerdown', p(${fx_}, ${fy}))); ${to ? `window.dispatchEvent(new PointerEvent('pointermove', p(${to[0]}, ${to[1]})));` : ''} window.dispatchEvent(new PointerEvent('pointerup', p(${(to || [fx_])[0]}, ${(to || [0, fy])[1]}))); })()`);
     const saved = async (p, ms = 30000) => { const t = Date.now(); while (!fs.existsSync(p) && Date.now() - t < ms) await sleep(200); if (!fs.existsSync(p)) throw new Error(`Save wrote nothing at ${path.basename(p)}`); await sleep(500); return p; };
@@ -1964,6 +1966,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     fs.copyFileSync(fx('photo.jpg'), img);
     const idle = '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()';
     ed = await opened(img, 'image', idle);
+    await ed.ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
     await ed.ejs(`(() => { const r = document.querySelector('.props [data-k="light.exposure"] input'); r.value = 1; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     if (!(await ed.wait(idle))) throw new Error('the image editor did not settle');
     if (!(await ed.ejs('window.__recovery.now()'))) throw new Error('the image autosave wrote nothing');
@@ -2029,6 +2032,56 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const text = (await E.text(s.id, 0)).map((l) => l.text).join(' ');
     if (!text.includes('APPROVED') || !(s.pages[0].w > s.pages[0].h) || !list.some((a) => a.type === 'Text')) throw new Error(`saved ${s.pages[0].w}×${s.pages[0].h}, note ${list.length}: ${text.slice(0, 60)}`);
     return `${want.length - 1} steps named, went back to step 1 (page upright, later steps dimmed) and forward to the last; stamp, turn and note saved`;
+  });
+
+  await check('editors · remember the last tool, and a file dropped on the window opens in it', async () => {
+    const opened = async (file, mode, ready) => {
+      openEditor(file, mode);
+      const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+      if (!(await wait(ready))) throw new Error(`${mode} editor did not get to: ${ready.slice(0, 60)}`);
+      await sleep(600);
+      return { win, wc, ejs, wait };
+    };
+    const pressed = (ed) => ed.ejs('document.querySelector(\'[data-tool][aria-pressed="true"]\')?.dataset.tool');
+    const pdfReady = '!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")';
+    const src = path.join(OUT, 'memory.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    let ed = await opened(src, 'edit', pdfReady);
+    await ed.ejs('document.querySelector(\'[data-tool="note"]\').click()');
+    await ed.ejs('document.querySelector(\'[data-a="zoomin"]\').click()');
+    await ed.ejs('document.querySelector(\'[data-side="bookmarks"]\').click()');
+    const zoom = await ed.ejs('document.querySelector(".zoom").value');
+    await sleep(800);
+    ed.win.destroy();
+    ed = await opened(src, 'edit', pdfReady);
+    const back = { tool: await pressed(ed), zoom: await ed.ejs('document.querySelector(".zoom").value'), side: await ed.ejs('document.querySelector(\'[data-side][aria-pressed="true"]\')?.dataset.side') };
+    if (back.tool !== 'note' || back.zoom !== zoom || back.side !== 'bookmarks') throw new Error(`the PDF editor came back with ${JSON.stringify(back)}, zoom was ${zoom}`);
+    const form = path.join(OUT, 'memory-form.pdf');
+    fs.copyFileSync(fx('fillable.pdf'), form);
+    ed.win.destroy();
+    ed = await opened(form, 'edit', pdfReady);
+    if (!(await ed.wait('document.querySelector(".ed-status").textContent.includes("form")', 8000)) || (await pressed(ed)) !== 'select') throw new Error(`a form opened in ${await pressed(ed)}`);
+    await ed.ejs('document.querySelector(\'[data-tool="edittext"]\').click()');
+    await ed.ejs('document.querySelector(\'[data-side="pages"]\').click()');
+    await sleep(800);
+    const photo = path.join(OUT, 'memory.jpg');
+    fs.copyFileSync(fx('photo.jpg'), photo);
+    const idle = '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()';
+    if (!(await ed.ejs(`window.__page.openFile(${JSON.stringify(photo)})`))) throw new Error('the dropped photo did not open');
+    if (!(await ed.wait(idle))) throw new Error('the photo did not show in the same window');
+    if (ed.win.editorData.mode !== 'image' || ed.win.editorData.file !== photo || !ed.win.getTitle().startsWith('memory.jpg')) throw new Error(`after the drop: ${JSON.stringify(ed.win.editorData)} titled ${ed.win.getTitle()}`);
+    await ed.ejs('document.querySelector(\'[data-tool="text"]\').click()');
+    await sleep(800);
+    ed.win.destroy();
+    ed = await opened(photo, 'image', idle);
+    const imgTool = await pressed(ed);
+    await ed.ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
+    await sleep(800);
+    ed.win.destroy();
+    if (imgTool !== 'text') throw new Error(`the image editor came back in ${imgTool}`);
+    return `PDF came back in Note at ${back.zoom} with Bookmarks open, a form still opens in Select; a photo dropped on the PDF window opened there and came back in Text`;
   });
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };

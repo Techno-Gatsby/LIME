@@ -376,6 +376,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       const tool = (t) => ejs(`document.querySelector('[data-tool="${t}"]').click()`);
       if (e) {
         await settle();
+        await tool('adjust');
         await shot('40-imgedit-open', e);
         await slide('light.exposure', 0.35); await slide('light.shadows', 40); await slide('light.highlights', -30); await slide('color.vibrance', 25); await slide('effects.clarity', 20);
         await settle();

@@ -1,6 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, clean } from './ui.js';
 import { shortcuts, key, helpButton } from './shortcuts.js';
-import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore, remember } from './editor-kit.js';
 
 const IC = {
   play: 'M8 5.5v13l10.5-6.5z', pause: 'M8 5h3v14H8zM13 5h3v14h-3z', stepBack: 'M17 6l-7 6 7 6zM7 6v12', stepFwd: 'M7 6l7 6-7 6zM17 6v12',
@@ -937,8 +937,10 @@ export function openEditor(view, { file }, ctx) {
     clearTimeout(tip.t);
     if (msg && !keep) tip.t = setTimeout(() => { status.hidden = true; }, 4500);
   }
+  let mem = null;
   function selectTool(t) {
     st.tool = t;
+    mem?.set({ tool: t });
     $$('[data-tool]', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.tool === t));
     if (t === 'titles' && !st.selTitle && E().titles.length) st.selTitle = E().titles[0].id;
     renderProps();
@@ -1485,7 +1487,8 @@ export function openEditor(view, { file }, ctx) {
     if (st.kind === 'audio') $('.doc', root).firstElementChild.outerHTML = icon('music');
     st.E = fresh(s.duration);
     st.saved = JSON.stringify(st.E);
-    st.tool = 'trim';
+    mem = remember(api, ctx.settings, `media:${st.kind}`);
+    st.tool = GROUPS[st.kind].some(([, ids]) => ids.includes(mem.get('tool'))) ? mem.get('tool') : 'trim';
     $('.toolbar', root).innerHTML = GROUPS[st.kind].map(([name, ids], gi) => `<div class="tgroup${gi ? ' opt' : ''}" role="group" aria-label="${name}">${ids.map((id) => { const [icn, label, tp] = TOOLS[id]; return `<button class="tool" data-tool="${id}" aria-pressed="${id === st.tool}" title="${esc(`${label}: ${tp}`)}">${ic(icn)}<span class="lbl">${label}</span></button>`; }).join('')}</div>`).join('');
     makeMedia();
     if (st.kind === 'video') { viewer = glView(glc); st.view = viewer ? 'webgl' : '2d'; viewer ||= flatView(glc); }

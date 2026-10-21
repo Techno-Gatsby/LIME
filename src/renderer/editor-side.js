@@ -15,6 +15,7 @@ export function sidePanels(ed) {
 
   function show(name) {
     tab = name;
+    ed.mem.set({ side: name });
     $$('[data-side]', side).forEach((b) => b.setAttribute('aria-pressed', b.dataset.side === name));
     Object.entries(panes).forEach(([k, p]) => { p.hidden = k !== name; });
     $('.ed-body', root).classList.toggle('side-wide', name !== 'pages');
