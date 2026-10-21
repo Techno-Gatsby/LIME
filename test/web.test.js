@@ -134,5 +134,25 @@ module.exports = async ({ submit, jobs, dir }) => {
     return 'picture and edited stylesheet paths rebased; original stylesheet untouched';
   });
 
+  await check('editor picture tools: copy, crop, rotate, burn a watermark', async () => {
+    const W = require(path.join(__dirname, '..', 'src', 'main', 'webedit')), sharp = require('sharp');
+    const outside = path.join(OUT, 'outside.png');
+    await sharp({ create: { width: 200, height: 100, channels: 3, background: '#2f7fe0' } }).png().toFile(outside);
+    const copied = await W.copyInto(outside, site), again = await W.copyInto(outside, site);
+    ok(copied === path.join(site, 'images', 'outside.png') && again === path.join(site, 'images', 'outside-2.png'), `copies: ${copied}, ${again}`);
+    ok((await W.copyInto(copied, site)) === copied, 'a picture already in the site was copied again');
+    const crop = await W.imageOp(copied, 'crop', { x: 0.5, y: 0, w: 0.5, h: 1 }), rot = await W.imageOp(copied, 'rotate', { angle: 90 });
+    const [cm, rm] = [await sharp(crop).metadata(), await sharp(rot).metadata()];
+    ok(cm.width === 100 && cm.height === 100 && rm.width === 100 && rm.height === 200, `crop ${cm.width}×${cm.height}, rotate ${rm.width}×${rm.height}`);
+    const burned = await W.burnWatermark(copied, { kind: 'text', text: 'DRAFT', opacity: 60, position: 'centre', color: '#ffffff' });
+    const [a, b] = [await sharp(copied).raw().toBuffer(), await sharp(burned).removeAlpha().raw().toBuffer()];
+    let diff = 0;
+    for (let i = 0; i < Math.min(a.length, b.length); i++) diff += Math.abs(a[i] - b[i]);
+    ok(path.basename(burned) === 'outside-watermarked.png' && diff > 1000, `burned ${path.basename(burned)}, difference ${diff}`);
+    const hits = await W.siteFind(site, { find: 'cabins', textOnly: true });
+    ok(hits.length >= 2 && hits.every((x) => !/class=/.test(x.snippet) || x.snippet.includes('cabins')), JSON.stringify(hits));
+    return `copied into images/ (outside-2.png the second time), cropped to 100×100, turned to 100×200, ${path.basename(burned)}; site search found ${hits.length}`;
+  });
+
   return results;
 };

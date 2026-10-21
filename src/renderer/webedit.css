@@ -224,5 +224,7 @@
 .we-fi.on { background: var(--accent-soft); color: var(--accent-strong); }
 .we-fi.cur span { font-weight: 650; }
 .we-fi.root { padding-left: 8px; color: var(--ink-2); font-weight: 600; }
-.seg.full.we-pos { display: grid; grid-template-columns: repeat(3, 1fr); }
+.dialog .dlgform .seg.full.we-pos { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-flow: row; }
 .dialog.wide .dlgform { min-width: 0; }
+.webed .gjs-layer-item, .webed .gjs-layer-name, .webed .gjs-layer-item-left { color: var(--ink); opacity: 1; letter-spacing: normal; font: 13px/1.3 var(--font); }
+.webed .gjs-layer.gjs-selected > .gjs-layer-item, .webed .gjs-layer.gjs-selected > .gjs-layer-item .gjs-layer-name { color: var(--accent-strong); }

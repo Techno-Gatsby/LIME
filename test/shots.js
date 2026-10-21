@@ -649,7 +649,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('80-web-insert', e);
         await ejs('document.querySelector(".we-menu")?.remove(); const g = window.__web.gjs(); g.select(g.getWrapper().find("h2")[0]); document.querySelector(\'[data-a="watermark"]\').click();');
         await shot('81-web-watermark', e);
-        await ejs('document.querySelector(".scrim [data-f=text]").value = "DRAFT"; document.querySelector(".scrim [data-a=ok]").click(); document.querySelector(\'[data-ptab="css"]\').click(); const g = window.__web.gjs(); g.select(g.getWrapper().find(".card")[0]);');
+        await ejs('document.querySelector(".scrim [data-f=text]").value = "DRAFT"; document.querySelector(".scrim [data-a=ok]").click(); await new Promise((r) => setTimeout(r, 500)); document.querySelector(\'[data-ptab="css"]\').click(); const g = window.__web.gjs(); g.select(g.getWrapper().find(".card")[0]);');
         await sleep(600);
         await ejs('document.querySelector(".we-pane[data-pane=css] [data-cdrule]")?.click()');
         await shot('82-web-css-designer', e);

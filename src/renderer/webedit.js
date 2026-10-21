@@ -500,7 +500,7 @@ export function openEditor(view, { file }, ctx) {
   function makeDesign(el) {
     const keep = (ed) => { ed.DomComponents.addType('image', { model: { defaults: { resizable: { ratioDefault: true } } } }); ed.DomComponents.addType('lime-keep', { isComponent: (n) => n.tagName === 'LIME-KEEP', model: { defaults: { layerable: false, selectable: false, hoverable: false, highlightable: false, draggable: false, droppable: false, copyable: false, removable: false } } }); };
     gjs = L.grapesjs.init({
-      container: el, height: '100%', width: 'auto', fromElement: false, storageManager: false, noticeOnUnload: false, showOffsets: true, protectedCss: '', keepUnusedStyles: true, avoidInlineStyle: false, forceClass: false, telemetry: false,
+      container: el, height: '100%', width: 'auto', fromElement: false, storageManager: false, noticeOnUnload: false, showOffsets: true, protectedCss: '', keepUnusedStyles: true, avoidInlineStyle: false, forceClass: false, telemetry: false, cssIcons: '',
       canvasCss: '.gjs-selected{outline:2px solid #3d8a28!important;outline-offset:-2px}.gjs-hovered{outline:1px dashed #3d8a28!important}',
       panels: { defaults: [] },
       canvas: { frameStyle: '* ::-webkit-scrollbar { width: 10px; height: 10px } * ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, .2); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box }' },
