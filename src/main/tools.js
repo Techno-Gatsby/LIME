@@ -108,6 +108,14 @@ const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
   { id: 'sign-pdf', cat: 'pdf', name: 'Sign PDF', desc: 'Draw, type or place a signature.', accepts: ['pdf'], max: 1, editor: 'sign' },
   { id: 'organize-pdf', cat: 'pdf', name: 'Organize pages', desc: 'Reorder, rotate, delete and insert pages.', accepts: ['pdf'], max: 1, editor: 'pages' },
+  // Editors in a window of their own, like Edit PDF, each with the matching ArtCraft apps' tools.
+  { id: 'edit-image', cat: 'image', name: 'Edit image', desc: 'Crop, straighten, adjust, retouch and add text, with PhotoCraft and LightCraft tools.', accepts: ['image', 'raw'], max: 1, editor: 'image' },
+  { id: 'edit-video', cat: 'media', name: 'Edit video', desc: 'Trim, cut, crop, add titles and music, with FilmCraft tools.', accepts: ['video'], max: 1, editor: 'media' },
+  { id: 'edit-audio', cat: 'media', name: 'Edit audio', desc: 'Trim, cut, fade, level and clean up a recording.', accepts: ['audio'], max: 1, editor: 'media' },
+  { id: 'edit-vector', cat: 'cad', name: 'Edit vector', desc: 'Recolour, trace, outline and export artwork, with VectorCraft.', accepts: ['vector'], max: 1, editor: 'studio:vectorcraft' },
+  { id: 'edit-layout', cat: 'docs', name: 'Edit layout', desc: 'Check, fix and export a page layout, with DesignCraft.', accepts: ['layout'], max: 1, editor: 'studio:designcraft' },
+  { id: 'edit-motion', cat: 'media', name: 'Edit animation', desc: 'Retime, recolour and render an animation, with EffectCraft.', accepts: ['motion'], max: 1, editor: 'studio:effectcraft' },
+  { id: 'edit-timeline', cat: 'media', name: 'Edit timeline', desc: 'Look through, trim and render an edit, with FilmCraft.', accepts: ['timeline'], max: 1, editor: 'studio:filmcraft' },
   { id: 'merge-pdf', cat: 'pdf', name: 'Merge PDF', desc: 'Combine PDFs and images into one PDF.', accepts: ['pdf', 'image'], min: 2, ordered: true, ext: 'pdf', suffix: ' - merged',
     run: async (files, opts, ctx) => {
       const tmp = await U.tmpDir('merge');
@@ -537,19 +545,19 @@ const WHEELS = {
     tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Organize'), W('ocr-pdf', 'OCR', 'Searchable'), W('protect-pdf', 'Protect', 'Password'), W('optimize-pdf', 'Optimize', 'Rebuild'), W('split-pdf', 'Split', 'Pages')],
   },
   image: {
-    tools: [W('compress-image', 'Compress', 'Smaller'), W('remove-background', 'Cut out', 'Subject'), W('image-to-text', 'Text', 'Copy text'), W('enhance-photo', 'Enhance', 'Auto'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('upscale-image', 'Upscale', '2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('strip-metadata', 'Clean', 'No EXIF'), W('scan-to-pdf', 'Scan', 'Clean PDF')],
+    tools: [W('compress-image', 'Compress', 'Smaller'), W('edit-image', 'Edit', 'Crop & adjust'), W('remove-background', 'Cut out', 'Subject'), W('image-to-text', 'Text', 'Copy text'), W('enhance-photo', 'Enhance', 'Auto'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('upscale-image', 'Upscale', '2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('strip-metadata', 'Clean', 'No EXIF'), W('scan-to-pdf', 'Scan', 'Clean PDF')],
   },
   raw: {
     convert: [W('develop-raw', 'JPG', 'Develop', { to: 'jpg', auto: false }), W('develop-raw', 'TIFF', '16-bit', { to: 'tif', auto: false }), W('develop-raw', 'PNG', 'Lossless', { to: 'png', auto: false }), W('develop-raw', 'AVIF', 'Small', { to: 'avif', auto: false }), W('develop-raw', 'DNG', 'Raw', { to: 'dng', auto: false }), W('convert-image', 'Preview', 'Built-in', { to: 'jpg', develop: false })],
-    tools: [W('enhance-photo', 'Enhance', 'Auto'), W('develop-raw', 'Develop', 'Options', {}, { ask: true }), W('strip-metadata', 'Clean', 'No EXIF'), W('image-to-text', 'Text', 'OCR')],
+    tools: [W('enhance-photo', 'Enhance', 'Auto'), W('edit-image', 'Edit', 'Develop'), W('develop-raw', 'Develop', 'Options', {}, { ask: true }), W('strip-metadata', 'Clean', 'No EXIF'), W('image-to-text', 'Text', 'OCR')],
   },
   video: {
     convert: [W('convert-video', 'MP4', 'Universal', { to: 'mp4' }), W('convert-video', 'MOV', 'Apple', { to: 'mov' }), W('convert-video', 'WebM', 'Web', { to: 'webm' }), W('video-to-gif', 'GIF', 'Clip', {}, { full: true }), W('extract-audio', 'MP3', 'Audio', { to: 'mp3' }), W('convert-video', 'HEVC', 'Smaller', { to: 'hevc' }), W('convert-video', 'MKV', 'Archive', { to: 'mkv' }), W('extract-audio', 'M4A', 'Audio', { to: 'm4a' }), W('extract-audio', 'WAV', 'Audio', { to: 'wav' })],
-    tools: [W('compress-video', 'Compress', 'Smaller'), W('trim-media', 'Trim', 'Cut'), W('crop-video', 'Crop', 'Shape'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('volume-media', 'Volume', 'Louder')],
+    tools: [W('compress-video', 'Compress', 'Smaller'), W('edit-video', 'Edit', 'Trim & more'), W('trim-media', 'Trim', 'Cut'), W('crop-video', 'Crop', 'Shape'), W('mute-video', 'Mute', 'No sound'), W('resize-video', '720p', 'Resize', { height: '720' }), W('rotate-video', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('video-frames', 'Frames', 'Per second'), W('normalize-audio', 'Level', 'Loudness'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('volume-media', 'Volume', 'Louder')],
   },
   audio: {
     convert: [W('convert-audio', 'MP3', 'Universal', { to: 'mp3' }), W('convert-audio', 'M4A', 'Apple', { to: 'm4a' }), W('convert-audio', 'WAV', 'Studio', { to: 'wav' }), W('convert-audio', 'FLAC', 'Lossless', { to: 'flac' }), W('convert-audio', 'ALAC', 'iTunes', { to: 'alac' }), W('convert-audio', 'AIFF', 'Mac', { to: 'aiff' }), W('convert-audio', 'OGG', 'Open', { to: 'ogg' }), W('convert-audio', 'Opus', 'Voice', { to: 'opus' }), W('convert-audio', 'WMA', 'Windows', { to: 'wma' })],
-    tools: [W('compress-audio', 'Compress', 'Smaller'), W('normalize-audio', 'Level', 'Loudness'), W('volume-media', 'Volume', 'Louder'), W('trim-media', 'Trim', 'Cut'), W('fade-audio', 'Fade', 'In & out'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('pitch-audio', 'Pitch', 'Semitones'), W('loop-media', 'Loop', 'Repeat'), W('reverse-media', 'Reverse', 'Backwards')],
+    tools: [W('compress-audio', 'Compress', 'Smaller'), W('edit-audio', 'Edit', 'Trim & more'), W('normalize-audio', 'Level', 'Loudness'), W('volume-media', 'Volume', 'Louder'), W('trim-media', 'Trim', 'Cut'), W('fade-audio', 'Fade', 'In & out'), W('speed-media', 'Speed', '1.5×', { factor: '1.5' }), W('pitch-audio', 'Pitch', 'Semitones'), W('loop-media', 'Loop', 'Repeat'), W('reverse-media', 'Reverse', 'Backwards')],
   },
   doc: {
     convert: [W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'DOCX', 'Word', { to: 'docx' }), W('convert-document', 'MD', 'Markdown', { to: 'md' }), W('convert-document', 'TXT', 'Text', { to: 'txt' }), W('convert-document', 'HTML', 'Web', { to: 'html' }), W('convert-document', 'EPUB', 'eBook', { to: 'epub' }), W('convert-document', 'RTF', 'Rich text', { to: 'rtf' })],
@@ -580,7 +588,7 @@ const WHEELS = {
   },
   vector: {
     convert: [W('convert-vector', 'SVG', 'Web', { to: 'svg' }), W('convert-vector', 'PDF', 'Document', { to: 'pdf' }), W('convert-vector', 'AI', 'Illustrator', { to: 'ai' }), W('convert-vector', 'EPS', 'Print', { to: 'eps' }), W('convert-vector', 'PNG', 'Image', { to: 'png' }), W('convert-vector', 'DXF', 'CAD', { to: 'dxf' }), W('convert-vector', 'EMF', 'Office', { to: 'emf' }), W('convert-vector', 'PSD', 'Layers', { to: 'psd' })],
-    tools: [ZIP, HASH],
+    tools: [W('edit-vector', 'Edit', 'VectorCraft'), ZIP, HASH],
   },
   cad2d: {
     convert: [W('convert-cad', 'PDF', 'Sheet', { to: 'pdf' }), W('convert-cad', 'SVG', 'Vector', { to: 'svg' }), W('convert-cad', 'PNG', 'Image', { to: 'png' }), W('convert-cad', 'DXF', 'R12', { to: 'dxf' }), W('convert-cad', 'AI', 'Illustrator', { to: 'ai' }), W('convert-cad', 'EPS', 'Print', { to: 'eps' }), W('convert-cad', 'JPG', 'Photo', { to: 'jpg' })],
@@ -592,15 +600,15 @@ const WHEELS = {
   },
   layout: {
     convert: [W('convert-layout', 'PDF', 'Print', { to: 'pdf' }), W('convert-layout', 'PNG', 'Pages', { to: 'png' }), W('convert-layout', 'EPUB', 'eBook', { to: 'epub' }), W('convert-layout', 'PPTX', 'Slides', { to: 'pptx' }), W('convert-layout', 'IDML', 'InDesign', { to: 'idml' })],
-    tools: [ZIP],
+    tools: [W('edit-layout', 'Edit', 'DesignCraft'), ZIP],
   },
   motion: {
     convert: [W('render-motion', 'MP4', 'Video', { to: 'mp4' }), W('render-motion', 'GIF', 'Loop', { to: 'gif' }), W('render-motion', 'WebM', 'Web', { to: 'webm' }), W('render-motion', 'MOV', 'ProRes', { to: 'mov' })],
-    tools: [ZIP],
+    tools: [W('edit-motion', 'Edit', 'EffectCraft'), ZIP],
   },
   timeline: {
     convert: [W('convert-timeline', 'MP4', 'Render', { to: 'mp4' }), W('convert-timeline', 'FCPXML', 'Final Cut', { to: 'fcpxml' }), W('convert-timeline', 'XML', 'Premiere', { to: 'xml' }), W('convert-timeline', 'OTIO', 'Open', { to: 'otio' }), W('convert-timeline', 'EDL', 'CMX', { to: 'edl' }), W('convert-timeline', 'AAF', 'Avid', { to: 'aaf' })],
-    tools: [ZIP],
+    tools: [W('edit-timeline', 'Edit', 'FilmCraft'), ZIP],
   },
   archive: {
     convert: [W('extract-archive', 'Extract', 'Unpack'), W('decompress-file', 'Decompress', 'One file'), W('convert-archive', 'ZIP', 'Repack', { format: 'zip' }), W('convert-archive', '7Z', 'Repack', { format: '7z' }), W('convert-archive', 'TAR.GZ', 'Repack', { format: 'tar.gz' }), W('convert-archive', 'TAR.XZ', 'Repack', { format: 'tar.xz' }), W('convert-archive', 'TAR.BZ2', 'Repack', { format: 'tar.bz2' })],
