@@ -76,11 +76,10 @@ async function separate(f, ctx) {
 async function splitStems(f, o, ctx) {
   const { info, tmp, out } = await separate(f, ctx);
   try {
-    const folder = ctx.out.folder(f, `${U.base(f)} - stems`), ext = CODEC[o.format] ? o.format : 'wav', files = [];
+    const folder = ctx.out.folder(f, `${U.base(f)} - stems`), ext = CODEC[o.format] ? o.format : 'wav';
     for (const [name, raw] of [['vocals', out.vocals], ['backing', out.accompaniment]]) {
       const file = U.uniquePath(path.join(folder, `${name}.${ext}`));
       await media().ffmpeg(['-f', 'f32le', '-ar', '44100', '-ac', '2', '-i', raw, ...CODEC[ext], file], part(ctx, 0.85, 1), info.duration, 'Saving', file);
-      files.push(file);
     }
     return folder;
   } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }

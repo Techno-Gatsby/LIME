@@ -105,11 +105,13 @@ async function ensure(id, vendor, root, progress = () => {}) {
     progress({ id, phase: 'unpack' });
     await new Promise((ok, no) => {
       const tar = spawn(tarExe, ['-xf', '-', '-C', part], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
-      let err = '';
+      let err = '', broken = null;
       tar.stderr.on('data', (d) => { err += d; });
       tar.on('error', no);
-      tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch(no);
+      // tar's exit code is the verdict: in a worker thread the pipeline can report its stdin closed early even
+      // when tar has read it all and finished cleanly.
+      tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || broken?.message || `tar exited with ${c}`))));
+      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch((e) => { broken = e; });
     });
     if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id]?.name || id} was not in its archive`);
     if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }
