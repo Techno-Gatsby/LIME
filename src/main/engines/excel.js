@@ -263,8 +263,12 @@ function removeRows(pkg, s, gone, sheets) {
   const sorted = [...gone].sort((a, b) => a - b), max = 1048576;
   const rows = { max, map: (r) => { if (gone.has(r)) return null; let k = 0; while (k < sorted.length && sorted[k] < r) k++; return r - k; } };
   const here = (sh) => !sh, named = (sh) => sh != null && sh.toLowerCase() === s.name.toLowerCase();
-  const fixF = (xml, mine) => xml.replace(/(<f\b[^>]*>)([\s\S]*?)(<\/f>)/g, (m, a, f, b) => `${a}${O.xmlEsc(shiftRefs(unxml(f), rows, mine)).replace(/&quot;/g, '"')}${b}`);
+  const fixF = (xml, mine) => xml.replace(/(<f\b[^>]*?(?<!\/)>)([\s\S]*?)(<\/f>)/g, (m, a, f, b) => `${a}${O.xmlEsc(shiftRefs(unxml(f), rows, mine)).replace(/&quot;/g, '"')}${b}`);
   let x = pkg.text(s.part);
+  // A shared formula whose first cell goes leaves its other cells with nothing to copy from: they keep their values.
+  const orphans = new Set();
+  x.replace(/<row\b([^>]*?)(\/>|>([\s\S]*?)<\/row>)/g, (m, a, b, inner) => { if (gone.has(Number(getAttr(a, 'r')))) for (const f of (inner || '').matchAll(/<f\b[^>]*t="shared"[^>]*\bref="[^"]*"[^>]*>/g)) orphans.add(getAttr(f[0], 'si')); return m; });
+  if (orphans.size) x = x.replace(/<c\b([^>]*?)(?<!\/)>([\s\S]*?)<\/c>/g, (m, a, inner) => { const f = /<f\b[^>]*t="shared"[^>]*\/>/.exec(inner); return f && orphans.has(getAttr(f[0], 'si')) && /<v>/.test(inner) ? `<c${a}>${inner.replace(f[0], '')}</c>` : m; });
   x = x.replace(/<row\b([^>]*?)(\/>|>([\s\S]*?)<\/row>)/g, (m, a) => {
     const r = Number(getAttr(a, 'r'));
     if (gone.has(r)) return '';

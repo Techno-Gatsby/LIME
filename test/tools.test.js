@@ -1069,7 +1069,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('tidy rows', 'tidy-sheet', ['book.xlsx'], {}, ([o], r) => {
     const wb = XLSX.readFile(o, { cellFormula: true }), d = wb.Sheets.Data, s = wb.Sheets.Summary;
     same(XLSX.utils.sheet_to_json(d, { header: 1, defval: '' }).map((x) => x[0]), ['Name', 'Lime', 'Lemon', 'Kiwi', 'Total', 'Ratio', 'hidden row', 'Note'], 'rows');
-    same([d.D4.f, d.D5.f, d.D6.f, s.B1.f, s.B2.f], ['B4*C4', 'SUM(D2:D4)', 'D5/0', 'Data!D5', 'Data!A4'], 'formulas');
+    same([d.D3.f, d.D4.f, d.D4.v, d.D5.f, d.D6.f, s.B1.f, s.B2.f], ['B3*C3', undefined, 3, 'SUM(D2:D4)', 'D5/0', 'Data!D5', 'Data!A4'], 'formulas');
+    ok(!/<f t="shared" si="1"\/>/.test(partOf(o, 'xl/worksheets/sheet1.xml')), 'a shared formula lost its first cell');
     same((wb.Workbook.Names || []).map((n) => n.Ref), ['Data!$A$1:$D$6', 'Data!$D$5'], 'names');
     same(d['!merges'].map((m) => XLSX.utils.encode_range(m)), ['A8:B8'], 'merged cells');
     ok(/hidden="1"/.test(partOf(o, 'xl/worksheets/sheet1.xml').match(/<row r="7"[^>]*>/)[0]), 'row formatting did not move with the row');
@@ -1081,7 +1082,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('check formulas', 'sheet-formulas', ['book.xlsx'], { save: true }, ([o], r) => {
     same(r[0].note, '8 formulas on 2 sheets; 1 error');
     const rows = XLSX.utils.sheet_to_json(XLSX.readFile(o).Sheets.Formulas);
-    ok(rows.length === 8 && rows.some((x) => x.Cell === 'D8' && x.Value === '#DIV/0!' && x.Problem === 'Error #DIV/0!') && rows.some((x) => x.Sheet === 'Summary' && x.Formula === '=Data!D7'), JSON.stringify(rows).slice(0, 300));
+    ok(rows.length === 8 && rows.some((x) => x.Cell === 'D8' && x.Value === '#DIV/0!' && x.Problem === 'Error #DIV/0!') && rows.some((x) => x.Sheet === 'Summary' && x.Formula === '=Data!D7') && rows.some((x) => x.Cell === 'D6' && x.Formula === '=B6*C6'), JSON.stringify(rows).slice(0, 300));
   });
   T('speaker notes → Word', 'slide-notes', ['notes.pptx'], { to: 'docx', include: 'notes' }, ([o]) => same(paras(o), ['notes', 'Slide 1: Welcome', 'Greet everyone and introduce Lime.', 'Slide 2: Secret slide (hidden)', 'Skip this one on the day.'], 'paragraphs'));
   T('slides and notes → Markdown', 'slide-notes', ['notes.pptx'], { to: 'md', include: 'both' }, ([o]) => has(txt(o), '## Slide 1: Welcome\n\n- First point\n- Second point\n\n**Notes**\n\nGreet everyone', '## Slide 3: Wrap up\n\n- Questions'));

@@ -80,8 +80,9 @@ function cleanWord(pkg, o, n) {
     if (pkg.has('word/settings.xml')) {
       const s = pkg.dom('word/settings.xml');
       for (const name of ['rsids', 'attachedTemplate', 'docVars']) all(s, W, name).forEach(remove);
-      const root = s.documentElement;
-      if (!all(s, W, 'removePersonalInformation').length) root.insertBefore(O.make(s, W, 'w:removePersonalInformation'), root.firstChild);
+      // Word wants these two right after the write protection, view and zoom settings.
+      const root = s.documentElement, lead = kids(root, W, ['writeProtection', 'view', 'zoom']).pop();
+      if (!all(s, W, 'removePersonalInformation').length) root.insertBefore(O.make(s, W, 'w:removePersonalInformation'), lead ? lead.nextSibling : root.firstChild);
       if (!all(s, W, 'removeDateAndTime').length) root.insertBefore(O.make(s, W, 'w:removeDateAndTime'), all(s, W, 'removePersonalInformation')[0].nextSibling);
     }
     for (const r of pkg.rels(pkg.main())) if (r.type === 'attachedTemplate') pkg.removeRel(pkg.main(), r.id);

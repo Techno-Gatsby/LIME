@@ -365,7 +365,6 @@ function inline(a, b, o) {
   const out = [];
   const push = (kind, text) => { const last = out[out.length - 1]; if (last && last.kind === kind) last.text += text; else out.push({ kind, text }); };
   for (const [op, i, j] of diff(ta.map(o.key), tb.map(o.key))) push(op === '=' ? '=' : op === '-' ? 'del' : 'ins', op === '-' ? ta[i] : tb[j]);
-  // A deletion sitting between two insertions reads better before them, as Word shows it.
   return out;
 }
 function storyParagraphs(doc) {
@@ -535,7 +534,7 @@ function joinCopies(copies) {
       if (!pPr) { pPr = make(doc, W, 'w:pPr'); p.insertBefore(pPr, p.firstChild); }
       const s = sect.cloneNode(true);
       for (const t of kids(s, W, 'type')) remove(t);
-      s.insertBefore(make(doc, W, 'w:type', { 'w:val': 'nextPage' }), kids(s).find((x) => !is(x, W, ['headerReference', 'footerReference'])) || null);
+      s.insertBefore(make(doc, W, 'w:type', { 'w:val': 'nextPage' }), kids(s).find((x) => !is(x, W, ['headerReference', 'footerReference', 'footnotePr', 'endnotePr'])) || null);
       pPr.appendChild(s);
     }
   });

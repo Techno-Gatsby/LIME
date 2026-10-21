@@ -1045,10 +1045,10 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
   const sheet = (data, tail = '', head = '') => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${head}<sheetData>${data}</sheetData>${tail}</worksheet>`;
   const dataSheet = sheet([
     row(1, [sc('A1', 'Name'), sc('B1', 'Qty'), sc('C1', 'Price'), sc('D1', 'Total')]),
-    row(2, [sc('A2', 'Lime'), nc('B2', 12), nc('C2', 0.4), fc('D2', 'B2*C2', 4.8)]),
-    row(3, [sc('A3', 'Lemon'), nc('B3', 7), nc('C3', 0.5), fc('D3', 'B3*C3', 3.5)]),
-    row(5, [sc('A5', 'Lime'), nc('B5', 12), nc('C5', 0.4), fc('D5', 'B5*C5', 4.8)]),
-    row(6, [sc('A6', '  Kiwi  '), nc('B6', 3), nc('C6', 1), fc('D6', 'B6*C6', 3), sc('E6', 'off to the side')]),
+    row(2, [sc('A2', 'Lime'), nc('B2', 12), nc('C2', 0.4), '<c r="D2"><f t="shared" ref="D2:D3" si="0">B2*C2</f><v>4.8</v></c>']),
+    row(3, [sc('A3', 'Lemon'), nc('B3', 7), nc('C3', 0.5), '<c r="D3"><f t="shared" si="0"/><v>3.5</v></c>']),
+    row(5, [sc('A5', 'Lime'), nc('B5', 12), nc('C5', 0.4), '<c r="D5"><f t="shared" ref="D5:D6" si="1">B5*C5</f><v>4.8</v></c>']),
+    row(6, [sc('A6', '  Kiwi  '), nc('B6', 3), nc('C6', 1), '<c r="D6"><f t="shared" si="1"/><v>3</v></c>', sc('E6', 'off to the side')]),
     row(7, [sc('A7', 'Total'), fc('D7', 'SUM(D2:D6)', 16.1)]),
     row(8, [sc('A8', 'Ratio'), '<c r="D8" t="e"><f>D7/0</f><v>#DIV/0!</v></c>']),
     row(9, [sc('A9', 'hidden row')], ' hidden="1"'),
