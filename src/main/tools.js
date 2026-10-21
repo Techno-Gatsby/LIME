@@ -3,6 +3,7 @@ const U = require('./engines/util');
 const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
+const word = lazy('word'), excel = lazy('excel'), slides = lazy('slides'), kit = lazy('officekit');
 const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email');
 
 // Groups util doesn't know, or reads differently: plain .xml is data (Convert document still takes it) and EPUB/FB2 are e-books.
@@ -95,6 +96,11 @@ const SLIDE_PRINT = [
   choice('orientation', 'Orientation', [['portrait', 'Portrait'], ['landscape', 'Landscape']], 'portrait', { when: { layout: HANDOUTS } }),
   toggle('frame', 'Frame slides', true, { when: { layout: HANDOUTS } }),
 ];
+// Word, Excel and PowerPoint files changed in place, the way the Office apps do it, without LibreOffice.
+const WORD_IN = ['docx', 'docm', 'dotx', 'dotm'], XLSX_IN = ['xlsx', 'xlsm', 'xltx', 'xltm'], PPTX_IN = ['pptx', 'pptm', 'ppsx', 'ppsm', 'potx', 'potm'];
+const OFFICE_IN = [...WORD_IN, 'odt', ...XLSX_IN, 'ods', ...PPTX_IN, 'odp'];
+const sameExt = (suffix) => (files, o) => `${U.base(files[0])}${typeof suffix === 'function' ? suffix(o) : suffix}.${U.ext(files[0])}`;
+const SHEETS = { name: 'Spreadsheets', extensions: ['csv', 'tsv', 'xlsx', 'xls', 'xlsm', 'ods'] };
 // For the ArtCraft actions below (see the end of TOOLS).
 const PHOTO_EXT = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'psd', 'psb', 'pcraft'];
 const LAYERED_EXT = ['psd', 'psb', 'pcraft', 'tif', 'tiff'];
@@ -395,6 +401,66 @@ const TOOLS = [
   { id: 'merge-sheets', cat: 'docs', name: 'Merge spreadsheets', desc: 'One workbook, or stacked rows.', accepts: ['sheet'], min: 2, ordered: true, ext: 'xlsx', stem: 'Merged workbook',
     options: [choice('mode', 'How', [['sheets', 'Sheet per file'], ['stack', 'Stack rows']]), toggle('skipHeaders', 'Keep one header row', true, { when: { mode: 'stack' } })],
     run: async (files, o, c) => [await office().mergeSheets(files, o, c)] },
+  { id: 'compare-docs', cat: 'docs', name: 'Compare documents', desc: 'What changed between two versions, as tracked changes in Word or a marked-up PDF. Put the older one first.', accepts: ['doc'], min: 2, max: 2, ordered: true,
+    ext: (o) => (o.output === 'pdf' ? 'pdf' : 'docx'), outName: (files, o) => `${U.base(files[1] || files[0])} - compared.${o.output === 'pdf' ? 'pdf' : 'docx'}`,
+    options: [choice('output', 'Result', [['docx', 'Word with tracked changes'], ['pdf', 'Marked-up PDF']]), choice('level', 'Compare by', [['word', 'Word'], ['char', 'Character']]), toggle('ignoreCase', 'Ignore changes of case', false),
+      text('author', 'Changes by', '', { advanced: true, placeholder: 'The newer version’s author' })],
+    run: async (files, o, c) => [await word().compare(files, o, c)] },
+  { id: 'track-changes', cat: 'docs', name: 'Accept or reject changes', desc: 'Accept or reject every tracked change in a Word or OpenDocument file.', accepts: [], extAccept: [...WORD_IN, 'odt'],
+    ext: (o, files) => U.ext(files[0] || 'x.docx'), outName: sameExt((o) => (o.action === 'reject' ? '-rejected' : '-accepted')),
+    options: [choice('action', 'Changes', [['accept', 'Accept all'], ['reject', 'Reject all']]), toggle('stopTracking', 'Stop tracking changes', true, { advanced: true })], run: each((f, o, c) => word().trackChanges(f, o, c)) },
+  { id: 'mail-merge', cat: 'docs', name: 'Mail merge', desc: 'A letter for each row of a spreadsheet: fills «Name» or {{Name}} and Word’s merge fields.', accepts: [], extAccept: WORD_IN, save: 'folder', suffix: ' - merged',
+    single: (o) => o.combine === 'one', ext: (o) => (o.to === 'pdf' ? 'pdf' : 'docx'), outName: (files, o) => `${U.base(files[0])} - merged.${o.to === 'pdf' ? 'pdf' : 'docx'}`,
+    options: [file('data', 'Names and details (CSV or Excel)', [SHEETS], { required: true }), choice('to', 'Save as', [['docx', 'Word'], ['pdf', 'PDF']]), choice('combine', 'Output', [['each', 'A file for each row'], ['one', 'One file']]),
+      text('name', 'File names', '', { placeholder: '{FirstName} {LastName}', when: { combine: 'each' } })],
+    run: each((f, o, c) => word().mailMerge(f, o, c)) },
+  { id: 'doc-stats', cat: 'docs', name: 'Document statistics', desc: 'Words, characters, pages, reading time and readability.', accepts: ['doc'], extAccept: [...PPTX_IN, 'odp'], save: 'none',
+    options: [toggle('save', 'Save a report', false)], run: each((f, o, c) => word().stats(f, o, c)) },
+  { id: 'split-doc', cat: 'docs', name: 'Split at headings', desc: 'One Word file for each chapter, cut at the headings you choose.', accepts: ['doc'], save: 'folder', suffix: ' - parts',
+    options: [choice('level', 'Split at', [['1', 'Heading 1'], ['2', 'Heading 2'], ['3', 'Heading 3']], '1')], run: each((f, o, c) => word().splitDoc(f, o, c)) },
+  { id: 'watermark-doc', cat: 'docs', name: 'Watermark document', desc: 'A watermark like DRAFT or CONFIDENTIAL on every page of a Word file, and page numbers.', accepts: [], extAccept: WORD_IN,
+    ext: (o, files) => U.ext(files[0] || 'x.docx'), outName: sameExt('-watermarked'),
+    options: [text('text', 'Watermark', 'CONFIDENTIAL'), color('color', 'Colour', '#c0c0c0'), choice('layout', 'Layout', [['diagonal', 'Diagonal'], ['horizontal', 'Horizontal']]), range('opacity', 'Opacity', 50, 10, 100, { unit: '%' }),
+      toggle('pageNumbers', 'Page numbers', false), choice('numberAlign', 'Numbers', [['center', 'Centre'], ['right', 'Right']], 'center', { when: { pageNumbers: true } })],
+    run: each((f, o, c) => word().watermark(f, o, c)) },
+  { id: 'replace-text', cat: 'docs', name: 'Find and replace', desc: 'Replace words in Word, Excel, PowerPoint and OpenDocument files, keeping their formatting.', accepts: [], extAccept: [...OFFICE_IN, 'txt', 'md', 'csv', 'tsv', 'html', 'htm'],
+    ext: (o, files) => U.ext(files[0] || 'x.docx'), outName: sameExt('-replaced'),
+    options: [text('find', 'Find', '', { required: true }), text('replace', 'Replace with', ''), toggle('matchCase', 'Match case', false), toggle('wholeWords', 'Whole words only', false),
+      toggle('regex', 'Regular expression', false, { advanced: true }), toggle('everywhere', 'Headers, footers and notes too', true, { advanced: true })],
+    run: each((f, o, c) => kit().replaceText(f, o, c)) },
+  { id: 'clean-office', cat: 'docs', name: 'Remove personal info', desc: 'Comments, authors, editing history, hidden text and custom data, like Office’s Document Inspector.', accepts: [], extAccept: OFFICE_IN,
+    ext: (o, files) => U.ext(files[0] || 'x.docx'), outName: sameExt('-clean'),
+    options: [toggle('comments', 'Comments', true), toggle('properties', 'Authors and personal details', true), toggle('hidden', 'Hidden text and shapes', true), toggle('notes', 'Speaker notes', false)],
+    run: each((f, o, c) => kit().clean(f, o, c)) },
+  { id: 'office-media', cat: 'docs', name: 'Extract media', desc: 'Every picture, video and sound inside a Word, Excel or PowerPoint file, in order.', accepts: [], extAccept: OFFICE_IN, save: 'folder', suffix: ' - media',
+    options: [choice('what', 'Save', [['pictures', 'Pictures'], ['media', 'Pictures, video and sound'], ['all', 'Everything inside']], 'media')], run: each((f, o, c) => kit().extractMedia(f, o, c)) },
+  { id: 'compress-office', cat: 'docs', name: 'Compress Office file', desc: 'Smaller Word, Excel and PowerPoint files: the pictures inside are resized and recompressed.', accepts: [], extAccept: OFFICE_IN,
+    ext: (o, files) => U.ext(files[0] || 'x.docx'), outName: sameExt('-compressed'),
+    options: [choice('size', 'Pictures up to', [['2400', '2400 px (print)'], ['1600', '1600 px (screen)'], ['1024', '1024 px (e-mail)']], '1600'), range('quality', 'JPEG quality', 80, 40, 95, { unit: '%' })],
+    run: each((f, o, c) => kit().compressPictures(f, o, c)) },
+  { id: 'sheet-values', cat: 'docs', name: 'Formulas to values', desc: 'Keep what every formula shows, without the formulas.', accepts: [], extAccept: [...XLSX_IN, 'ods'],
+    ext: (o, files) => U.ext(files[0] || 'x.xlsx'), outName: sameExt('-values'), run: each((f, o, c) => excel().toValues(f, o, c)) },
+  { id: 'unhide-sheet', cat: 'docs', name: 'Unhide & unprotect', desc: 'Show hidden sheets, rows and columns, and lift sheet protection that has no password.', accepts: [], extAccept: [...XLSX_IN, 'ods'],
+    ext: (o, files) => U.ext(files[0] || 'x.xlsx'), outName: sameExt('-unhidden'),
+    options: [toggle('sheets', 'Hidden sheets', true), toggle('rows', 'Hidden rows and columns', true), toggle('protection', 'Protection without a password', true)], run: each((f, o, c) => excel().unhide(f, o, c)) },
+  { id: 'split-sheets', cat: 'docs', name: 'Split workbook', desc: 'A workbook for each sheet, with its formatting.', accepts: [], extAccept: [...XLSX_IN, 'ods'], save: 'folder', suffix: ' - sheets',
+    options: [toggle('hidden', 'Hidden sheets too', false), toggle('values', 'Formulas using other sheets become values', true)], run: each((f, o, c) => excel().splitSheets(f, o, c)) },
+  { id: 'tidy-sheet', cat: 'docs', name: 'Tidy rows', desc: 'Remove duplicate and empty rows and trim extra spaces; formulas keep pointing at the right cells.', accepts: [], extAccept: [...XLSX_IN, 'ods', 'xls', 'xlsb', 'csv', 'tsv'],
+    ext: (o, files) => U.ext(files[0] || 'x.xlsx'), outName: sameExt('-tidy'),
+    options: [toggle('dedupe', 'Remove duplicate rows', true), toggle('emptyRows', 'Remove empty rows', true), toggle('trim', 'Trim spaces', true), toggle('header', 'First row is a header', true)],
+    run: each((f, o, c) => excel().tidy(f, o, c)) },
+  { id: 'sheet-formulas', cat: 'docs', name: 'Check formulas', desc: 'Every formula and error, like #REF! and #DIV/0!, and where it is.', accepts: [], extAccept: [...XLSX_IN, 'ods', 'xls', 'xlsb'], save: 'none',
+    options: [toggle('save', 'Save the list as a spreadsheet', false)], run: each((f, o, c) => excel().formulas(f, o, c)) },
+  { id: 'slide-notes', cat: 'docs', name: 'Speaker notes', desc: 'Notes and slide text as a Word document, Markdown or text, for a script or handout.', accepts: [], extAccept: [...PPTX_IN, 'odp'],
+    ext: (o) => o.to || 'docx', outName: (files, o) => `${U.base(files[0])} - ${o.include === 'outline' ? 'outline' : 'notes'}.${o.to || 'docx'}`,
+    options: [select('to', 'Save as', [['docx', 'Word'], ['md', 'Markdown'], ['txt', 'Text']]), choice('include', 'Include', [['notes', 'Notes'], ['both', 'Slides and notes'], ['outline', 'Slide text']], 'both')],
+    run: each((f, o, c) => slides().exportNotes(f, o, c)) },
+  { id: 'merge-slides', cat: 'docs', name: 'Merge presentations', desc: 'One deck from several, each slide keeping its design or taking the first deck’s.', accepts: [], extAccept: PPTX_IN, min: 2, ordered: true,
+    ext: (o, files) => U.ext(files[0] || 'x.pptx'), outName: sameExt(' - merged'),
+    options: [choice('design', 'Design', [['keep', 'Keep each deck’s'], ['first', 'Use the first deck’s']])], run: async (files, o, c) => [await slides().mergeDecks(files, o, c)] },
+  { id: 'pick-slides', cat: 'docs', name: 'Pick slides', desc: 'Keep, reorder or drop slides, and take out hidden ones.', accepts: [], extAccept: PPTX_IN,
+    ext: (o, files) => U.ext(files[0] || 'x.pptx'), outName: sameExt('-slides'),
+    options: [pages('slides', 'Slides to keep, in order', 'all', { placeholder: '3, 1-2, 5-' }), toggle('dropHidden', 'Remove hidden slides', true)], run: each((f, o, c) => slides().pickSlides(f, o, c)) },
   { id: 'convert-layout', cat: 'docs', name: 'Convert layout', desc: 'DesignCraft exports InDesign IDML and INDD to PDF, images, EPUB or PowerPoint.', accepts: ['layout'], craft: 'designcraft', prio: 8, petal: ['Export', 'PDF & more'], ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
     options: [select('to', 'Export as', [['pdf', 'PDF'], ['png', 'Page images'], ['epub', 'EPUB'], ['pptx', 'PowerPoint'], ['idml', 'IDML']])], run: each((f, o, c) => craft().layout(f, o, c)) },
 
@@ -561,7 +627,8 @@ const WHEELS = {
   },
   doc: {
     convert: [W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'DOCX', 'Word', { to: 'docx' }), W('convert-document', 'MD', 'Markdown', { to: 'md' }), W('convert-document', 'TXT', 'Text', { to: 'txt' }), W('convert-document', 'HTML', 'Web', { to: 'html' }), W('convert-document', 'EPUB', 'eBook', { to: 'epub' }), W('convert-document', 'RTF', 'Rich text', { to: 'rtf' })],
-    tools: [ZIP, HASH],
+    tools: [W('replace-text', 'Replace', 'Find', {}, { ask: true }), W('track-changes', 'Accept', 'Changes', { action: 'accept' }), W('clean-office', 'Clean', 'Personal info'), W('doc-stats', 'Stats', 'Words'), W('watermark-doc', 'Watermark', 'Draft', {}, { ask: true }),
+      W('mail-merge', 'Mail merge', 'From a list', {}, { ask: true }), W('split-doc', 'Split', 'Headings'), W('office-media', 'Images', 'Extract'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
   comic: { convert: [W('convert-comic', 'PDF', 'Document', { to: 'pdf' }), W('convert-comic', 'EPUB', 'Fixed layout', { to: 'epub' }), W('convert-comic', 'CBZ', 'Repack', { to: 'cbz' }), W('convert-comic', 'Pages', 'Pictures', { to: 'images' }, { full: true })], tools: [ZIP, HASH] },
   ebook: {
@@ -580,11 +647,13 @@ const WHEELS = {
   sheet: {
     convert: [W('convert-sheet', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-sheet', 'CSV', 'Plain', { to: 'csv' }), W('convert-sheet', 'PDF', 'Print', { to: 'pdf' }, { ask: true }), W('convert-sheet', 'JSON', 'Data', { to: 'json' }), W('convert-sheet', 'HTML', 'Table', { to: 'html' }), W('convert-sheet', 'ODS', 'Open', { to: 'ods' }), W('convert-sheet', 'MD', 'Markdown', { to: 'md' }),
       W('convert-data', 'YAML', 'Data', { to: 'yaml' }, { only: CSV_EXT }), W('convert-data', 'XML', 'Data', { to: 'xml' }, { only: CSV_EXT }), W('convert-contacts', 'vCard', 'Contacts', { to: 'vcf' }, { only: CSV_EXT })],
-    tools: [ZIP, HASH],
+    tools: [W('sheet-values', 'Values', 'No formulas'), W('tidy-sheet', 'Tidy', 'Duplicates'), W('unhide-sheet', 'Unhide', 'All'), W('split-sheets', 'Split', 'Per sheet'), W('sheet-formulas', 'Formulas', 'Check'),
+      W('replace-text', 'Replace', 'Find', {}, { ask: true }), W('clean-office', 'Clean', 'Personal info'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
   slides: {
-    convert: [W('convert-slides', 'PDF', 'Document', { to: 'pdf' }), W('convert-slides', 'PNG', 'Slides', { to: 'png' }), W('convert-slides', 'HTML', 'Web', { to: 'html' }), W('convert-slides', 'TXT', 'Text', { to: 'txt' }), W('convert-slides', 'MD', 'Outline', { to: 'md' }), W('convert-slides', 'PPTX', 'PowerPoint', { to: 'pptx' })],
-    tools: [ZIP, HASH],
+    convert: [W('convert-slides', 'PDF', 'Document', { to: 'pdf' }), W('convert-slides', 'PNG', 'Slides', { to: 'png' }), W('convert-slides', 'HTML', 'Web', { to: 'html' }), W('convert-slides', 'TXT', 'Text', { to: 'txt' }), W('convert-slides', 'MD', 'Outline', { to: 'md' }), W('convert-slides', 'PPTX', 'PowerPoint', { to: 'pptx' }), W('slide-notes', 'DOCX', 'Notes', { to: 'docx', include: 'both' })],
+    tools: [W('slide-notes', 'Notes', 'Word', { to: 'docx', include: 'both' }), W('pick-slides', 'Slides', 'Pick', {}, { ask: true }), W('pick-slides', 'Hidden', 'Remove', { slides: 'all', dropHidden: true }), W('replace-text', 'Replace', 'Find', {}, { ask: true }),
+      W('clean-office', 'Clean', 'Personal info'), W('office-media', 'Media', 'Extract'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
   vector: {
     convert: [W('convert-vector', 'SVG', 'Web', { to: 'svg' }), W('convert-vector', 'PDF', 'Document', { to: 'pdf' }), W('convert-vector', 'AI', 'Illustrator', { to: 'ai' }), W('convert-vector', 'EPS', 'Print', { to: 'eps' }), W('convert-vector', 'PNG', 'Image', { to: 'png' }), W('convert-vector', 'DXF', 'CAD', { to: 'dxf' }), W('convert-vector', 'EMF', 'Office', { to: 'emf' }), W('convert-vector', 'PSD', 'Layers', { to: 'psd' })],
@@ -647,10 +716,12 @@ const MULTI = {
   video: [W('merge-media', 'Merge', 'One video')],
   audio: [W('merge-media', 'Merge', 'One track')],
   sheet: [W('merge-sheets', 'Merge', 'One workbook')],
+  doc: [W('compare-docs', 'Compare', 'Changes')],
+  slides: [W('merge-slides', 'Merge', 'One deck')],
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
   media: [W('add-audio', 'Soundtrack', 'Replace', { mode: 'replace' }), W('add-audio', 'Mix', 'Add music', { mode: 'mix' }), W('merge-media', 'Merge', 'One video')],
 };
-const SINGLE_OUTPUT = new Set(['hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
+const SINGLE_OUTPUT = new Set(['compare-docs', 'merge-slides', 'hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 // An editor is offered once its module ships with the app; until then its tool and slices are left out.

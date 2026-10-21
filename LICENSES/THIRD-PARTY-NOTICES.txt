@@ -41,3 +41,7 @@ Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil
 
 Portions of the format conversion logic are adapted from Filee by KnifeLemon (https://github.com/KnifeLemon/Filee), MIT License.
+
+Compare documents pairs changed paragraphs the way LibreOffice Writer's Compare Document does (sw/source/core/doc/doccomp.cxx,
+MPL-2.0, The Document Foundation): lengths within three times each other, and enough text in long common stretches
+(the sum of their squared lengths).
