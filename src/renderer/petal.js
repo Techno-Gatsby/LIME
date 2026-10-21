@@ -49,7 +49,10 @@ export function arc(r, frac) {
 // The lime photo, downsampled ahead of time for each screen density so it stays sharp (sizes 52 and 96 exist).
 // The wheel is scaled as a whole for its Small and Large sizes, so `scale` makes the browser pick
 // a bitmap for the size the logo really appears at instead of stretching one made for 1x.
+let custom = null;
+export const setIcon = (url) => { custom = url || null; };
 export function limeSvg(size = 52, cls = '', scale = 1) {
+  if (custom) return `<img class="lime custom${cls ? ` ${cls}` : ''}" src="${custom}" width="${size}" height="${size}" alt="" draggable="false">`;
   const f = (k) => `assets/lime-${size}${k > 1 ? `@${k}x` : ''}.png`;
   return `<img class="lime${cls ? ` ${cls}` : ''}" src="${f(1)}" srcset="${[1, 2, 3, 4].map((k) => `${f(k)} ${size * k}w`).join(', ')}" sizes="${Math.ceil(size * scale)}px" width="${size}" height="${size}" alt="" draggable="false">`;
 }

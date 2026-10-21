@@ -1,5 +1,5 @@
 import { icon } from './icons.js';
-import { limeSvg } from './petal.js';
+import { limeSvg, setIcon } from './petal.js';
 import { api, $, h, esc, nameOf, applyTheme } from './ui.js';
 
 let s = await applyTheme();
@@ -19,6 +19,7 @@ const reason = (err) => String(err?.message || err).replace(/^Error invoking rem
 const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').replace('class="ic', 'class="ic lead') : ''}<div class="t"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</div>${ctl || ''}</div>`;
 
 async function render() {
+  setIcon(s.icon);
   const eng = await api.invoke('engines:status').catch(() => ({ crafts: [] }));
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
   const SIZE = { soffice: 350, pandoc: 40 };
@@ -34,6 +35,7 @@ async function render() {
   </div></section>
   <section><h2>Wheel</h2><div class="group">
     ${row('circle', 'Size', '', seg('size', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']]))}
+    ${row('', `<span class="icon-row">${limeSvg(28)}Icon</span>`, s.icon ? 'Your picture, in place of the lime' : 'The lime', `${s.icon ? '<button class="btn" data-a="icon-reset">Use the lime</button>' : ''}<button class="btn" data-a="icon">Choose picture…</button>`)}
     ${row('layers', 'Float above windows', 'Off keeps it on the desktop, behind your apps', sw('float'))}
     ${row('sparkle', 'Appearance', '', seg('theme', [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']]))}
     ${row('music', 'Sounds', 'A tick for each choice, a soft thud when files land', sw('sounds', s.sounds !== false))}
@@ -66,6 +68,8 @@ app.addEventListener('click', async (e) => {
   if (b) { set({ [b.parentElement.dataset.k]: b.dataset.v }); return; }
   const a = e.target.closest('[data-a]')?.dataset.a;
   if (a === 'folder') { const [d] = await api.invoke('dialog:open', { folders: true, multi: false, create: true }); if (d) set({ outFolder: d }); }
+  if (a === 'icon') { const [f] = await api.invoke('dialog:open', { title: 'Choose a picture for the icon', multi: false, filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'avif', 'bmp', 'tif', 'tiff', 'svg'] }] }); if (f) await api.invoke('icon:set', f).catch((err) => alert(String(err?.message || err))); }
+  if (a === 'icon-reset') await api.invoke('icon:set', null);
   if (a === 'reset') { await api.invoke('settings:set', { anchor: null }); }
   if (a === 'app') {
     const b = e.target.closest('[data-a]');

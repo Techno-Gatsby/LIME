@@ -37,6 +37,7 @@ Lime waits as a small lime tucked into the right edge of the screen. The wheel i
 | Drag the middle after a job | Drags the results into any app or folder. **Edit in …** opens the result in the app that suits it. |
 | **Control + Option + L** (Windows: **Ctrl + Alt + L**) | Shows or hides the wheel. On a Mac with files selected in Finder, opens them in the wheel. |
 | Menu bar / tray icon | Show the wheel, choose files, open any of the seven apps, recent results, settings. **Float Above Windows** keeps the wheel above other apps, other always-on-top windows included. |
+| Icon | **Choose picture…** in Settings puts any picture in the lime's place; **Use the lime** brings the lime back. |
 | Sounds | A tick as you pass each slice, a thud when files land, a chime when a job is done. **Sounds** in Settings switches them off. |
 | Helpers | Lime converts Office documents on its own, and LibreOffice (exact Word, Excel and PowerPoint layouts) and Pandoc (LaTeX, reStructuredText and Org files) come with it, ready a moment after the first launch. A build without them offers **Download…** in Settings, which fetches either from its makers into Lime's own folder, with no installer and no administrator rights. |
 

@@ -728,6 +728,12 @@ function registerIpc() {
   });
   h('settings:get', () => publicSettings());
   h('settings:set', (patch) => setSettings(patch));
+  // A picture for the lime's place: squared and kept small, so it travels with the settings.
+  h('icon:set', async (file) => {
+    if (!file) return setSettings({ icon: null });
+    const png = await require('sharp')(file, { failOn: 'none' }).rotate().resize(256, 256, { fit: 'cover' }).png().toBuffer();
+    return setSettings({ icon: `data:image/png;base64,${png.toString('base64')}` });
+  });
   h('prefs:open', (tab) => openPrefs(tab));
   h('engines:status', () => call('enginesStatus'));
   // Settings can fetch LibreOffice and Pandoc from their makers into Lime's own folder; progress goes back to the page.

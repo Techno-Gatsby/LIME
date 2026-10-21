@@ -188,6 +188,16 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       return `moved ${a.dx},${a.dy} empty and ${b.dx},${b.dy} with a PDF; nothing picked`;
     } finally { setCursor(() => screen.getCursorScreenPoint()); }
   });
+  if (fs.existsSync(fx('photo.jpg'))) await check('a picture from Settings replaces the lime, and the lime comes back', async () => {
+    await js(`window.lime.invoke('icon:set', ${JSON.stringify(fx('photo.jpg'))})`);
+    if (!(await until('return /^data:image\\/png/.test(document.querySelector(".tab-lime img.lime")?.src || "")', 4000))) throw new Error('the tab still shows the lime');
+    await lime('L.expand("click");');
+    if (!(await until('return document.querySelector(".center img.lime")?.classList.contains("custom")', 4000))) throw new Error('the middle still shows the lime');
+    await js("window.lime.invoke('icon:set', null)");
+    if (!(await until('return /assets\\/lime-/.test(document.querySelector(".tab-lime img.lime")?.src || "")', 4000))) throw new Error('the lime did not come back');
+    wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    return 'picture shown on the tab and in the middle; Use the lime put it back';
+  });
   await check('click opens the seven apps; each opens its own ring', async () => {
     await lime('L.expand("click");');
     if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 4000))) throw new Error('no apps around the lime');

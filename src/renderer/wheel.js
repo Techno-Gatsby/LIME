@@ -1,5 +1,5 @@
 import { icon, GROUP_ICON } from './icons.js';
-import { wedge, labelAt, arc, limeSvg, hitIndex } from './petal.js';
+import { wedge, labelAt, arc, limeSvg, hitIndex, setIcon } from './petal.js';
 import { api, $, $$, h, esc, nameOf, dirOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
 const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 450;
@@ -17,7 +17,10 @@ const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, rin
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null, origin = { x: 0, y: 0 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+setIcon(settings.icon);
 $('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, '', k));
+// A picture chosen in Settings takes the lime's place everywhere it shows.
+function iconChanged() { $('.tab-lime img.lime')?.replaceWith(Object.assign(document.createElement('div'), { innerHTML: limeSvg(52, '', k) }).firstChild); visKey = null; drawCenter(); }
 
 async function layout() {
   const open = S.state !== 'idle';
@@ -1078,7 +1081,7 @@ api.on('wheel:dragEnded', () => {
 });
 api.on('wheel:flash', (msg) => flash(msg));
 api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
-api.on('settings', (s) => { settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
+api.on('settings', (s) => { if ((s.icon || null) !== (settings.icon || null)) { setIcon(s.icon); settings = s; iconChanged(); } settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
 
 const LENS = { bevel: 0.15, depth: 7, aberration: 0.08 }, DRIFT_R = 180, DRIFT_S = 14, NUDGE = 3, TILT = 2.5;
 const glass = { ptr: null, light: { x: -80, y: -150, ax: -80, ay: -150 }, drift: -2.1, nudge: { el: null, x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0 }, tilt: { x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0 }, raf: 0, last: 0, frame: 0, slow: 0, still: matchMedia('(prefers-reduced-motion: reduce)') };
