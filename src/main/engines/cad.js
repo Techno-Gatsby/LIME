@@ -492,7 +492,7 @@ async function drawingPdf(items, out, opts = {}) {
   doc.setCreator('Lime');
   const page = doc.addPage([PW, PH]);
   const fontFor = items.some((it) => it.k === 'text') ? await textFonts(doc) : null;
-  const col = (it) => { const v = onLight(it.rgb ?? 0), t = it.tint ? 0.75 : 0; return rgb(...[16, 8, 0].map((sh) => (((v >> sh) & 255) / 255) * (1 - t) + t)); };
+  const col = (it) => { const v = opts.mono ? 0x1a1f16 : onLight(it.rgb ?? 0), t = it.tint ? 0.75 : 0; return rgb(...[16, 8, 0].map((sh) => (((v >> sh) & 255) / 255) * (1 - t) + t)); };
   const X = (p) => ox + (p.x - ext.x0) * s, Y = (p) => oy + (p.y - ext.y0) * s;
   for (const it of items) {
     if (it.k === 'path') {

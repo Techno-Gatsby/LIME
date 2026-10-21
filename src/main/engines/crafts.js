@@ -219,10 +219,13 @@ async function makeFillable(p, opts, ctx) {
   return { path: out, note: `Added ${k} field${k === 1 ? '' : 's'}` };
 }
 async function enhanceScan(pdfIn, opts, ctx) {
-  const pages = (await pdfInfo(pdfIn))?.pages || 1;
+  const { doc } = await require('./pdf').readPdf(pdfIn), pages = doc.countPages();
   let straight = 0;
   for (let i = 1; i <= pages; i++) {
-    try { await pdfScript([openDoc(pdfIn), { tool: 'page_enhance_camera', args: { doc: 1, page: i, mode: opts.mode || 'greyscale' } }, { tool: 'doc_save', args: { doc: 1 } }], ctx, `Straightening page ${i} of ${pages}`); straight++; } catch (_) {}
+    const [x0, y0, x1, y1] = doc.loadPage(i - 1).getBounds(), w = x1 - x0, h = y1 - y0;
+    const enhance = (more) => pdfScript([openDoc(pdfIn), { tool: 'page_enhance_camera', args: { doc: 1, page: i, mode: opts.mode || 'greyscale', ...more } }, { tool: 'doc_save', args: { doc: 1 } }], ctx, `Straightening page ${i} of ${pages}`);
+    // A flat scan has no desk edges to find: the whole page is the document, so the look still applies.
+    try { await enhance({}); straight++; } catch (_) { await enhance({ corners: [0, 0, w, 0, w, h, 0, h] }).catch(() => {}); }
   }
   return straight;
 }
@@ -258,7 +261,7 @@ async function photoRun(p, cmds, suffix, ctx, label) {
 const autoTone = (p, opts, ctx) => photoRun(p, [['image.autoTone']], '-autotone', ctx, 'Balancing tones');
 const sharpenPhoto = (p, opts, ctx) => photoRun(p, [['filter.sharpen.smartSharpen', { amount: Number(opts.amount) || 120, radius: Number(opts.radius) || 1.5, reduceNoise: 10 }]], '-sharpened', ctx, 'Sharpening');
 const denoisePhoto = (p, opts, ctx) => photoRun(p, [['filter.noise.reduceNoise', { strength: Number(opts.strength) || 10, preserveDetails: 30, reduceColorNoise: 80, sharpenDetails: 0, removeJpegArtifact: true }]], '-denoised', ctx, 'Reducing noise');
-const liftShadows = (p, opts, ctx) => photoRun(p, [['image.adjustments.shadowsHighlights', { shadowAmount: Number(opts.amount) || 50, highlightAmount: 10 }]], '-shadows', ctx, 'Brightening shadows');
+const liftShadows = (p, opts, ctx) => photoRun(p, [['image.adjustments.shadowsHighlights', { shadowAmount: Number(opts.amount ?? 50), highlightAmount: 10 }]], '-shadows', ctx, 'Brightening shadows');
 const LOOKS = { oil: 'filter.stylize.oilPaint', watercolor: 'filter.gallery.watercolor', poster: 'filter.gallery.cutout', ink: 'filter.gallery.inkOutlines', pencil: 'filter.gallery.coloredPencil' };
 const paintPhoto = (p, opts, ctx) => photoRun(p, [[LOOKS[opts.look] || LOOKS.oil]], `-${LOOKS[opts.look] ? opts.look : 'oil'}`, ctx, 'Painting');
 // Crop and Straighten opens one new document per photo it finds; each is saved in turn until there is no next one.
@@ -312,7 +315,7 @@ async function straightenPhoto(p, opts, ctx) {
   return { path: out, note: `Turned ${Math.abs(r.angle).toFixed(1)}° ${r.angle > 0 ? 'clockwise' : 'counter-clockwise'} and cropped` };
 }
 async function removeDust(p, opts, ctx) {
-  const { out, lines } = await lightRun(p, [['spot.findDust', `sensitivity=${Number(opts.sensitivity) || 50}`]], '-clean', ctx, 'Removing dust');
+  const { out, lines } = await lightRun(p, [['spot.findDust', `sensitivity=${Number(opts.sensitivity ?? 50)}`]], '-clean', ctx, 'Removing dust');
   const n = lines.find((j) => j.command === 'spot.findDust')?.result?.added || 0;
   if (!n) { await fsp.rm(out, { force: true }); throw new Error('No dust spots were found.'); }
   return { path: out, note: `${plural(n, 'spot')} healed` };
