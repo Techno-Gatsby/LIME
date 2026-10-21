@@ -58,7 +58,9 @@ const MORE = {
   volume: 'M4 9h4l5-4v14l-5-4H4zM16.5 9a4 4 0 010 6M19 6.5a8 8 0 010 11',
   transition: 'M4 6h8v12H4zM12 6l8 12M20 6l-8 12',
   magic: 'M5 19L15 9M14 4v3M17.5 5.5l-2 2M19 9h-3M10 4.5l1 1.5',
-  folderOut: 'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2zM12 10v6M9 13l3 3 3-3',
+  lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 017 0v3',
+  unlock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 016.8-1.2',
+  fx: 'M5 19L19 5M7 5v4M5 7h4M17 15v4M15 17h4',
 };
 const svg = (d, size) => `<svg class="ic ${size || ''}" viewBox="0 0 24 24" width="${size === 'sm' ? 16 : size === 'lg' ? 28 : 20}" height="${size === 'sm' ? 16 : size === 'lg' ? 28 : 20}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
 const COLORS = ['#000000', '#ffffff', '#d13438', '#ffb900', '#86c23a', '#107c10', '#0f6cbd', '#5c2e91'];
@@ -416,12 +418,33 @@ export function openEditor(view, { file, mode }, ctx) {
     }
   })();
 
-  return () => {
+  const dispose = () => {
+    if (st.disposed) return;
     st.disposed = true;
     document.removeEventListener('keydown', onKey);
     A.dispose?.();
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
+  // The working copies are thrown away when the window goes, however it is closed.
+  window.addEventListener('pagehide', dispose);
+  return dispose;
+}
+
+// Playback is a small video the app renders of the whole thing, once for each step. It is made while editing goes on;
+// if there has been a change by the time it is ready, it isn't played.
+async function prepare(E, el, state) {
+  if (state.preparing) return null;
+  const rev = E.st.sess.rev;
+  state.preparing = true;
+  el.classList.add('preparing');
+  E.tip('Preparing playback…', true);
+  const p = await E.call('preview', E.st.sess.id).catch((e) => { E.toast(clean(e), { type: 'error' }); return null; });
+  state.preparing = false;
+  el.classList.remove('preparing');
+  E.tip(null);
+  if (!p || rev !== E.st.sess?.rev) return null;
+  state.vid = { rev, path: p };
+  return p;
 }
 
 // ── Pages and artboards: a scrolling column of pages drawn by the app, with zoom, as in the PDF editor ─────────────
@@ -624,7 +647,7 @@ const BOARD_SIZES = [['same', 'Same as this one'], ['1080x1080', 'Square 1080 px
 const KIND_NAME = { Path: 'Path', CompoundPath: 'Compound path', 'Compound Path': 'Compound path', Group: 'Group', Type: 'Text', Image: 'Image', Rectangle: 'Rectangle', Ellipse: 'Ellipse', Polygon: 'Polygon', Star: 'Star', Line: 'Line' };
 function vectorApp(E) {
   const { st, ui } = E;
-  const v = { sel: [], ab: 0, shape: 'rect', fill: '#86c23a', stroke: null, weight: 2, font: '', size: 24, color: '#000000', preset: 'Auto Color', ignoreWhite: false, tolerance: 1, scale: 100, newBoard: 'same', drag: null };
+  const v = { sel: [], ab: 0, shape: 'rect', fill: '#0f6cbd', stroke: null, weight: 2, font: '', size: 24, color: '#000000', preset: 'Auto Color', ignoreWhite: false, tolerance: 1, scale: 100, newBoard: 'same', drag: null };
   const objs = () => st.model?.objects || [];
   const selected = () => objs().filter((o) => v.sel.includes(o.id));
   const boards = () => st.model?.artboards || [];
@@ -762,8 +785,15 @@ function vectorApp(E) {
           ['exp', 'expand', 'Expand', 'Bake live shapes, effects and text into plain paths', false, () => E.act('Expand', 'expand', { ids: ids() })],
           ['otx', 'textOutline', 'Outline text', 'Turn text into shapes', false, () => E.act('Outline text', 'outlineText', { ids: ids() })],
           ['cln', 'broom', 'Clean up', 'Remove stray points, empty paths and text', false, () => E.act('Clean up', 'cleanUp', {})],
-          ['shd', 'shadow', 'Shadow', 'Add a soft drop shadow', false, () => E.act('Drop shadow', 'shadow', { ids: ids() })],
         ]),
+        ui.group('Effects', ui.tiles([
+          ['shd', 'shadow', 'Shadow', 'Add a soft drop shadow', false, () => E.act('Drop shadow', 'shadow', { ids: ids() })],
+          ['glow', 'sun', 'Glow', 'Add an outer glow', false, () => E.act('Outer glow', 'effect', { ids: ids(), kind: 'glow' })],
+          ['round', 'square', 'Round corners', 'Round the corners', false, () => E.act('Round corners', 'effect', { ids: ids(), kind: 'round' })],
+          ['feather', 'circle', 'Feather', 'Soften the edges', false, () => E.act('Feather', 'effect', { ids: ids(), kind: 'feather' })],
+          ['rough', 'outline', 'Roughen', 'Make the edges rough, like hand-drawn', false, () => E.act('Roughen', 'effect', { ids: ids(), kind: 'roughen' })],
+          ['arc', 'simplify', 'Arc', 'Warp into an arc', false, () => E.act('Arc', 'effect', { ids: ids(), kind: 'arc' })],
+        ]), ui.tip('Effects stay live: Paths › Expand bakes them in.')),
         ui.group('Simplify', ui.slider('Tolerance', 0.2, 10, 0.1, v.tolerance, (n) => `${n} pt`, (n) => { v.tolerance = n; }), ui.row(ui.btn('Simplify', 'simplify', () => E.act('Simplify', 'simplify', { ids: ids(), tolerance: v.tolerance })))),
         ui.group('Pathfinder', ui.tiles([['unite', 'unite', 'Unite'], ['minusFront', 'minus', 'Minus front'], ['intersect', 'intersect', 'Intersect'], ['exclude', 'exclude', 'Exclude'], ['divide', 'divide', 'Divide']].map(([id, ic, l]) => [id, ic, l, `${l} the selected shapes`, !two, () => E.act(l, 'pathfinder', { ids: v.sel, kind: id })])), two ? null : ui.tip('Select two or more shapes (Shift-click) to combine them.'))];
     }
@@ -805,8 +835,12 @@ function vectorApp(E) {
   function selectPanel(sel) {
     const m = st.model;
     if (!sel.length) {
+      // Layers, with the eye and the lock as in the app's Layers panel.
+      const layers = h(`<div class="lyrs">${m.layers.map((l) => `<div class="lyr" style="padding-left:${6 + l.depth * 14}px"><button class="tb icon" data-ly="${l.id}" data-k="visible" title="${l.visible ? 'Hide' : 'Show'} ${esc(l.name)}">${E.icon(l.visible ? 'eye' : 'eyeOff', 'sm')}</button><button class="tb icon ${l.locked ? 'on' : ''}" data-ly="${l.id}" data-k="locked" title="${l.locked ? 'Unlock' : 'Lock'} ${esc(l.name)}">${E.icon(l.locked ? 'lock' : 'unlock', 'sm')}</button><span>${esc(l.name)}</span></div>`).join('')}</div>`);
+      layers.addEventListener('click', (e) => { const b = e.target.closest('[data-ly]'); if (!b) return; const l = m.layers.find((x) => x.id === Number(b.dataset.ly)); E.act(b.dataset.k === 'visible' ? (l.visible ? 'Hide layer' : 'Show layer') : (l.locked ? 'Unlock layer' : 'Lock layer'), 'layer', { id: l.id, [b.dataset.k]: !l[b.dataset.k] }); });
       return [ui.head('Artwork', `${plural(m.objects.length, 'object')}, ${plural(m.artboards.length, 'artboard')}`),
         ui.tip('Click something on the artboard to select it; Shift-click selects more. Drag to move, arrow keys nudge.'),
+        ui.group('Layers', layers),
         ui.group('Objects', ui.list(m.objects.map((o) => ({ id: o.id, text: o.text ? `“${o.text}”` : o.name.replace(/^<|>$/g, '') || KIND_NAME[o.kind] || o.kind, meta: KIND_NAME[o.kind] || o.kind, icon: o.kind === 'Type' ? 'textT' : o.kind === 'Group' ? 'layers' : o.kind === 'Image' ? 'image' : 'pen', swatch: /^#/.test(o.fill) ? o.fill : null })), (it, e) => select(e.shiftKey ? [...v.sel, it.id] : [it.id]), { empty: 'The artboards are empty.' }))];
     }
     const o = sel[0], one = sel.length === 1, text = one && o.kind === 'Type';
@@ -981,6 +1015,15 @@ function layoutApp(E) {
       return [ui.head(it.kind.replace(/^./, (c) => c.toUpperCase()), `${r1(it.w / MM)} × ${r1(it.h / MM)} mm`),
         ui.select('Fill', [['[None]', 'None'], ...swatchOptions()], it.fill, (sw) => E.act('Fill', 'itemFill', { ids: [it.id], swatch: sw })),
         ui.slider('Opacity', 0, 100, 1, 100, (n) => `${n}%`, (n) => E.act('Opacity', 'itemOpacity', { ids: [it.id], value: n })),
+        it.kind === 'image' ? ui.group('Fitting', ui.tiles([
+          ['fill', 'expand', 'Fill frame', 'Fill the frame, keeping the picture’s shape', false, () => E.act('Fill frame', 'fit', { ids: [it.id], mode: 'fillProportionally' })],
+          ['fit', 'fit', 'Fit picture', 'Show the whole picture, keeping its shape', false, () => E.act('Fit picture', 'fit', { ids: [it.id], mode: 'fitProportionally' })],
+          ['centre', 'frame', 'Centre', 'Centre the picture in the frame', false, () => E.act('Centre picture', 'fit', { ids: [it.id], mode: 'centerContent' })],
+          ['frame', 'artboard', 'Frame to picture', 'Resize the frame to the picture', false, () => E.act('Frame to picture', 'fit', { ids: [it.id], mode: 'fitFrameToContent' })],
+        ]), ui.row(ui.btn('Replace picture…', 'imageAdd', async () => {
+          const [f] = await E.api.invoke('dialog:open', { multi: false, filters: [{ name: 'Pictures', extensions: ['png', 'jpg', 'jpeg', 'tif', 'tiff', 'psd', 'pdf', 'svg', 'webp', 'gif'] }] });
+          if (f) E.act('Replace picture', 'replaceImage', { frame: it.id, file: f });
+        }))) : null,
         ui.row(ui.btn('Delete', 'delete', () => E.act('Delete', 'deleteItems', { ids: [it.id] }).then(() => { d.item = null; }), { danger: true }))];
     }
     if (tool === 'story') {
@@ -992,7 +1035,7 @@ function layoutApp(E) {
         ui.input('', d.q, (x) => { f.find = x; }, { placeholder: 'Find', key: 'dfind' }), ui.input('', '', (x) => { f.change = x; }, { placeholder: 'Change to', key: 'dchange' }),
         ui.toggle('Match case', false, (x) => { f.caseSensitive = x; }), ui.toggle('Whole words', false, (x) => { f.wholeWord = x; }), ui.toggle('Pattern (GREP)', false, (x) => { f.grep = x; }),
         ui.row(ui.btn('Find', 'search', () => runFind($('[data-k=dfind]', E.root()).value, f)), ui.btn('Change all', 'again', () => { const q = $('[data-k=dfind]', E.root()).value; if (q) E.act('Change text', 'findChange', { ...f, find: q, change: $('[data-k=dchange]', E.root()).value }).then(() => { d.finds = null; }); }, { primary: true })),
-        d.finds ? ui.group(d.finds.length ? plural(d.finds.length, 'match') : 'No matches', ui.list(d.finds.slice(0, 200).map((x) => ({ story: x.story, text: x.context, meta: `Page ${(items().find((y) => y.story === x.story)?.page ?? 0) + 1}`, icon: 'search' })), (x) => { const fr = items().find((y) => y.story === x.story); if (fr) { stage.scrollTo(fr.page); d.item = fr.id; E.selectTool('story'); openStory(fr.story); } })) : null];
+        d.finds ? ui.group(d.finds.length ? plural(d.finds.length, 'match', 'matches') : 'No matches', ui.list(d.finds.slice(0, 200).map((x) => ({ story: x.story, text: x.context, meta: `Page ${(items().find((y) => y.story === x.story)?.page ?? 0) + 1}`, icon: 'search' })), (x) => { const fr = items().find((y) => y.story === x.story); if (fr) { stage.scrollTo(fr.page); d.item = fr.id; E.selectTool('story'); openStory(fr.story); } })) : null];
     }
     if (tool === 'swatches') {
       const list = m.swatches.filter((w) => !w.locked && w.hex);
@@ -1025,11 +1068,26 @@ function layoutApp(E) {
     if (tool === 'preflight') {
       if (!d.preflight) { runPreflight(); return [ui.head('Preflight'), ui.tip('Checking…')]; }
       const r = d.preflight;
+      // Each problem, with the fix where there is one: clicking it shows where it is.
+      const fix = (x) => {
+        if (x.kind === 'overset' && x.item != null) return ['Grow the frame', () => E.act('Fit frame to text', 'fitFrame', { ids: [x.item] })];
+        if (x.kind === 'emptyText' && x.item != null) return ['Delete it', () => E.act('Delete frame', 'deleteItems', { ids: [x.item] })];
+        if (x.kind === 'rgbColor') { const sw = m.swatches.find((w) => w.name === x.message.replace(/^[^:]*: /, '')); if (sw) return ['Make it CMYK', () => E.act('Swatch to CMYK', 'swatch', { name: sw.name, color: sw.hex, cmyk: true })]; }
+        if (/^missingFont/.test(x.kind)) return ['Replace', () => E.selectTool('fonts')];
+        return null;
+      };
+      const list = h('<div class="issues"></div>');
+      for (const x of r.issues) {
+        const el = h(`<div class="issue ${x.severity === 'error' ? 'err' : ''}">${E.icon(x.severity === 'error' ? 'warning' : 'info', 'sm')}<div class="it"><span>${esc(x.message)}</span>${x.page != null ? `<small>Page ${x.page + 1}</small>` : ''}</div></div>`);
+        $('.it', el).addEventListener('click', () => { const it = items().find((y) => y.id === x.item); if (it) { E.selectTool('select'); pick(it); stage.scrollTo(it.page); } else if (x.page != null) stage.scrollTo(x.page); });
+        const f = fix(x);
+        if (f) el.append(ui.btn(f[0], null, f[1], { subtle: true }));
+        list.append(el);
+      }
       return [ui.head('Preflight', r.issues.length ? `${plural(r.errors || 0, 'error')}, ${plural(r.warnings || 0, 'warning')}` : 'No problems'),
-        r.issues.length ? ui.list(r.issues.map((x) => ({ page: x.page, text: x.message, meta: x.page != null ? `Page ${x.page + 1}` : '', warn: x.severity === 'error', icon: x.severity === 'error' ? 'warning' : 'info' })), (x) => { if (x.page != null) stage.scrollTo(x.page); }) : h(`<p class="okline">${E.icon('check', 'sm')}Ready to print: no overset text, missing fonts or links, or low-resolution pictures.</p>`),
+        r.issues.length ? list : h(`<p class="okline">${E.icon('check', 'sm')}Ready to print: no overset text, missing fonts or links, or low-resolution pictures.</p>`),
         ui.row(ui.num('Lowest picture resolution', d.minPpi, (n) => { d.minPpi = n || 150; }, { min: 50, unit: 'ppi' })),
-        ui.row(ui.btn('Check again', 'again', () => { d.preflight = null; E.drawProps(); })),
-        m.fonts.some((f) => f.missing) ? ui.group('Fix', ui.row(ui.btn('Replace missing fonts', 'textT', () => E.selectTool('fonts')))) : null];
+        ui.row(ui.btn('Check again', 'again', () => { d.preflight = null; E.drawProps(); }))];
     }
     return [];
   }
@@ -1041,7 +1099,7 @@ function layoutApp(E) {
   async function runFind(q, f = {}) {
     d.q = q;
     if (!q) return;
-    const res = await E.query('find', { find: q, ...f }).catch(() => []);
+    const res = await E.query('find', { ...f, find: q }).catch(() => []);
     // Each match with a little of the story around it.
     const stories = new Map(st.model.stories.map((s) => [s.id, s.preview || '']));
     d.finds = res.map((x) => ({ ...x, context: x.text + (stories.get(x.story) ? `  ·  ${stories.get(x.story).slice(0, 40)}` : '') }));
@@ -1083,6 +1141,8 @@ const COMP_SIZES = [['1920x1080', 'HD 1920 × 1080'], ['1280x720', 'HD 1280 × 7
 const SPEEDS = [['0.5', '0.5×'], ['0.75', '0.75×'], ['1.25', '1.25×'], ['1.5', '1.5×'], ['2', '2×']];
 const FPS = [['12', '12'], ['15', '15'], ['23.976', '23.976'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['60', '60']];
 const LABEL_COLORS = ['#b53838', '#e4d84c', '#a9cbc7', '#e5bcc9', '#a9a9ca', '#e7c19e', '#b3c7b3', '#677de0', '#4aa44c', '#8e2c9a', '#e8920d', '#7f452a', '#f46dd6', '#3da2a5', '#a89677', '#1e401e'];
+// A few of EffectCraft's effects for a layer, by id.
+const MOTION_EFFECTS = [['ec.blur.gaussian', 'Gaussian Blur'], ['ec.perspective.dropshadow', 'Drop Shadow'], ['ec.stylize.glow', 'Glow'], ['ec.color.tint', 'Tint'], ['ec.color.blackwhite', 'Black & White'], ['ec.color.huesaturation', 'Hue/Saturation'], ['ec.generate.fill', 'Fill'], ['ec.generate.stroke', 'Stroke'], ['ec.blur.radial', 'Radial Blur']];
 function motionApp(E) {
   const { st, ui } = E;
   const mo = { time: 0, layer: null, playing: false, frameUrl: null, want: null, transparent: false, vid: null };
@@ -1112,10 +1172,10 @@ function motionApp(E) {
   async function frame() {
     if (!st.sess || mo.playing) return;
     const c = comp(), t = Math.min(mo.time, Math.max(0, c.duration - 1 / c.fps)), side = Math.round(Math.min(1600, Math.max(canvas.clientWidth, canvas.clientHeight) * (window.devicePixelRatio || 1)));
-    const key = `${st.sess.rev}:${t.toFixed(3)}:${side}:${mo.transparent}`;
+    const key = `${st.sess.rev}:${t.toFixed(3)}:${side}:${alpha()}`;
     if (mo.want === key) return;
     mo.want = key;
-    const png = await E.call('render', st.sess.id, t, side, { transparent: mo.transparent }).catch(() => null);
+    const png = await E.call('render', st.sess.id, t, side, { transparent: alpha() }).catch(() => null);
     if (!png || mo.want !== key || E.st.disposed) return;
     const url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
     if (mo.frameUrl) URL.revokeObjectURL(mo.frameUrl);
@@ -1140,9 +1200,8 @@ function motionApp(E) {
   // Play: a small video of the whole animation, made once for each step.
   async function play() {
     if (mo.playing) { pause(); return; }
-    const p = mo.vid?.rev === st.sess.rev ? mo.vid.path : await E.busy('Preparing playback…', () => E.call('preview', st.sess.id));
+    const p = mo.vid?.rev === st.sess.rev ? mo.vid.path : await prepare(E, el, mo);
     if (!p) return;
-    mo.vid = { rev: st.sess.rev, path: p };
     if (video.dataset.src !== p) { video.src = mediaUrl(p); video.dataset.src = p; }
     mo.playing = true;
     el.classList.add('playing');
@@ -1171,7 +1230,11 @@ function motionApp(E) {
     if (m === 'play') play();
     if (m === 'start') seek(0);
   });
-  $('[data-m=alpha]', el).addEventListener('change', (e) => { mo.transparent = e.target.checked; canvas.classList.toggle('grid', mo.transparent); mo.want = null; frame(); });
+  // With no solid layer showing, the animation is transparent and the grid shows it; otherwise it can be asked for.
+  const clear = () => !(st.model?.layers || []).some((l) => l.kind === 'Solid' && l.enabled);
+  const alpha = () => mo.transparent || clear();
+  const syncAlpha = () => { const box = $('[data-m=alpha]', el); box.checked = alpha(); box.disabled = clear(); canvas.classList.toggle('grid', alpha()); };
+  $('[data-m=alpha]', el).addEventListener('change', (e) => { mo.transparent = e.target.checked; syncAlpha(); mo.want = null; frame(); });
   const scrub = (e) => { const r = ruler.getBoundingClientRect(); seek(((e.clientX - r.left) / r.width) * comp().duration); };
   $('.tl', el).addEventListener('pointerdown', (e) => {
     if (e.target.closest('.lrow .name, .lrow button')) return;
@@ -1204,7 +1267,7 @@ function motionApp(E) {
     const r = e.target.closest('.lrow .name');
     if (r) { mo.layer = Number(r.parentNode.dataset.id); drawRows(); if (st.tool !== 'layers') E.selectTool('layers'); else E.drawProps(); }
   });
-  const stage = { el, refresh: () => { fitCanvas(); drawRows(); mo.want = null; frame(); } };
+  const stage = { el, refresh: () => { fitCanvas(); drawRows(); syncAlpha(); mo.want = null; frame(); } };
   function panel(tool) {
     const m = st.model, c = m.comp;
     if (tool === 'layers') {
@@ -1217,6 +1280,8 @@ function motionApp(E) {
         ...(text ? [ui.input('Text', text.text, (t) => t !== text.text && E.act('Edit text', 'text', { layer: l.id, text: t }), { area: true, rows: 3 }), ui.label('Text colour'), ui.swatches(COLORS, text.fill, (col) => col && E.act('Text colour', 'text', { layer: l.id, fill: col })), ui.slider('Size', 6, 400, 1, Math.round(text.size || 48), (n) => `${n} px`, (n) => E.act('Text size', 'text', { layer: l.id, size: n }))] : []),
         ui.toggle('Visible', l.enabled, (on) => E.act(on ? 'Show layer' : 'Hide layer', 'visible', { layer: l.id, value: on })),
         ui.slider('Opacity', 0, 100, 1, 100, (n) => `${n}%`, (n) => E.act('Opacity', 'opacity', { layer: l.id, value: n })),
+        ui.group('Effects', ui.select('', [['', 'Add an effect…'], ...MOTION_EFFECTS], '', (fx) => fx && E.act(MOTION_EFFECTS.find((x) => x[0] === fx)[1], 'effect', { layer: l.id, effect: fx })),
+          mo.presets?.length ? ui.select('', [['', 'Animate it in or out…'], ...mo.presets.map((x) => [x.id, x.name])], '', (id) => id && E.act(mo.presets.find((x) => x.id === id).name, 'preset', { layer: l.id, preset: id })) : null),
         ui.tip(`In ${r1(l.inPoint)} s, out ${r1(l.outPoint)} s${l.stretch !== 100 ? `, stretched ${Math.round(l.stretch)}%` : ''}.`),
         ui.row(ui.btn('Delete layer', 'delete', () => E.act('Delete layer', 'deleteLayer', { layer: l.id }).then((s) => { if (s) mo.layer = null; }), { danger: true }))];
     }
@@ -1230,7 +1295,9 @@ function motionApp(E) {
     if (tool === 'color') {
       return [ui.head('Colours', plural(m.colors.length, 'colour')), ui.tip('Every colour that isn’t animated: shape fills and strokes, text and solids. Pick a new one to change it everywhere.'),
         ui.recolor(m.colors.map((x) => ({ hex: x.hex, meta: x.uses.length > 1 ? plural(x.uses.length, 'use') : x.uses[0], title: x.uses.join(', ') })), (x, to) => E.act('Recolour', 'recolor', { from: x.hex, to })),
-        ui.group('Background', ui.row(ui.colorpick(c.background, (col) => E.act('Background', 'comp', { background: col }), 'Background colour')), ui.tip('Shown where nothing covers it. Renders with transparency leave it out.'))];
+        ui.group('Background', ui.row(ui.colorpick(c.background, (col) => E.act('Background', 'comp', { background: col }), 'Background colour')), ui.tip('Shown where nothing covers it. Renders with transparency leave it out.'),
+          m.layers.some((l) => l.kind === 'Solid') ? ui.toggle('Transparent background', clear(), (on) => E.act(on ? 'Transparent background' : 'Background shown', 'transparent', { on })) : null,
+          m.layers.some((l) => l.kind === 'Solid') ? ui.tip('Hides the solid layers behind the animation, so it can go over anything.') : null)];
     }
     if (tool === 'time') {
       const w = { start: r1(c.workStart), end: r1(c.workStart + c.workDuration) };
@@ -1269,7 +1336,7 @@ function motionApp(E) {
   }
   return {
     name: 'EffectCraft', icon: 'sparkle', stage, panel, keys, sync,
-    ready: () => { mo.time = comp().duration / 2; stage.refresh(); },
+    ready: () => { mo.time = comp().duration / 2; stage.refresh(); E.query('presets').then((l) => { mo.presets = l || []; }).catch(() => {}); },
     tools: [
       ['Edit', [['layers', 'layer', 'Layers', 'Click a layer to rename, hide or delete it.'], ['text', 'textT', 'Text', 'Change the words, font and colour of text layers.']]],
       ['Look', [['color', 'palette', 'Colours', 'Swap any colour for another, everywhere it’s used.']]],
@@ -1285,6 +1352,8 @@ function motionApp(E) {
 // ── FilmCraft timelines ─────────────────────────────────────────────────────────────────────────────────────────────
 const SEQ_SIZES = [['1920x1080', 'HD 1920 × 1080'], ['1280x720', 'HD 1280 × 720'], ['3840x2160', '4K 3840 × 2160'], ['1080x1920', 'Vertical 1080 × 1920'], ['1080x1080', 'Square 1080 × 1080'], ['custom', 'Custom']];
 const CLIP_COLORS = { Violet: '#8a6fd1', Iris: '#6f86d6', Caribbean: '#2aa198', Lavender: '#b48ae0', Cerulean: '#2f8fd8', Forest: '#3c8a3c', Rose: '#d6587a', Mango: '#e69a2e', Purple: '#9b4fc4', Blue: '#3c6fd8', Teal: '#2a9d9d', Magenta: '#cf4fb0', Tan: '#b8956a', Green: '#4caf50', Brown: '#8a5a3c', Yellow: '#d6c03c' };
+// A few of FilmCraft's video effects, by id.
+const FILM_EFFECTS = [['black_white', 'Black & White'], ['gaussian_blur', 'Gaussian Blur'], ['sharpen', 'Sharpen'], ['vignette', 'Vignette'], ['brightness_contrast', 'Brightness & Contrast'], ['tint', 'Tint'], ['horizontal_flip', 'Horizontal Flip'], ['mosaic', 'Mosaic'], ['drop_shadow', 'Drop Shadow'], ['camera_shake', 'Camera Shake'], ['light_leaks', 'Light Leaks'], ['rgb_split', 'RGB Split']];
 function filmApp(E) {
   const { st, ui } = E;
   const fm = { frame: 0, clip: null, zoom: null, playing: false, vid: null, frameUrl: null, want: null, thumbs: new Map(), trim: 1 };
@@ -1346,9 +1415,8 @@ function filmApp(E) {
   }
   async function play() {
     if (fm.playing) { pause(); return; }
-    const p = fm.vid?.rev === st.sess.rev ? fm.vid.path : await E.busy('Preparing playback…', () => E.call('preview', st.sess.id));
+    const p = fm.vid?.rev === st.sess.rev ? fm.vid.path : await prepare(E, el, fm);
     if (!p) return;
-    fm.vid = { rev: st.sess.rev, path: p };
     if (video.dataset.src !== p) { video.src = mediaUrl(p); video.dataset.src = p; }
     fm.playing = true;
     el.classList.add('playing');
@@ -1416,8 +1484,8 @@ function filmApp(E) {
     inner.style.width = `${Math.max(lanes.clientWidth, q.duration * k + 40)}px`;
     const step = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s * q.fps * k >= 70) || 600;
     $('.ruler', el).innerHTML = [...Array(Math.floor(q.duration / q.fps / step) + 1).keys()].map((i) => `<span class="tick" style="left:${i * step * q.fps * k}px">${Math.floor((i * step) / 60)}:${String((i * step) % 60).padStart(2, '0')}</span>`).join('') + (q.markers || []).map((mk) => `<i class="mk" style="left:${mk.at * k}px;--c:${CLIP_COLORS[mk.color] || mk.color || '#e69a2e'}" title="${esc(mk.name)}"></i>`).join('');
-    $('.heads', el).innerHTML = `<div class="rh"></div>${list.map((t) => `<div class="th ${t.kind}"><b>${esc(t.label)}</b><span>${esc(t.name)}</span></div>`).join('')}`;
-    $('.ltracks', el).innerHTML = list.map((t) => `<div class="lt ${t.kind}">${t.clips.map((c) => `<div class="clip ${t.kind} ${fm.clip === c.id ? 'sel' : ''} ${c.enabled ? '' : 'off'}" data-id="${c.id}" style="left:${c.start * k}px;width:${Math.max(2, c.duration * k - 1)}px;--c:${CLIP_COLORS[c.label] || '#6f86d6'}" title="${esc(`${c.name} · ${fmtTime(c.duration / q.fps)}${c.speed !== 1 ? ` · ${Math.round(c.speed * 100)}%` : ''}`)}">${t.kind === 'video' ? `<i class="th" style="${fm.thumbs.get(c.id) ? `background-image:url(${fm.thumbs.get(c.id)})` : ''}"></i>` : '<i class="wave"></i>'}<span class="cn">${esc(c.name)}</span><span class="cd">${esc(fmtTime(c.duration / q.fps))}${c.speed !== 1 ? ` · ${Math.round(c.speed * 100)}%` : ''}</span></div>`).join('')}${t.transitions.map((x) => `<i class="xf" style="left:${x.start * k}px;width:${Math.max(4, x.duration * k)}px" title="${esc(x.effect.replace(/_/g, ' '))}"></i>`).join('')}</div>`).join('');
+    $('.heads', el).innerHTML = `<div class="rh"></div>${list.map((t) => `<div class="th ${t.kind} ${(t.kind === 'video' ? !t.enabled : t.muted) ? 'off' : ''}"><b>${esc(t.label)}</b><span>${esc(t.name)}</span></div>`).join('')}`;
+    $('.ltracks', el).innerHTML = list.map((t) => `<div class="lt ${t.kind} ${(t.kind === 'video' ? !t.enabled : t.muted) ? 'off' : ''}">${t.clips.map((c) => `<div class="clip ${t.kind} ${fm.clip === c.id ? 'sel' : ''} ${c.enabled ? '' : 'off'}" data-id="${c.id}" style="left:${c.start * k}px;width:${Math.max(2, c.duration * k - 1)}px;--c:${CLIP_COLORS[c.label] || '#6f86d6'}" title="${esc(`${c.name} · ${fmtTime(c.duration / q.fps)}${c.speed !== 1 ? ` · ${Math.round(c.speed * 100)}%` : ''}`)}">${t.kind === 'video' ? `<i class="th" style="${fm.thumbs.get(c.id) ? `background-image:url(${fm.thumbs.get(c.id)})` : ''}"></i>` : '<i class="wave"></i>'}<span class="cn">${esc(c.name)}</span><span class="cd">${esc(fmtTime(c.duration / q.fps))}${c.speed !== 1 ? ` · ${Math.round(c.speed * 100)}%` : ''}</span></div>`).join('')}${t.transitions.map((x) => `<i class="xf" style="left:${x.start * k}px;width:${Math.max(4, x.duration * k)}px" title="${esc(x.effect.replace(/_/g, ' '))}"></i>`).join('')}</div>`).join('');
     drawHead();
   }
   // Clip pictures come from the clip's own media, from the middle of the part used.
@@ -1450,6 +1518,8 @@ function filmApp(E) {
           ui.tip('Later clips move up to close the gap, as with a ripple edit.')),
         ui.group('Speed', ui.seg([['50', '50%'], ['100', '100%'], ['150', '150%'], ['200', '200%']], String(Math.round(c.speed * 100)), (x) => E.act(`Speed ${x}%`, 'speed', { clips: [c.id], speed: Number(x) }), 'full')),
         video ? ui.group('Transition', ui.row(ui.btn('Dissolve in', 'transition', () => E.act('Cross dissolve', 'transition', { clip: c.id, edge: 'in' })), ui.btn('Dissolve out', 'transition', () => E.act('Cross dissolve', 'transition', { clip: c.id, edge: 'out' })))) : null,
+        video ? ui.group('Effects', ui.select('', [['', 'Add an effect…'], ...FILM_EFFECTS], '', (fx) => fx && E.act(FILM_EFFECTS.find((x) => x[0] === fx)[1], 'effect', { clips: [c.id], effect: fx })),
+          ui.row(ui.btn('Cut at scene changes', 'scissors', () => E.act('Scene edit detection', 'sceneCuts', { clips: [c.id] }), { title: 'Find the cuts inside this clip and split it there' }))) : null,
         !video ? ui.slider('Volume', -30, 12, 0.5, c.gain || 0, (n) => `${n > 0 ? '+' : ''}${n} dB`, (n) => E.act('Volume', 'gain', { clips: [c.id], db: n })) : null,
         ui.toggle('Enabled', c.enabled, () => E.act(c.enabled ? 'Disable clip' : 'Enable clip', 'enable', { clips: [c.id] })),
         ui.group('Order', ui.row(ui.btn('Move earlier', 'up', () => E.act('Move earlier', 'move', { clip: c.id, dir: 'earlier' })), ui.btn('Move later', 'down', () => E.act('Move later', 'move', { clip: c.id, dir: 'later' })))),
@@ -1477,7 +1547,9 @@ function filmApp(E) {
         ui.select('Frame rate', FPS.some(([f]) => Math.abs(Number(f) - q.fps) < 0.01) ? FPS : [[String(q.fps), r1(q.fps)], ...FPS], FPS.find(([f]) => Math.abs(Number(f) - q.fps) < 0.01)?.[0] || String(q.fps), () => {}, { key: 'sfps' }),
         ui.row(ui.btn('Apply', 'check', () => E.act('Sequence settings', 'sequence', { name: $('[data-k=sname]', E.root()).value, width: Number($('[data-k=sw]', E.root()).value), height: Number($('[data-k=sh]', E.root()).value), fps: Number($('[data-k=sfps]', E.root()).value) }), { primary: true })),
         ui.tip('Clips are scaled to fill the new frame size.'),
-        q.markers?.length ? ui.group('Markers', ui.list(q.markers.map((mk) => ({ text: mk.name || 'Marker', meta: fmtTime(mk.at / q.fps), swatch: CLIP_COLORS[mk.color] || '#e69a2e', at: mk.at })), (x) => seek(x.at))) : null];
+        ui.group('Tracks', ...tracks().map((t) => ui.toggle(`${t.label} ${t.name}`, t.kind === 'video' ? t.enabled : !t.muted, (on) => E.act(`${on ? 'Turn on' : 'Turn off'} ${t.label}`, 'track', t.kind === 'video' ? { track: t.id, enabled: on } : { track: t.id, muted: !on }))), ui.tip('A track turned off is left out of the picture or the sound.')),
+        ui.group('Markers', q.markers?.length ? ui.list(q.markers.map((mk) => ({ text: mk.name || 'Marker', meta: fmtTime(mk.at / q.fps), swatch: CLIP_COLORS[mk.color] || '#e69a2e', at: mk.at })), (x) => seek(x.at)) : null,
+          ui.row(ui.btn('Add a marker at the playhead', 'add', async () => { const r = await E.ask('Add marker', [{ key: 'name', label: 'Name', value: `Marker ${(q.markers?.length || 0) + 1}` }], 'Add'); if (r) E.act('Add marker', 'marker', { frame: fm.frame, name: r.name }); })))];
     }
     return [];
   }

@@ -12,7 +12,7 @@ const TICKS = 254016000000; // FilmCraft time units per second
 
 // "vectorcraft-cli: select.set: invalid parameters for `select.set`: no such object id 9" → "No such object id 9."
 function clean(msg) {
-  const s = String(msg || '').split(' — ').pop().replace(/^\w+-cli: /, '').replace(/^[a-zA-Z]+(\.[a-zA-Z0-9]+)+: /, '')
+  const s = String(msg || '').split(' — ').pop().replace(/^\w+-cli( [a-z-]+)?: /, '').replace(/^[a-zA-Z]+(\.[a-zA-Z0-9]+)+: /, '')
     .replace(/^invalid parameters for `[^`]+`: /, '').replace(/^command `[^`]+` is not available right now: /, '').replace(/^edit failed: /, '').trim();
   return s ? `${s[0].toUpperCase()}${s.slice(1)}${/[.!?)]$/.test(s) ? '' : '.'}` : 'The app couldn’t finish.';
 }
@@ -41,6 +41,8 @@ const families = async () => (fontFamilies ||= (await vrun(null, [['text.fontLis
 const sel = (p) => (p.ids?.length ? [['select.set', { ids: p.ids }]] : [['select.all']]);
 const ARRANGE = { front: 'bringToFront', forward: 'bringForward', backward: 'sendBackward', back: 'sendToBack' };
 const PATHFINDER = ['unite', 'minusFront', 'intersect', 'exclude', 'divide'];
+// Live effects with the app's own defaults.
+const VECTOR_EFFECTS = { glow: 'stylize.outerGlow', round: 'stylize.roundCorners', feather: 'stylize.feather', roughen: 'distort.roughen', blur: 'blur.gaussian', arc: 'warp.arc' };
 const VECTOR_OPS = {
   recolor: (p) => [['select.all'], ['recolor.apply', { map: p.map }]],
   grayscale: (p) => [...sel(p), ['edit.colors.toGrayscale', {}]],
@@ -68,6 +70,8 @@ const VECTOR_OPS = {
   outlineText: (p) => [...(p.ids?.length ? [['select.set', { ids: p.ids }]] : [['select.object.textObjects']]), ['type.createOutlines', {}]],
   cleanUp: () => [['object.path.cleanUp', {}]],
   shadow: (p) => [...sel(p), ['effect.apply', { effect: 'stylize.dropShadow', params: { opacity: 50, x: 4, y: 4, blur: 6, color: '#000000' } }]],
+  effect: (p) => [...sel(p), ['effect.apply', { effect: VECTOR_EFFECTS[p.kind] || VECTOR_EFFECTS.glow }]],
+  layer: (p) => [['layer.setProps', { ids: [p.id], ...(p.visible != null ? { visible: !!p.visible } : {}), ...(p.locked != null ? { locked: !!p.locked } : {}) }]],
   addText: (p) => [['text.create', { x: Number(p.x), y: Number(p.y), text: String(p.text || 'Text'), size: Number(p.size) || 24, ...(p.font ? { font: p.font } : {}), color: p.color || '#000000' }]],
   setText: (p) => [['text.setText', { id: p.id, text: String(p.text ?? '') }]],
   textStyle: (p) => [['text.setStyle', { ids: p.ids, ...(p.font ? { font: p.font } : {}), ...(p.size ? { size: Number(p.size) } : {}), ...(p.color ? { fill: p.color } : {}) }]],
@@ -174,6 +178,10 @@ const DESIGN_OPS = {
   deleteItems: (p) => [['edit.clear', { ids: p.ids }]],
   itemFill: (p) => [['object.fill', { ids: p.ids, swatch: p.swatch }]],
   itemOpacity: (p) => [['object.opacity', { ids: p.ids, opacity: Math.max(0, Math.min(1, Number(p.value) / 100)) }]],
+  // Overset text: the frame grows down until the story fits.
+  fitFrame: (p) => [['object.textFrameOptions', { ids: p.ids, autoSize: 'heightOnly' }]],
+  fit: (p) => [['object.fit', { ids: p.ids, mode: ['fillProportionally', 'fitProportionally', 'centerContent', 'fitFrameToContent', 'fitContentToFrame'].includes(p.mode) ? p.mode : 'fitProportionally' }]],
+  replaceImage: (p) => [['file.place', { path: p.file, frame: p.frame }], ['object.fit', { ids: [p.frame], mode: 'fillProportionally' }]],
 };
 const design = {
   native: 'designcraft',
@@ -208,7 +216,7 @@ const design = {
     const fn = DESIGN_OPS[op];
     if (!fn) throw new Error(`Unknown edit ${op}`);
     // A CMYK swatch stays CMYK, so a print document doesn't gain RGB colours.
-    if (op === 'swatch' && /^#[0-9a-f]{6}$/i.test(p.color) && (docJson(cur).swatches || []).find((w) => w.name === p.name)?.value?.color?.model === 'cmyk') {
+    if (op === 'swatch' && /^#[0-9a-f]{6}$/i.test(p.color) && (p.cmyk || (docJson(cur).swatches || []).find((w) => w.name === p.name)?.value?.color?.model === 'cmyk')) {
       const [r, g, b] = hexRgb(p.color), k = 1 - Math.max(r, g, b), pc = (x) => Math.round((k >= 1 ? 0 : (1 - x - k) / (1 - k)) * 1000) / 10;
       p = { ...p, color: { c: pc(r), m: pc(g), y: pc(b), k: Math.round(k * 1000) / 10 } };
     }
@@ -328,6 +336,11 @@ async function ecScript(file, code, saveAs) {
   try { v = JSON.parse(line); if (typeof v === 'string' && /^[[{]/.test(v)) v = JSON.parse(v); } catch (_) {}
   return v;
 }
+let ecFonts = null;
+async function motionFamilies() {
+  if (!ecFonts) { try { ecFonts = (JSON.parse((await exec('effectcraft', ['--empty', 'exec', 'text.fonts', '--json'])).stdout).families || []).map((f) => f.family); } catch (_) { ecFonts = []; } }
+  return ecFonts;
+}
 const ecRun = (file, saveAs, cmds) => exec('effectcraft', ['--project', file, '--save-as', saveAs, 'run', ...cmds.flatMap(([id, p]) => [id, JSON.stringify(p || {})])]);
 const MOTION_RENDER = { mp4: ['h264'], mov: ['prores'], webm: ['webm'], gif: ['gif'] };
 const motion = {
@@ -352,6 +365,7 @@ const motion = {
     if (op === 'recolor') { const n = await ecScript(cur, jsxRecolor(p.from, p.to), next); return n ? {} : { unchanged: true, note: 'Nothing has that colour' }; }
     if (op === 'speed') { await ecScript(cur, jsxSpeed(Number(p.factor) || 1), next); return { note: `${Number(p.factor)}× speed` }; }
     if (op === 'text') { if (!(await ecScript(cur, jsxText(p), next))) throw new Error('That text layer isn’t there any more.'); return {}; }
+    if (op === 'transparent' && !(m?.layers || []).some((l) => l.kind === 'Solid')) return { unchanged: true, note: 'There’s no background layer: the animation is already transparent.' };
     const cmds = {
       comp: () => [['comp.settings', { ...(p.width ? { width: Math.round(p.width) } : {}), ...(p.height ? { height: Math.round(p.height) } : {}), ...(p.fps ? { frameRate: Number(p.fps) } : {}), ...(p.duration ? { duration: Number(p.duration) } : {}), ...(p.background ? { background: p.background } : {}), anchor: 4 }]],
       trim: () => [['comp.workArea', { start: Number(p.start) || 0, end: Number(p.end) }], ['comp.trimToWorkArea', {}]],
@@ -360,10 +374,18 @@ const motion = {
       opacity: () => [['layer.setTransform', { layers: [p.layer], prop: 'opacity', value: Number(p.value) }]],
       rename: () => [['layer.rename', { layer: p.layer, name: String(p.name) }]],
       reverse: () => [['layer.timeReverse', { layers: all }]],
+      effect: () => [['effect.apply', { effect: String(p.effect), layers: [p.layer] }]],
+      preset: () => [['anim.applyBuiltinPreset', { preset: String(p.preset), layers: [p.layer] }]],
+      // A transparent background: the solid layers behind everything are hidden (or shown again).
+      transparent: () => [['layer.setSwitch', { layers: (m?.layers || []).filter((l) => l.kind === 'Solid').map((l) => l.id), switch: 'video', value: !p.on }]],
     }[op];
     if (!cmds) throw new Error(`Unknown edit ${op}`);
     await ecRun(cur, next, cmds());
     return {};
+  },
+  async query(s, file, what) {
+    if (what === 'presets') return JSON.parse((await exec('effectcraft', ['--project', file, 'exec', 'anim.builtinPresets', '--json'])).stdout || '[]').filter((x) => x.category === 'Transitions');
+    throw new Error(`Unknown query ${what}`);
   },
   async render(s, file, time, maxSide, out, opts = {}) {
     await exec('effectcraft', ['--project', file, 'render-frame', '--time', String(Math.max(0, Number(time) || 0)), '--max-side', String(Math.round(Math.max(64, Math.min(4096, maxSide)))), '--out', out, ...(opts.transparent ? ['--transparent'] : [])]);
@@ -422,7 +444,7 @@ const film = {
     s.sequence = q.id;
     const fr = q.settings?.frame_rate || { num: 24, den: 1 }, fps = fr.num / fr.den;
     const track = (kind) => (t, i) => ({
-      id: t.id, kind, label: `${kind === 'video' ? 'V' : 'A'}${i + 1}`, name: t.name, muted: !!t.muted, locked: !!t.locked, syncLock: t.syncLock !== false,
+      id: t.id, kind, label: `${kind === 'video' ? 'V' : 'A'}${i + 1}`, name: t.name, muted: !!t.muted, enabled: t.enabled !== false, locked: !!t.locked, syncLock: t.syncLock !== false,
       clips: (t.items || []).map((c) => ({ id: c.clip, name: c.name, start: c.startFrame, end: c.endFrame, duration: c.durationFrames, item: c.item, link: c.link, speed: c.speed, reverse: !!c.reverse, enabled: c.enabled !== false, gain: c.gainDb || 0, sourceIn: c.sourceIn, sourceOut: c.sourceOut, label: c.label })),
       transitions: (t.transitions || []).map((x) => ({ id: x.id, effect: x.effect, from: x.from, to: x.to, start: frames(x.start, fps), duration: frames(x.duration, fps) })),
     });
@@ -449,7 +471,11 @@ const film = {
     else if (op === 'look') steps = [{ id: 'lumetri.applyPreset', params: { name: p.name, ...(p.clips?.length ? { clips: p.clips } : { clips: m.video.flatMap((t) => t.clips.map((c) => c.id)) }) } }];
     else if (op === 'transition') steps = [{ id: 'sequence.applyVideoTransition', params: { clip: p.clip, effect: p.effect || 'cross_dissolve', edge: p.edge === 'in' ? 'in' : 'out', frames: Math.round(m.fps) } }];
     else if (op === 'title') steps = [{ id: 'graphics.newText', params: { text: String(p.text || 'Title'), seconds: Number(p.seconds) || 3, time: at(p.frame || 0), size: Number(p.size) || 100 } }];
-    else if (op === 'sequence') steps = [{ id: 'sequence.settings', params: { ...(p.width ? { width: Math.round(p.width) } : {}), ...(p.height ? { height: Math.round(p.height) } : {}), ...(p.fps ? { fps: Number(p.fps) } : {}), ...(p.name ? { name: String(p.name) } : {}), scaleMotion: true } }];
+    else if (op === 'effect') steps = [{ id: 'effects.apply', params: { clips: p.clips, effect: String(p.effect) } }];
+    else if (op === 'sceneCuts') steps = [{ id: 'clip.sceneEditDetection', params: { clips: p.clips, applyCuts: true, wait: true } }];
+    else if (op === 'track') steps = [{ id: 'timeline.setTrack', params: { track: p.track, ...(p.muted != null ? { muted: !!p.muted } : {}), ...(p.enabled != null ? { enabled: !!p.enabled } : {}) } }];
+    else if (op === 'marker') steps = [{ id: 'markers.add', params: { target: 'program', time: at(p.frame || 0), name: String(p.name || 'Marker') } }];
+    else if (op === 'sequence') steps =[{ id: 'sequence.settings', params: { ...(p.width ? { width: Math.round(p.width) } : {}), ...(p.height ? { height: Math.round(p.height) } : {}), ...(p.fps ? { fps: Number(p.fps) } : {}), ...(p.name ? { name: String(p.name) } : {}), scaleMotion: true } }];
     else if (op === 'move') {
       // Swap the clip with its neighbour on the track: linked sound goes with it.
       const a = clipOf(p.clip);
@@ -459,7 +485,11 @@ const film = {
       const [first, second] = j < a.i ? [b, a.c] : [a.c, b];
       steps = unsync([{ id: 'timeline.move', params: { moves: [{ clip: second.id, track: a.t.id, time: at(first.start) }, { clip: first.id, track: a.t.id, time: at(first.start + second.duration) }], insert: false } }]);
     } else throw new Error(`Unknown edit ${op}`);
-    await frun(cur, [{ id: 'sequence.open', params: { item: s.sequence } }, ...steps], next);
+    const res = await frun(cur, [{ id: 'sequence.open', params: { item: s.sequence } }, ...steps], next);
+    if (op === 'sceneCuts') {
+      const n = (res[1]?.clips || []).reduce((a, c) => a + (c.cuts?.length || 0), 0);
+      return n ? { note: `Cut at ${plural(n, 'scene change')}` } : { unchanged: true, note: 'No scene changes were found in that clip.' };
+    }
     return {};
   },
   async query(s, file, what) {
@@ -532,7 +562,7 @@ async function open(file, app) {
   // Save keeps the original format where the app can write it, else the app's own.
   s.saveExt = A.writes.includes(s.ext) ? s.ext : A.native;
   sessions.set(s.id, s);
-  return state(s, { formats: A.formats, families: app === 'vectorcraft' || app === 'designcraft' ? await families() : [] });
+  return state(s, { formats: A.formats, families: app === 'effectcraft' ? await motionFamilies() : app === 'filmcraft' ? [] : await families() });
 }
 // One change at a time for each file: the next starts from what the last one made.
 function queue(s, fn) {
