@@ -163,6 +163,11 @@ function pushUndo(s) {
 async function undo(id) { const s = get(id); if (!s.undo.length) return info(s); s.redo.push(s.bytes); await loadState(s, s.undo.pop()); s.dirty = true; return info(s); }
 async function redo(id) { const s = get(id); if (!s.redo.length) return info(s); s.undo.push(s.bytes); await loadState(s, s.redo.pop()); s.dirty = true; return info(s); }
 
+// Turns a point of the page (y down) clockwise by deg about (cx, cy), as CSS rotate() does on screen.
+const turner = (deg, cx, cy) => {
+  const a = (deg * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a);
+  return deg ? (u, v) => [cx + (u - cx) * c - (v - cy) * sn, cy + (u - cx) * sn + (v - cy) * c] : (u, v) => [u, v];
+};
 // Ticks and crosses as strokes across a unit box; the editor draws the same ones.
 const MARK_LINES = { check: [[[0.1, 0.55], [0.4, 0.85], [0.92, 0.15]]], cross: [[[0.15, 0.15], [0.85, 0.85]], [[0.85, 0.15], [0.15, 0.85]]] };
 const BUILT_IN = ['sans', 'serif', 'mono', 'carlito', 'helvetica', 'times', 'courier', 'caveat', 'dancing'];
@@ -280,24 +285,27 @@ async function apply(id, edits) {
           const lh = size * (Number(e.lineHeight) || 1.2), sp = Number(e.spacing) || 0;
           const lines = str.split(/\r?\n/), widthOf = (ln) => font.widthOfTextAtSize(ln, size) + sp * Math.max(0, [...ln].length - 1);
           const boxW = Math.max(...lines.map(widthOf)), shift = { center: 0.5, right: 1 }[e.align] || 0;
+          // Turned text turns about the middle of its box, as the editor shows it.
+          const turn = turner(Number(e.rotate) || 0, e.x + boxW / 2, (e.y - size * 0.86 + e.y + (lines.length - 1) * lh + size * 0.28) / 2);
+          const at = (u, v) => map(...turn(u, v)), trot = degrees(angle - (Number(e.rotate) || 0));
           // A background colour behind the words, a little wider and taller than them, and a border around that with
           // rounded corners (how stamps are drawn).
           const bg = e.bg && e.bg !== 'none' ? P.hex(e.bg) : undefined, border = e.border && e.border !== 'none' ? P.hex(e.border) : undefined;
           const pad = size * 0.18, boxH = (lines.length - 1) * lh + size * 1.14 + pad * 2;
           if (border) {
-            const bw = Math.max(1, size / 12), W = boxW + pad * 2 + bw, H = boxH + bw, r = Math.min(size * 0.22, W / 2, H / 2), [ox, oy] = map(e.x - pad - bw / 2, e.y - size * 0.86 - pad - bw / 2);
+            const bw = Math.max(1, size / 12), W = boxW + pad * 2 + bw, H = boxH + bw, r = Math.min(size * 0.22, W / 2, H / 2), [ox, oy] = at(e.x - pad - bw / 2, e.y - size * 0.86 - pad - bw / 2);
             const d = `M${r} 0H${W - r}Q${W} 0 ${W} ${r}V${H - r}Q${W} ${H} ${W - r} ${H}H${r}Q0 ${H} 0 ${H - r}V${r}Q0 0 ${r} 0Z`;
-            page.drawSvgPath(d, { x: ox, y: oy, color: bg, opacity, borderColor: border, borderWidth: bw, borderOpacity: opacity, rotate: rot });
+            page.drawSvgPath(d, { x: ox, y: oy, color: bg, opacity, borderColor: border, borderWidth: bw, borderOpacity: opacity, rotate: trot });
           } else if (bg) {
-            const [bx, by] = map(e.x - pad, e.y + (lines.length - 1) * lh + size * 0.28 + pad);
-            page.drawRectangle({ x: bx, y: by, width: boxW + pad * 2, height: boxH, color: bg, opacity, rotate: rot });
+            const [bx, by] = at(e.x - pad, e.y + (lines.length - 1) * lh + size * 0.28 + pad);
+            page.drawRectangle({ x: bx, y: by, width: boxW + pad * 2, height: boxH, color: bg, opacity, rotate: trot });
           }
           if (sp) page.pushOperators(setCharacterSpacing(sp));
           lines.forEach((ln, i) => {
             const w = widthOf(ln), x0 = e.x + (boxW - w) * shift, base = e.y + i * lh;
-            const [x, y] = map(x0, base);
-            page.drawText(ln, { x, y, size, font, color, opacity, rotate: rot });
-            const rule = (dy) => { const [x1, y1] = map(x0, base + dy), [x2, y2] = map(x0 + w, base + dy); page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: size / 16, color, opacity }); };
+            const [x, y] = at(x0, base);
+            page.drawText(ln, { x, y, size, font, color, opacity, rotate: trot });
+            const rule = (dy) => { const [x1, y1] = at(x0, base + dy), [x2, y2] = at(x0 + w, base + dy); page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: size / 16, color, opacity }); };
             if (e.underline) rule(size * 0.12);
             if (e.strike) rule(-size * 0.3);
           });
@@ -330,8 +338,8 @@ async function apply(id, edits) {
             break;
           }
           const d = (MARK_LINES[e.kind] || MARK_LINES.check).map((ln) => ln.map(([u, v], j) => `${j ? 'L' : 'M'}${(u * w).toFixed(2)} ${(v * h).toFixed(2)}`).join('')).join('');
-          const [ax, ay] = map(x, y);
-          page.drawSvgPath(d, { x: ax, y: ay, borderColor: col, borderWidth: Number(e.width) || 2, borderOpacity: opacity, borderLineCap: LineCapStyle.Round, rotate: rot });
+          const [ax, ay] = map(...turner(Number(e.rotate) || 0, x + w / 2, y + h / 2)(x, y));
+          page.drawSvgPath(d, { x: ax, y: ay, borderColor: col, borderWidth: Number(e.width) || 2, borderOpacity: opacity, borderLineCap: LineCapStyle.Round, rotate: degrees(angle - (Number(e.rotate) || 0)) });
           break;
         }
         case 'rect': case 'ellipse': {
