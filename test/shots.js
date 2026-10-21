@@ -302,8 +302,8 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       if (e) {
         await settle();
         await tool('redeye');
-        await press(0.355, 0.24);
-        await press(0.18, 0.24);
+        await press(0.268, 0.5);
+        await press(0.356, 0.5);
         await settle();
         await shot('60-imgedit-redeye', e);
         await tool('heal');
