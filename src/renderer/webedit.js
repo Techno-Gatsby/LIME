@@ -1,5 +1,7 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, clean } from './ui.js';
 import * as L from './vendor/weblibs.js';
+import { indexBody, parseDoc, fmtCss, withManaged, decode, MANAGED } from './websource.js';
+import { designTools } from './webdesign.js';
 
 const VIEWS = [['split', 'Split', 'split', 'Design above, code below, kept in step'], ['design', 'Design', 'web', 'The page as it looks; click to select, double-click to type'], ['code', 'Code', 'code', 'The HTML, with colours, folding and search (Ctrl+F)'], ['preview', 'Preview', 'eye', 'The finished page, without its scripts']];
 const DEVICES = [['desktop', 'Desktop', 'desktop', ''], ['tablet', 'Tablet', 'tablet', '768px'], ['phone', 'Phone', 'phone', '375px']];
@@ -20,45 +22,13 @@ const SECTIONS = [
   ['layout', 'Layout', [['display', 'Show as', 'select', [['', 'As it is'], ['block', 'Block'], ['inline-block', 'Inline block'], ['inline', 'Inline'], ['flex', 'Row or column'], ['grid', 'Grid'], ['none', 'Hidden']]], ['flex-direction', 'Direction', 'select', [['', 'As it is'], ['row', 'Row'], ['column', 'Column']]], ['justify-content', 'Spread', 'select', [['', 'As it is'], ['flex-start', 'Start'], ['center', 'Centre'], ['flex-end', 'End'], ['space-between', 'Space between'], ['space-around', 'Space around']]], ['align-items', 'Line up', 'select', [['', 'As it is'], ['stretch', 'Stretch'], ['flex-start', 'Start'], ['center', 'Centre'], ['flex-end', 'End']]], ['gap', 'Gap', 'unit']]],
 ];
 const toHex = (c) => { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || ''); return m ? `#${m.slice(1, 4).map((x) => Number(x).toString(16).padStart(2, '0')).join('')}` : /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#000000'; };
-const KEYS = [['Document', [['Save', ['Ctrl', 'S']], ['Save as…', ['Ctrl', 'Shift', 'S']], ['Close', ['Ctrl', 'W']], ['Find and replace in the code', ['Ctrl', 'F']]]],
-  ['Edit', [['Undo', ['Ctrl', 'Z']], ['Redo', ['Ctrl', 'Shift', 'Z'], ['Ctrl', 'Y']], ['Copy and paste what is selected', ['Ctrl', 'C'], ['Ctrl', 'V']], ['Delete what is selected', ['Delete']], ['Type in text', ['Double-click']], ['Deselect', ['Esc']]]],
+const KEYS = [['Document', [['Save, with the stylesheets', ['Ctrl', 'S']], ['Save as…', ['Ctrl', 'Shift', 'S']], ['Close', ['Ctrl', 'W']], ['Find and replace', ['Ctrl', 'H']], ['Find in the code', ['Ctrl', 'F']], ['Preview in browser', ['F12']]]],
+  ['Edit', [['Undo', ['Ctrl', 'Z']], ['Redo', ['Ctrl', 'Shift', 'Z'], ['Ctrl', 'Y']], ['Copy and paste what is selected', ['Ctrl', 'C'], ['Ctrl', 'V']], ['Delete what is selected', ['Delete']], ['Insert an image', ['Ctrl', 'Alt', 'I']], ['More: cut, wrap, edit tag', ['Right-click']], ['Deselect', ['Esc']]]],
+  ['Text', [['Type in text', ['Double-click']], ['Bold, italic, underline', ['Ctrl', 'B'], ['Ctrl', 'I']], ['Link', ['Ctrl', 'K']], ['New paragraph', ['Enter']], ['Line break', ['Shift', 'Enter']]]],
   ['View', [['Split', ['Ctrl', '1']], ['Design', ['Ctrl', '2']], ['Code', ['Ctrl', '3']], ['Preview', ['Ctrl', '4']], ['Keyboard shortcuts', ['?']]]],
   ['Code', [['Indent or outdent', ['Tab'], ['Shift', 'Tab']], ['Fold a block', ['Ctrl', 'Shift', '[']], ['Unfold it', ['Ctrl', 'Shift', ']']], ['Comment out', ['Ctrl', '/']], ['Suggestions', ['Ctrl', 'Space']]]]];
 const plural = (n, w) => `${n} ${n === 1 ? w : `${w}s`}`;
 
-function parseDoc(src) {
-  const open = /<body\b[^>]*>/i.exec(src);
-  if (!open) return { whole: false, pre: '', body: src, post: '', styles: [] };
-  const end = open.index + open[0].length, close = src.toLowerCase().lastIndexOf('</body'), stop = close >= end ? close : src.length, pre = src.slice(0, end);
-  return { whole: true, pre, body: src.slice(end, stop), post: src.slice(stop), styles: [...pre.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)].map((m) => ({ at: m.index, len: m[0].length, text: m[1] })) };
-}
-function fmtCss(css) {
-  let out = '', depth = 0, q = null, paren = 0;
-  const nl = () => `\n${'  '.repeat(depth)}`;
-  for (const c of css) {
-    if (q) { out += c; if (c === q) q = null; continue; }
-    if (c === '"' || c === "'") { q = c; out += c; continue; }
-    if (c === '(') paren++;
-    if (c === ')') paren = Math.max(0, paren - 1);
-    if (paren) { out += c; continue; }
-    if (c === '{') { depth++; out = `${out.trimEnd()} {${nl()}`; } else if (c === ';') out += `;${nl()}`;
-    else if (c === '}') { depth = Math.max(0, depth - 1); out = `${out.trimEnd()}${nl()}}${nl()}`; } else out += c;
-  }
-  return out.split('\n').map((l) => l.trimEnd()).filter(Boolean).map((l) => `    ${l}`).join('\n');
-}
-function withCss(d, css) {
-  const tag = `<style>\n${css}\n  </style>`;
-  if (!d.whole) return `${tag}\n`;
-  let pre = d.pre;
-  if (d.styles.length) {
-    const [first, ...rest] = d.styles;
-    for (const s of rest.reverse()) pre = pre.slice(0, s.at) + pre.slice(s.at + s.len).replace(/^[ \t]*\r?\n/, '');
-    return pre.slice(0, first.at) + tag + pre.slice(first.at + first.len);
-  }
-  if (!css.trim()) return pre;
-  const i = pre.search(/<\/head\s*>/i);
-  return i >= 0 ? `${pre.slice(0, i)}  ${tag}\n${pre.slice(i)}` : pre.replace(/<body\b/i, `${tag}\n$&`);
-}
 function relPath(fromDir, file) {
   const a = fromDir.replace(/\\/g, '/').split('/').filter(Boolean), b = file.replace(/\\/g, '/').split('/').filter(Boolean);
   if (/^[a-z]:$/i.test(a[0] || '') && (a[0] || '').toLowerCase() !== (b[0] || '').toLowerCase()) return `file:///${file.replace(/\\/g, '/')}`;
@@ -114,7 +84,7 @@ export function openEditor(view, { file }, ctx) {
   const call = (m, ...a) => api.invoke('edit:call', 'web', m, ...a);
   for (const css of ['vendor/grapes.min.css', 'webedit.css']) if (!document.querySelector(`link[href="${css}"]`)) document.head.append(h(`<link rel="stylesheet" href="${css}">`));
   const st = { ready: false, busy: false, kind: 'html', ext: '', dir: dirOf(file), css: [], hist: [], at: -1, saved: null, savePath: null, view: 'split', device: 'desktop', tab: 0, doc: null, base: null, keep: [], designStale: true, previewStale: true, linkedStale: true, applying: false, loading: false, bom: false, disposed: false, problems: null, why: '', open: new Set(['text', 'size', 'spacing']) };
-  let gjs = null, cm = null, states = [], root, statusEl, codeT = null, designT = null, lang = null;
+  let gjs = null, cm = null, states = [], root, statusEl, codeT = null, designT = null, lang = null, mkState = null, D = null;
 
   const design = () => st.kind === 'html' && st.ext !== 'svg';
   const views = () => (design() ? VIEWS : VIEWS.filter(([v]) => v === 'code' || (v === 'preview' && ['md', 'svg'].includes(st.ext))));
@@ -140,7 +110,7 @@ export function openEditor(view, { file }, ctx) {
     $('.dirty', root).hidden = !dirty;
     $('[data-a=undo]', root).disabled = st.at <= 0;
     $('[data-a=redo]', root).disabled = st.at >= st.hist.length - 1;
-    $$('.we-tabs [data-tab]', root).forEach((b) => { const i = Number(b.dataset.tab); b.classList.toggle('edited', i > 0 && textOf(i) !== st.css[i - 1].text); });
+    $$('.we-tabs [data-tab]', root).forEach((b) => { const i = Number(b.dataset.tab); b.classList.toggle('edited', i > 0 ? textOf(i) !== (st.css[i - 1].saved ?? st.css[i - 1].text) : textOf(0) !== st.saved?.src); });
   }
   function commit(label) {
     const s = { ...snapshot(), label: label || st.why || 'Changed the page' };
@@ -167,11 +137,11 @@ export function openEditor(view, { file }, ctx) {
     clearTimeout(codeT);
     codeT = setTimeout(syncFromCode, 300);
   }
-  function syncFromCode() {
+  function syncFromCode(i = st.tab) {
     clearTimeout(codeT);
     codeT = null;
-    if (!commit(st.why || (st.tab ? `Edited ${nameOf(st.css[st.tab - 1].path)}` : 'Edited the code'))) return;
-    if (st.tab === 0) st.designStale = true; else st.linkedStale = true;
+    if (!commit(st.why || (i ? `Edited ${nameOf(st.css[i - 1].path)}` : 'Edited the code'))) return;
+    if (i === 0) st.designStale = true; else st.linkedStale = true;
     st.previewStale = true;
     refreshVisible();
     if ($('.we-props', root).dataset.on === 'page') drawPage();
@@ -192,7 +162,7 @@ export function openEditor(view, { file }, ctx) {
     ensureBase();
     let el = doc.getElementById('lime-linked');
     if (!el) { el = doc.createElement('style'); el.id = 'lime-linked'; doc.head.append(el); }
-    el.textContent = st.css.map((c, i) => rewriteUrls(textOf(i + 1), c.path)).join('\n');
+    el.textContent = st.css.map((c, i) => (c.linked === false ? '' : rewriteUrls(textOf(i + 1), c.path))).join('\n');
   }
   function ensureBase() {
     const doc = gjs?.Canvas.getDocument();
@@ -204,7 +174,7 @@ export function openEditor(view, { file }, ctx) {
   }
   function nameAll(c) {
     const tag = String(c.get('tagName') || '').toLowerCase();
-    if (tag && c !== gjs.getWrapper() && !c.get('name') && c.get('type') !== 'textnode') { const cls = String(c.getAttributes().class || '').split(/\s+/)[0]; c.set('name', `${TAG_NAMES[tag] || tag[0].toUpperCase() + tag.slice(1)}${cls ? ` .${cls}` : ''}`, { silent: true }); }
+    if (tag && c !== gjs.getWrapper() && !c.get('name') && c.get('type') !== 'textnode') { const cls = String(c.getAttributes().class || '').split(/\s+/)[0]; c.set('name', `${TAG_NAMES[tag] || tag[0].toUpperCase() + tag.slice(1)}${cls ? ` .${cls}` : ''}`); }
     c.components().forEach(nameAll);
   }
   function selPath() {
@@ -212,33 +182,111 @@ export function openEditor(view, { file }, ctx) {
     for (let c = gjs?.getSelected(); c && c.parent(); c = c.parent()) out.unshift(c.index());
     return out;
   }
+  const DATTR = 'data-lime-src', VOIDS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const htmlOpts = () => ({ attributes: (c, attrs) => { delete attrs[DATTR]; if (attrs.id && !c.get('attributes')?.id && !String(st.managedNow || '').includes(`#${attrs.id}`)) delete attrs.id; return attrs; } });
+  const attrsOf = (c) => { const a = { ...c.getAttrToHTML() }; return htmlOpts().attributes(c, a); };
+  const startKey = (c) => `${c.get('tagName')}|${JSON.stringify(Object.entries(attrsOf(c)).sort())}`;
+  const startTag = (c) => `<${String(c.get('tagName') || 'div').toLowerCase()}${Object.entries(attrsOf(c)).filter(([, v]) => v != null && v !== false).map(([k, v]) => (v === true ? ` ${k}` : ` ${k}="${String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"`)).join('')}>`;
+  const infoOf = (c) => { const i = c.get('attributes')?.[DATTR]; const x = i != null ? st.idx?.els[Number(i)] : null; return x && !x.bad ? x : null; };
+  const isElem = (c) => !['textnode', 'comment'].includes(c.get('type'));
+  const managedCss = () => gjs.Css.getAll().filter((r) => !st.baseRules.has(r.toCSS())).map((r) => r.toCSS()).filter(Boolean).join('\n');
+  const cleanLive = (html) => html.replace(/\sdata-(gjs-[\w-]+|lime-src)="[^"]*"/g, '').replace(/\sclass="gjs-[^"]*"/g, '');
+  function emitAll() {
+    st.managedNow = managedCss();
+    const o = htmlOpts(), ed = gjs.getEditing?.(), edEl = ed?.view?.getChildrenContainer?.(), body = st.idx.body, ranges = new Map(), parts = [];
+    let pos = 0;
+    const put = (x) => { parts.push(x); pos += x.length; };
+    const run = (nodes, from, to) => {
+      const html = nodes.map((n) => n.toHTML(o)).join('');
+      if (from != null && to != null && to >= from) { const raw = body.slice(from, to); if (raw === html || decode(raw) === decode(html)) return raw; }
+      return html;
+    };
+    const kids = (c, from, to) => {
+      let texts = [], prev = from;
+      for (const k of c.components().models) {
+        if (!isElem(k)) { texts.push(k); continue; }
+        const info = infoOf(k);
+        if (texts.length) put(run(texts, prev, info ? info.s : null));
+        else if (prev != null && info && info.s > prev && /^\s*$/.test(body.slice(prev, info.s))) put(body.slice(prev, info.s));
+        texts = [];
+        one(k);
+        prev = info ? info.e : null;
+      }
+      if (texts.length) put(run(texts, prev, to));
+      else if (prev != null && to != null && to > prev && /^\s*$/.test(body.slice(prev, to))) put(body.slice(prev, to));
+    };
+    const one = (c) => {
+      const start = pos, info = infoOf(c), tag = String(c.get('tagName') || '').toLowerCase(), live = c === ed && edEl;
+      if (info && tag === 'lime-keep') put(body.slice(info.s, info.e));
+      else if (info && !live && c.toHTML(o) === st.snap.get(c.cid)) put(body.slice(info.s, info.e));
+      else if (info) {
+        const same = startKey(c) === st.keyAt.get(c.cid) && !(String(st.managedNow).includes(`#${c.getId()}`) && !/\sid\s*=/i.test(body.slice(info.s, info.t)));
+        put(same ? body.slice(info.s, info.t) : startTag(c));
+        if (!VOIDS.has(tag)) {
+          if (live) put(cleanLive(edEl.innerHTML)); else if (!c.components().length && c.get('content')) put(String(c.get('content'))); else kids(c, info.t, info.u);
+          put(same ? body.slice(info.u, info.e) : `</${tag}>`);
+        }
+      } else if (live) put(`${startTag(c)}${cleanLive(edEl.innerHTML)}</${tag}>`);
+      else if (['video', 'map'].includes(c.get('type')) || (!c.components().length && c.get('content'))) put(c.toHTML(o));
+      else { put(startTag(c)); if (!VOIDS.has(tag)) { kids(c, null, null); put(`</${tag}>`); } }
+      ranges.set(c.cid, [start, pos]);
+    };
+    kids(gjs.getWrapper(), 0, body.length);
+    st.ranges = ranges;
+    st.lastEmit = parts.join('');
+    return st.lastEmit;
+  }
+  function snapAll() {
+    st.snap = new Map();
+    st.keyAt = new Map();
+    const o = htmlOpts(), w = gjs.getWrapper();
+    const walk = (c, parentInfo) => {
+      const info = infoOf(c);
+      if (c !== w) {
+        if (info && ((info.tag === 'script' ? 'lime-keep' : info.tag) !== String(c.get('tagName') || '').toLowerCase() || (parentInfo && info.parent !== parentInfo.idx))) info.bad = true;
+        st.snap.set(c.cid, c.toHTML(o));
+        st.keyAt.set(c.cid, startKey(c));
+      }
+      c.components().forEach((k) => walk(k, c === w ? null : infoOf(c)));
+    };
+    walk(w, null);
+  }
   function loadDesign() {
     if (!gjs) return;
-    const path = selPath(), d = parseDoc(textOf(0));
-    st.keep = [];
-    const body = d.body.replace(/<script\b[\s\S]*?<\/script\s*>/gi, (m) => `<lime-keep data-n="${st.keep.push(m) - 1}"></lime-keep>`);
+    const path = selPath(), d = parseDoc(textOf(0)), idx = indexBody(d.body);
     st.loading = true;
     try {
       ensureBase();
       gjs.select(null);
-      gjs.setComponents(body);
-      gjs.setStyle(d.styles.map((s) => s.text).join('\n'));
+      gjs.setStyle(d.styles.filter((x) => !x.managed).map((x) => x.text).join('\n'));
+      gjs.setComponents(idx.inst);
+      st.baseRules = new Set(gjs.Css.getAll().map((r) => r.toCSS()));
+      const managed = d.styles.filter((x) => x.managed).map((x) => x.text).join('\n');
+      if (managed.trim()) gjs.Css.addRules(managed);
       st.doc = d;
+      st.idx = idx;
+      st.managedNow = managedCss();
+      st.managedLoaded = st.managedNow;
       nameAll(gjs.getWrapper());
-      st.base = { body: exportBody(), css: exportCss() };
+      snapAll();
+      st.loadEmit = emitAll();
+      st.rangeBase = d.whole ? d.pre.length : 0;
+      st.codeAtDesign = textOf(0);
+      st.base = true;
       paintLinked();
       if (path.length) { let c = gjs.getWrapper(); for (const i of path) c = c?.components().at(i); if (c && c !== gjs.getWrapper()) gjs.select(c); }
     } finally { st.loading = false; }
     drawPanels();
     st.designStale = false;
   }
-  function exportBody() {
-    const ed = gjs.getEditing?.(), el = ed?.view?.getChildrenContainer?.();
-    if (ed && el) ed.__innerHTML = () => el.innerHTML.replace(/\sdata-gjs-[\w-]+="[^"]*"/g, '');
-    const css = exportCss(), attributes = (c, attrs) => { if (attrs.id && !c.get('attributes')?.id && !css.includes(`#${attrs.id}`)) delete attrs.id; return attrs; };
-    try { return gjs.getWrapper().getInnerHTML({ attributes }).replace(/<lime-keep\b[^>]*?data-n="(\d+)"[^>]*><\/lime-keep>/g, (m, n) => st.keep[n] ?? ''); } finally { if (ed) delete ed.__innerHTML; }
+  function composeFromDesign() {
+    const d = st.doc, b = emitAll(), body = b === st.loadEmit ? d.body : b, mc = st.managedNow, same = mc === st.managedLoaded;
+    const pre = same ? d.pre : withManaged(d, mc);
+    if (d.whole) { st.rangeBase = pre.length; return pre + body + d.post; }
+    const head = same ? '' : `<style ${MANAGED}>\n${fmtCss(mc, '  ')}\n</style>\n`;
+    st.rangeBase = head.length;
+    return head + body;
   }
-  const exportCss = () => String(gjs.getCss({ avoidProtected: true, keepUnusedStyles: true }) || '').trim();
   function onDesignEdit() {
     if (st.loading || !st.base) return;
     clearTimeout(designT);
@@ -248,11 +296,10 @@ export function openEditor(view, { file }, ctx) {
     clearTimeout(designT);
     designT = null;
     if (!gjs || !st.base || st.designStale) return;
-    const d = st.doc, b = exportBody(), c = exportCss(), body = b === st.base.body ? d.body : b;
-    const pre = c === st.base.css ? d.pre : withCss(d, fmtCss(c));
-    const src = d.whole ? pre + body + d.post : (c === st.base.css ? '' : pre) + body;
-    if (src === textOf(0)) return;
+    const src = composeFromDesign();
+    if (src === textOf(0) || textOf(0) !== st.codeAtDesign) return;
     setCode(0, src);
+    st.codeAtDesign = src;
     if (commit(st.why || 'Changed the design')) { st.previewStale = true; if (shows('preview')) refreshPreview(); }
   }
   function flush() {
@@ -395,7 +442,7 @@ export function openEditor(view, { file }, ctx) {
   }
   function drawPanels() {
     const tab = $('.we-props', root).dataset.on;
-    if (tab === 'page') drawPage(); else if (tab === 'style') drawStyle(); else drawElement();
+    if (tab === 'page') drawPage(); else if (tab === 'style') drawStyle(); else if (tab === 'css') D.cssDesigner($('.we-pane[data-pane=css]', root)); else D.inspector($('.we-pane[data-pane=element]', root));
   }
   const sel = () => gjs?.getSelected() || null;
   const nameOfComp = (c) => c?.getName?.() || 'Element';
@@ -430,33 +477,6 @@ export function openEditor(view, { file }, ctx) {
     drawStyle();
   }
   const propLabel = (prop) => SECTIONS.flatMap(([, , ps]) => ps).find(([p]) => p === prop)?.[1] || prop;
-  const ATTRS = { a: [['href', 'Link', 'https://… or page.html'], ['target', 'Opens in', 'seg', [['', 'Same tab'], ['_blank', 'New tab']]]], img: [['src', 'Picture', 'pick'], ['alt', 'Alt text', 'Describe the picture']], video: [['src', 'Video', 'pick'], ['poster', 'Poster', 'Optional']], iframe: [['src', 'Page', 'https://…']],
-    input: [['type', 'Kind', 'select', [['text', 'Text'], ['email', 'E-mail'], ['tel', 'Phone'], ['number', 'Number'], ['date', 'Date'], ['checkbox', 'Tick box'], ['password', 'Password']]], ['name', 'Name', 'Sent with the form'], ['placeholder', 'Placeholder', 'Optional']], textarea: [['name', 'Name', 'Sent with the form'], ['placeholder', 'Placeholder', 'Optional']],
-    button: [['type', 'Kind', 'select', [['submit', 'Send the form'], ['button', 'Plain button'], ['reset', 'Clear the form']]]], form: [['action', 'Send to', 'Address that receives it'], ['method', 'Method', 'select', [['get', 'GET'], ['post', 'POST']]]] };
-  function drawElement() {
-    const pane = $('.we-pane[data-pane=element]', root), c = sel();
-    if (!c) { pane.innerHTML = '<h3>Element</h3><p class="tip">Select something on the page to change its link, alt text, id and more.</p>'; return; }
-    const tag = String(c.get('tagName') || '').toLowerCase(), a = c.getAttributes() || {};
-    const val = (k) => (k === 'src' ? c.get('src') ?? a.src ?? '' : a[k] ?? '');
-    const field = ([k, label, ph, choices]) => {
-      if (ph === 'seg') return `<div class="field"><label class="label">${esc(label)}</label><div class="seg full" data-segattr="${k}">${choices.map(([v, l]) => `<button class="tb" data-v="${v}" aria-pressed="${String(val(k)) === v}">${esc(l)}</button>`).join('')}</div></div>`;
-      if (ph === 'select') return `<div class="field"><label class="label">${esc(label)}</label><select class="input" data-attr="${k}">${choices.map(([v, l]) => `<option value="${v}" ${String(val(k) || choices[0][0]) === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>`;
-      if (ph === 'pick') return `<div class="field"><label class="label">${esc(label)}</label><div class="we-pick"><input class="input" data-attr="${k}" value="${esc(String(val(k)).startsWith('data:') ? '' : val(k))}" placeholder="images/picture.jpg" spellcheck="false"><button class="btn" data-a="pick">Choose…</button></div></div>`;
-      return `<div class="field"><label class="label">${esc(label)}</label><input class="input" data-attr="${k}" value="${esc(val(k))}" placeholder="${esc(ph)}" spellcheck="false"></div>`;
-    };
-    pane.innerHTML = `<h3>${esc(nameOfComp(c))}</h3>${[...(ATTRS[tag] || []), ['id', 'Id', 'Optional, for links and styles'], ['title', 'Tooltip', 'Optional']].map(field).join('')}
-      <div class="field"><label class="label">Tag</label><p class="we-tag"><code>&lt;${esc(tag)}&gt;</code></p></div>`;
-  }
-  function setAttr(k, v) {
-    const c = sel();
-    if (!c) return;
-    const val = String(v ?? '').trim();
-    if (k === 'src' && ['image', 'video'].includes(c.get('type'))) c.set('src', val);
-    else if (val) c.addAttributes({ [k]: val }); else c.removeAttributes(k);
-    st.why = `Changed the ${({ href: 'link', src: 'source', alt: 'alt text', title: 'tooltip', target: 'link target' })[k] || k} of ${nameOfComp(c).toLowerCase()}`;
-    onDesignEdit();
-    drawElement();
-  }
   function drawPage() {
     const pane = $('.we-pane[data-pane=page]', root), src = textOf(0);
     const field = (k, label, ph) => `<div class="field"><label class="label">${label}</label><input class="input" data-head="${k}" value="${esc(headField(src, k))}" placeholder="${esc(ph)}" spellcheck="${k === 'lang' ? 'false' : 'true'}"></div>`;
@@ -473,14 +493,14 @@ export function openEditor(view, { file }, ctx) {
     const ext = kind === 'video' ? VIDEO_EXT : IMAGE_EXT;
     const [f] = await api.invoke('dialog:open', { multi: false, filters: [{ name: kind === 'video' ? 'Videos' : 'Pictures', extensions: ext }] });
     if (!f) return false;
-    comp.set('src', relPath(st.dir, f));
+    comp.set('src', relPath(st.dir, await call('copyInto', f, st.dir)));
     if (kind === 'image' && !comp.getAttributes().alt) comp.addAttributes({ alt: nameOf(f).replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') });
     return true;
   }
   function makeDesign(el) {
-    const keep = (ed) => ed.DomComponents.addType('lime-keep', { isComponent: (n) => n.tagName === 'LIME-KEEP', model: { defaults: { layerable: false, selectable: false, hoverable: false, highlightable: false, draggable: false, droppable: false, copyable: false, removable: false } } });
+    const keep = (ed) => { ed.DomComponents.addType('image', { model: { defaults: { resizable: { ratioDefault: true } } } }); ed.DomComponents.addType('lime-keep', { isComponent: (n) => n.tagName === 'LIME-KEEP', model: { defaults: { layerable: false, selectable: false, hoverable: false, highlightable: false, draggable: false, droppable: false, copyable: false, removable: false } } }); };
     gjs = L.grapesjs.init({
-      container: el, height: '100%', width: 'auto', fromElement: false, storageManager: false, noticeOnUnload: false, showOffsets: true, protectedCss: '', keepUnusedStyles: true, avoidInlineStyle: true, telemetry: false,
+      container: el, height: '100%', width: 'auto', fromElement: false, storageManager: false, noticeOnUnload: false, showOffsets: true, protectedCss: '', keepUnusedStyles: true, avoidInlineStyle: false, forceClass: false, telemetry: false,
       canvasCss: '.gjs-selected{outline:2px solid #3d8a28!important;outline-offset:-2px}.gjs-hovered{outline:1px dashed #3d8a28!important}',
       panels: { defaults: [] },
       canvas: { frameStyle: '* ::-webkit-scrollbar { width: 10px; height: 10px } * ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, .2); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box }' },
@@ -490,18 +510,22 @@ export function openEditor(view, { file }, ctx) {
       selectorManager: { componentFirst: true },
       deviceManager: { devices: DEVICES.map(([id, name, , width]) => ({ id, name, width, widthMedia: width ? `${parseInt(width, 10) + (id === 'tablet' ? 224 : 105)}px` : '' })) },
       assetManager: { upload: false },
+      richTextEditor: { actions: [] },
       plugins: [keep],
     });
     gjs.Commands.add('core:open-assets', { run: (ed, s, o = {}) => { if (o.target) pickInto(o.target, 'image'); } });
     for (const k of ['core:undo', 'core:redo']) gjs.Keymaps.remove(k);
     gjs.on('component:remove', (c) => { if (!st.loading) st.why = `Removed ${nameOfComp(c).toLowerCase()}`; });
     gjs.on('component:input', (c) => { st.why = `Typed in ${nameOfComp(c).toLowerCase()}`; });
-    gjs.on('component:add', (c) => { if (st.loading) return; nameAll(c); st.why = `Added ${nameOfComp(c).toLowerCase()}`; const t = c.get('type'); if ((t === 'image' || t === 'video') && !c.get('src')) setTimeout(() => pickInto(c, t), 50); });
+    gjs.on('component:add', (c) => { if (st.loading) return; nameAll(c); st.why = st.why || `Added ${nameOfComp(c).toLowerCase()}`; const t = c.get('type'); if ((t === 'image' || t === 'video') && !c.get('src') && !c.getAttributes().src) setTimeout(() => pickInto(c, t).then((ok) => { if (ok) onDesignEdit(); }), 50); });
+    gjs.on('rte:enable', () => { D.makeBar(gjs.RichTextEditor.getToolbarEl()); });
+    gjs.on('rte:disable', () => { const t = gjs.RichTextEditor.getToolbarEl(); if (t) t.innerHTML = ''; onDesignEdit(); });
+    gjs.on('component:deselected', (c) => { if (c?.view?.rteEnabled) c.view.disableEditing?.(); });
     gjs.on('update component:input component:update style:property:update', onDesignEdit);
-    gjs.on('component:selected', (c) => { try { gjs.Canvas.scrollTo(c, { behavior: 'smooth' }); } catch (_) {} });
+    gjs.on('component:selected', (c) => { try { gjs.Canvas.scrollTo(c, { behavior: 'smooth' }); } catch (_) {} if (shows('code') && st.tab === 0 && !cm?.hasFocus && !designT) showInCode(c, false); });
     gjs.on('component:toggled', () => { if (!st.loading) drawPanels(); });
-    gjs.on('canvas:frame:load', ({ window: w }) => w?.addEventListener('keydown', onKey));
-    return new Promise((ok) => gjs.on('load', ok));
+    gjs.on('canvas:frame:load', ({ window: w }) => { w?.addEventListener('keydown', onKey); setTimeout(() => D.hookFrame(), 0); });
+    return new Promise((ok) => gjs.on('load', () => { D.hookFrame(); ok(); }));
   }
   function makeCode(el, kinds) {
     lang = new L.Compartment();
@@ -522,7 +546,8 @@ export function openEditor(view, { file }, ctx) {
       L.syntaxHighlighting(HL()), L.bracketMatching(), L.closeBrackets(), L.autocompletion(), L.rectangularSelection(), L.crosshairCursor(), L.highlightActiveLine(), L.highlightSelectionMatches(), L.indentUnit.of('  '),
       L.keymap.of([...L.closeBracketsKeymap, ...L.defaultKeymap, ...L.searchKeymap, ...L.foldKeymap, ...L.completionKeymap, L.indentWithTab]), lang.of(langOf(k)), theme, L.EditorView.lineWrapping,
       L.EditorView.updateListener.of((u) => { if (u.docChanged && !st.applying) onCodeEdit(); })];
-    states = kinds.map(([text, k]) => L.EditorState.create({ doc: text, extensions: ext(k) }));
+    mkState = (text, k) => L.EditorState.create({ doc: text, extensions: ext(k) });
+    states = kinds.map(([text, k]) => mkState(text, k));
     cm = new L.EditorView({ state: states[0], parent: el });
   }
   function dragDivider(e) {
@@ -549,6 +574,7 @@ export function openEditor(view, { file }, ctx) {
     if (!r) return false;
     st.savePath = r.path;
     st.saved = s;
+    st.css.forEach((c, i) => { c.saved = s.css[i]; });
     updateChrome();
     toast(`Saved ${nameOf(r.path)}${r.css.length ? ` and ${plural(r.css.length, 'stylesheet')}` : ''}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', r.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', r.path) }] });
     return true;
@@ -585,15 +611,17 @@ export function openEditor(view, { file }, ctx) {
       </div>
       <div class="toolbar" role="toolbar" aria-label="Tools">
         <div class="tgroup we-views" role="group" aria-label="View"></div>
-        <div class="tgroup opt we-devices" role="group" aria-label="Width">${DEVICES.map(([id, label, ic]) => `<button class="tool" data-device="${id}" aria-pressed="${id === 'desktop'}" title="${label} width">${icon(ic)}<span class="lbl">${label}</span></button>`).join('')}</div>
-        <div class="tgroup opt we-pagetools" role="group" aria-label="Page"><button class="tool" data-a="format" title="Format: indent the code neatly">${icon('format')}<span class="lbl">Format</span></button><button class="tool" data-a="check" title="Check page: unclosed tags, duplicate ids, missing alt text and broken links">${icon('check')}<span class="lbl">Check page</span></button></div>
+        <div class="tgroup compact we-devices" role="group" aria-label="Width">${DEVICES.map(([id, label, ic]) => `<button class="tool" data-device="${id}" aria-pressed="${id === 'desktop'}" title="${label} width">${icon(ic)}<span class="lbl">${label}</span></button>`).join('')}</div>
+        <div class="tgroup opt we-designtools" role="group" aria-label="Insert"><button class="tool" data-a="insert" title="Insert: boxes, text, media, tables and forms">${icon('add')}<span class="lbl">Insert</span></button><button class="tool" data-a="image" title="Image: a picture from your computer (Ctrl+Alt+I)">${icon('image')}<span class="lbl">Image</span></button><button class="tool" data-a="watermark" title="Watermark: text or a picture over the page or a picture">${icon('stamp')}<span class="lbl">Watermark</span></button></div>
+        <div class="tgroup compact we-pagetools" role="group" aria-label="Page"><button class="tool" data-a="findall" title="Find and replace in this file or the whole site (Ctrl+H)">${icon('replace')}<span class="lbl">Find</span></button><button class="tool" data-a="check" title="Check page: unclosed tags, duplicate ids, missing alt text and broken links">${icon('check')}<span class="lbl">Check</span></button><button class="tool" data-a="browser" title="Preview in browser: saves, then opens the page (F12)">${icon('open')}<span class="lbl">Browser</span></button></div>
       </div>
     </header>
     <div class="ed-body we-body">
       <aside class="thumbs we-side" aria-label="Blocks and layers">
-        <div class="seg sidetabs"><button class="tb" data-stab="blocks" aria-pressed="true" title="Blocks to drag onto the page">${icon('blocks', 'sm')}<span class="lbl">Blocks</span></button><button class="tb" data-stab="layers" aria-pressed="false" title="Everything on the page, nested">${icon('layers', 'sm')}<span class="lbl">Layers</span></button></div>
+        <div class="seg sidetabs"><button class="tb" data-stab="blocks" aria-pressed="true" title="Blocks to drag onto the page">${icon('blocks', 'sm')}<span class="lbl">Blocks</span></button><button class="tb" data-stab="layers" aria-pressed="false" title="Everything on the page, nested">${icon('layers', 'sm')}<span class="lbl">Layers</span></button><button class="tb" data-stab="files" aria-pressed="false" title="The site’s files">${icon('folder', 'sm')}<span class="lbl">Files</span></button></div>
         <div class="pane we-blocks" data-spane="blocks"></div>
         <div class="pane we-layers" data-spane="layers" hidden></div>
+        <div class="pane we-files2" data-spane="files" hidden></div>
       </aside>
       <div class="we-stage">
         <div class="we-design"></div>
@@ -602,10 +630,11 @@ export function openEditor(view, { file }, ctx) {
         <div class="we-preview"><iframe sandbox="allow-same-origin" title="Preview"></iframe></div>
         <div class="ed-status" hidden></div>
       </div>
-      <aside class="props we-props" data-on="style" aria-label="Properties">
-        <div class="seg full we-ptabs"><button class="tb" data-ptab="style" aria-pressed="true">Style</button><button class="tb" data-ptab="element" aria-pressed="false">Element</button><button class="tb" data-ptab="page" aria-pressed="false">Page</button></div>
-        <div class="we-pane" data-pane="style"></div>
-        <div class="we-pane" data-pane="element" hidden></div>
+      <aside class="props we-props" data-on="element" aria-label="Properties">
+        <div class="seg full we-ptabs"><button class="tb" data-ptab="element" aria-pressed="true">Properties</button><button class="tb" data-ptab="style" aria-pressed="false">Style</button><button class="tb" data-ptab="css" aria-pressed="false">CSS</button><button class="tb" data-ptab="page" aria-pressed="false">Page</button></div>
+        <div class="we-pane" data-pane="style" hidden></div>
+        <div class="we-pane" data-pane="css" hidden></div>
+        <div class="we-pane" data-pane="element"></div>
         <div class="we-pane" data-pane="page" hidden></div>
       </aside>
     </div>
@@ -622,7 +651,7 @@ export function openEditor(view, { file }, ctx) {
     const tb = e.target.closest('[data-tab]');
     if (tb) { setTab(Number(tb.dataset.tab)); return; }
     const sp = e.target.closest('[data-stab]');
-    if (sp) { $$('[data-stab]', root).forEach((b) => b.setAttribute('aria-pressed', b === sp)); $$('[data-spane]', root).forEach((p) => { p.hidden = p.dataset.spane !== sp.dataset.stab; }); return; }
+    if (sp) { $$('[data-stab]', root).forEach((b) => b.setAttribute('aria-pressed', b === sp)); $$('[data-spane]', root).forEach((p) => { p.hidden = p.dataset.spane !== sp.dataset.stab; }); if (sp.dataset.stab === 'files') D.filesPanel($('.we-files2', root)); return; }
     const pt = e.target.closest('[data-ptab]');
     if (pt) { showProps(pt.dataset.ptab); return; }
     const ln = e.target.closest('[data-line]');
@@ -635,8 +664,6 @@ export function openEditor(view, { file }, ctx) {
     if (sec) { const id = sec.dataset.sec; if (st.open.has(id)) st.open.delete(id); else st.open.add(id); drawStyle(); return; }
     const sp2 = e.target.closest('[data-segprop] [data-v]');
     if (sp2) { const prop = sp2.closest('[data-segprop]').dataset.segprop; setStyle(prop, sp2.getAttribute('aria-pressed') === 'true' ? '' : sp2.dataset.v, propLabel(prop)); return; }
-    const sa = e.target.closest('[data-segattr] [data-v]');
-    if (sa) { setAttr(sa.closest('[data-segattr]').dataset.segattr, sa.dataset.v); return; }
     const op = e.target.closest('[data-open]');
     if (op) { if (!shows('code')) setView(design() ? 'split' : 'code'); setTab(Number(op.dataset.open)); return; }
     const a = e.target.closest('[data-a]')?.dataset.a;
@@ -646,7 +673,11 @@ export function openEditor(view, { file }, ctx) {
     if (a === 'redo') redo();
     if (a === 'history') history();
     if (a === 'help') help();
-    if (a === 'pick' && sel()) { const c = sel(); pickInto(c, c.get('type') === 'video' ? 'video' : 'image').then((okd) => { if (okd) { st.why = `Changed the picture of ${nameOfComp(c).toLowerCase()}`; onDesignEdit(); drawElement(); } }); }
+    if (a === 'insert') { const b = e.target.closest('[data-a]').getBoundingClientRect(); D.insertMenu({ x: b.left, y: b.bottom + 6 }); }
+    if (a === 'image') D.insertImage();
+    if (a === 'watermark') D.watermark();
+    if (a === 'findall') D.findReplace();
+    if (a === 'browser') previewInBrowser();
     if (a === 'addclass') { const b = e.target.closest('[data-a]'), inp = h('<input class="input chipin" placeholder="Class name" spellcheck="false">'); b.replaceWith(inp); inp.focus(); inp.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') inp.blur(); if (ev.key === 'Escape') { inp.value = ''; inp.blur(); } }); inp.addEventListener('blur', () => { const n = inp.value.trim().replace(/^\./, '').replace(/\s+/g, '-'); if (n && sel()) { sel().addClass(n); st.why = `Added the class .${n}`; onDesignEdit(); } drawStyle(); }); }
     if (a === 'save') save(false);
     if (a === 'saveas') save(true);
@@ -657,7 +688,6 @@ export function openEditor(view, { file }, ctx) {
   root.addEventListener('change', (e) => {
     const d = e.target.dataset || {};
     if (d.prop) { setStyle(d.prop, e.target.value, propLabel(d.prop)); return; }
-    if (d.attr) { setAttr(d.attr, e.target.value); return; }
     const k = d.head;
     if (!k) return;
     flush();
@@ -673,6 +703,9 @@ export function openEditor(view, { file }, ctx) {
     const c = e.ctrlKey || e.metaKey, k = e.key.toLowerCase(), t = e.target;
     if (c && k === 's') { e.preventDefault(); save(e.shiftKey); return; }
     if (c && k === 'w') { e.preventDefault(); close(); return; }
+    if ((c && k === 'h') || (c && e.shiftKey && k === 'f')) { e.preventDefault(); D.findReplace(); return; }
+    if (e.key === 'F12') { e.preventDefault(); previewInBrowser(); return; }
+    if (c && e.altKey && k === 'i' && design()) { e.preventDefault(); D.insertImage(); return; }
     if (c && !e.shiftKey && !e.altKey && ['1', '2', '3', '4'].includes(e.key)) { const v = VIEWS[Number(e.key) - 1]?.[0]; if (views().some(([x]) => x === v)) { e.preventDefault(); setView(v); } return; }
     const field = t?.matches?.('input, textarea, select') || t?.isContentEditable;
     if (e.key === '?' && !c && !field) { e.preventDefault(); help(); return; }
@@ -690,7 +723,8 @@ export function openEditor(view, { file }, ctx) {
       $('.we-tabs', root).innerHTML = [nameOf(file), ...d.css.map((c) => nameOf(c.path))].map((n, i) => `<button class="tb" data-tab="${i}" aria-pressed="${i === 0}" title="${esc(i ? d.css[i - 1].path : file)}">${icon(i ? 'code' : 'web', 'sm')}<span class="lbl">${esc(n)}</span></button>`).join('');
       $('.we-devices', root).hidden = !views().some(([v]) => v !== 'code');
       root.classList.toggle('code-only', !design());
-      $('.we-pagetools', root).hidden = !design();
+      $('.we-pagetools [data-a=check]', root).hidden = !design();
+      $('.we-designtools', root).hidden = !design();
       makeCode($('.we-cm', root), [[d.src, d.ext === 'md' ? 'md' : d.kind], ...d.css.map((c) => [c.text, 'css'])]);
       st.hist = [{ ...snapshot(), label: 'Opened' }];
       st.at = 0;
@@ -706,7 +740,62 @@ export function openEditor(view, { file }, ctx) {
     }
   })();
 
-  window.__web = { st, gjs: () => gjs, cm: () => cm, textOf, setCode, flush, setView, setTab, save, syncFromCode };
+  function addTab(path, text, kind) {
+    st.css.push({ path, text, href: null, linked: false });
+    states.push(mkState(text, kind));
+    const i = st.css.length;
+    $('.we-tabs', root).append(h(`<button class="tb" data-tab="${i}" aria-pressed="false" title="${esc(path)}">${icon('code', 'sm')}<span class="lbl">${esc(nameOf(path))}</span></button>`));
+    st.hist = st.hist.map((x) => ({ ...x, css: [...x.css, text] }));
+    st.saved = { ...st.saved, css: [...st.saved.css, text] };
+    return i;
+  }
+  async function openFile(p) {
+    const ext = (p.split('.').pop() || '').toLowerCase();
+    if (/^(html?|xhtml)$/.test(ext)) { if (p !== file) api.invoke('editor:open', p, 'web'); return; }
+    if (!['css', 'js', 'mjs', 'json', 'md', 'txt', 'svg', 'xml'].includes(ext)) { api.invoke('shell:open', p); return; }
+    let i = st.css.findIndex((c) => c.path === p) + 1;
+    if (!i) i = addTab(p, await call('readText', p), ext === 'mjs' ? 'js' : ext);
+    if (!shows('code')) setView(design() ? 'split' : 'code');
+    setTab(i);
+  }
+  function gotoRange(from, to, focus = true) {
+    if (!shows('code')) setView(design() ? 'split' : 'code');
+    setTab(0);
+    const n = cm.state.doc.length;
+    cm.dispatch({ selection: { anchor: Math.min(from, n), head: Math.min(to, n) }, scrollIntoView: true });
+    if (focus) cm.focus();
+  }
+  function showInCode(c, focus) {
+    const r = st.ranges?.get(c.cid);
+    if (!r || st.designStale) return false;
+    gotoRange(st.rangeBase + r[0], st.rangeBase + r[1], focus);
+    return true;
+  }
+  function inspect(c) {
+    flush();
+    if (!showInCode(c, true)) toast('Couldn’t find that in the code.');
+  }
+  async function previewInBrowser() {
+    flush();
+    if (!sameSnap(st.hist[st.at], st.saved) || !st.savePath) { if (!sameSnap(st.hist[st.at], st.saved) && !(await save(false))) return; }
+    api.invoke('shell:open', st.savePath || file);
+    tip(`Opened ${nameOf(st.savePath || file)} in your browser`);
+  }
+  function confirmBox(title, text) {
+    return new Promise((resolve) => {
+      const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2><p class="muted" style="margin:0">${esc(text)}</p></div><div class="foot"><button class="btn" data-a="no">Cancel</button><button class="btn primary" data-a="ok">OK</button></div></div></div>`);
+      document.body.append(s);
+      $('[data-a=ok]', s).focus();
+      s.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { s.remove(); resolve(false); } });
+      s.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) { s.remove(); resolve(a === 'ok'); } });
+    });
+  }
+  D = designTools({ st, api, call, icon, toast, tip, file, gjs: () => gjs, textOf, setCode, flush, onDesignEdit, drawPanels: () => drawPanels(), nameAll: (c) => nameAll(c), relPath, mediaUrl, dirUrl, htmlOpts, busy, syncFromCode, inspect, gotoRange, openFile, confirm: confirmBox });
+  D.bindInspector($('.we-pane[data-pane=element]', root));
+  D.bindDesigner($('.we-pane[data-pane=css]', root));
+  D.bindFiles($('.we-files2', root));
+
+  window.__web = { st, gjs: () => gjs, cm: () => cm, textOf, setCode, flush, setView, setTab, save, syncFromCode, D, openFile, inspect };
   const dispose = () => {
     if (st.disposed) return;
     st.disposed = true;

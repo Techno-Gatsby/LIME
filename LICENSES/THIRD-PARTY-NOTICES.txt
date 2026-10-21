@@ -26,6 +26,12 @@ Bundled engines
   @kenjiuno/decompressrtf .. BSD-2-Clause ; @xmldom/xmldom ... MIT
   Cubic-to-quadratic font outlines follow the approach of cu2qu (fontTools, Google) ... Apache-2.0
   Test suite only (not shipped): wawoff2 ... MIT (Google's WOFF2 reference build) ; cfb ... Apache-2.0
+  GrapesJS ................. BSD-3-Clause    Artur Arseniev and contributors  https://github.com/GrapesJS/grapesjs  (the web editor's Design view)
+  CodeMirror 6 ............. MIT             Marijn Haverbeke and others      https://codemirror.net  (with @lezer parsers, style-mod, w3c-keyname, crelt, MIT)
+  js-beautify .............. MIT             Einar Lielmanis and contributors https://github.com/beautifier/js-beautify
+  html-minifier-terser ..... MIT ; terser ... BSD-2-Clause ; clean-css ... MIT
+  Juice .................... MIT             Automattic                       https://github.com/Automattic/juice  (with cheerio, MIT)
+  Build only (not shipped as a package): esbuild ... MIT
   Electron / Chromium ...... MIT / BSD
   Noto Sans/Serif/Mono, Caveat, Dancing Script, Carlito fonts ... SIL Open Font License 1.1
   Noto Sans Arabic, Noto Sans Devanagari, Noto Sans Thai fonts ... SIL Open Font License 1.1
