@@ -478,6 +478,47 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('pdfcraft print check', 'print-check', ['doc.pdf'], {}, (o, r) => ok(/print|problem|warning/i.test(r[0].note), r[0].note));
   T('pdfcraft split at bookmarks', 'split-chapters', ['chapters.pdf'], {}, async ([o]) => { const pdfs = files(o).filter((f) => f.endsWith('.pdf')); ok(pdfs.length === 3, `chapters ${files(o)}`); for (const f of pdfs) await pages(path.join(o, f), 1); });
   T('pdfcraft comment summary', 'comment-summary', ['comments.pdf'], {}, async ([o]) => { const t = await pdfText(o); ok(t.includes('Check the total') && t.includes('Sign here please'), t.slice(0, 200)); });
+  const formCsv = path.join(OUT, 'form-data.csv');
+  fs.writeFileSync(formCsv, 'Full name,Date of birth,Agree,Colour\nAda Lovelace,10/12/1815,Yes,Green\n');
+  const pdfDoc = async (p) => (await E('pdf').readPdf(p)).doc;
+  T('pdfcraft header and footer', 'header-footer-pdf', ['doc.pdf'], { header_left: 'Lime handbook', footer_center: 'Page {page} of {pages}', size: 9 }, async ([o]) => { const t = await pdfText(o); ok(t.includes('Lime handbook') && t.includes('Page 1 of 3') && t.includes('Page 3 of 3'), t.slice(0, 300)); });
+  T('pdfcraft page background', 'background-pdf', ['doc.pdf'], { kind: 'color', color: '#00ff00', opacity: 100 }, async ([o]) => {
+    const { data, info } = await sharp(await E('pdf').thumbnail(o, 300).then((t) => t.png)).raw().toBuffer({ resolveWithObject: true });
+    const at = (x, y) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)];
+    const [r, g, b] = at(4, info.height - 5);
+    ok(g > 200 && r < 80 && b < 80, `margin is ${[r, g, b]}, not green`);
+    ok((await pdfText(o)).includes('Page 2'), 'the text went under the background');
+  });
+  T('pdfcraft properties', 'pdf-properties', ['doc.pdf'], { title: 'Lime report', author: 'Ada', subject: 'Testing', lang: 'en-GB', showTitle: true, navigation: 'bookmarks' }, async ([o]) => {
+    const d = await pdfDoc(o), root = d.getTrailer().get('Root');
+    ok(d.getMetaData('info:Title') === 'Lime report' && d.getMetaData('info:Author') === 'Ada' && d.getMetaData('info:Subject') === 'Testing', `info ${d.getMetaData('info:Title')} / ${d.getMetaData('info:Author')}`);
+    ok(root.get('Lang').asString() === 'en-GB', `language ${root.get('Lang')}`);
+    ok(root.get('ViewerPreferences').get('DisplayDocTitle').asBoolean() === true, 'the title is not shown in the window');
+    ok(root.get('PageMode').asName() === 'UseOutlines', `opens with ${root.get('PageMode')}`);
+  });
+  T('pdfcraft page labels', 'page-labels', ['doc.pdf'], { from: 1, to: 2, style: 'lower-roman', restart: true }, async ([o]) => { const d = await pdfDoc(o); same([0, 1, 2].map((i) => d.loadPage(i).getLabel()), ['i', 'ii', '1'], 'labels'); });
+  T('pdfcraft export form data', 'export-form-data', ['fillable.pdf'], { to: 'csv' }, ([o], r) => { const head = txt(o).split(/\r?\n/)[0]; ok(/Full name/.test(head) && /Agree/.test(head) && /Colour/.test(head), head); ok(/4 fields/.test(r[0].note), r[0].note); });
+  T('pdfcraft fill form from data', 'fill-form-data', ['fillable.pdf'], { data: formCsv }, async ([o]) => {
+    const v = Object.fromEntries((await pdfDoc(o)).loadPage(0).getWidgets().map((w) => [w.getName(), w.getValue()]));
+    same([v['Full name'], v.Agree, v.Colour], ['Ada Lovelace', 'Yes', 'Green'], 'filled values');
+  });
+  T('crop marks and bleed', 'printer-marks', ['doc.pdf'], { bleed: 3 }, async ([o]) => {
+    const page = (await pdfDoc(o)).loadPage(0), [m, t, b] = ['MediaBox', 'TrimBox', 'BleedBox'].map((k) => page.getBounds(k));
+    ok(Math.abs(t[2] - t[0] - 595) < 0.5 && Math.abs(t[3] - t[1] - 842) < 0.5, `trim ${t}`);
+    ok(Math.abs(t[0] - b[0] - 8.5) < 0.3, `bleed ${b} for trim ${t}`);
+    ok(m[2] - m[0] > 595 + 40, `sheet ${m}`);
+    // A crop mark sits in the top-left margin, outside the bleed.
+    const mu = await E('pdf').mupdf();
+    const { data, info } = await sharp(Buffer.from(page.toPixmap(mu.Matrix.scale(2, 2), mu.ColorSpace.DeviceRGB, false, true).asPNG())).raw().toBuffer({ resolveWithObject: true });
+    let dark = 0;
+    for (let y = 0; y < (t[1] + 1) * 2; y++) for (let x = 0; x < (t[0] + 1) * 2; x++) if (data[(y * info.width + x) * info.channels] < 200) dark++;
+    ok(dark > 10, `no crop mark in the corner (${dark} dark pixels)`);
+  });
+  T('bookmarks from headings', 'bookmark-headings', ['doc.pdf'], {}, async ([o], r) => {
+    const list = (await pdfDoc(o)).loadOutline() || [];
+    same(list.map((b) => [b.title, b.page]), [0, 1, 2].map((i) => [`Page ${i + 1} of the Lime test document`, i]), 'bookmarks');
+    ok(/3 bookmarks/.test(r[0].note), r[0].note);
+  });
   T('filmcraft split scenes', 'split-scenes', ['scenes.mp4'], {}, async ([o]) => { const clips = files(o).filter((f) => f.endsWith('.mp4')); ok(clips.length === 3, `clips ${files(o)}`); for (const f of clips) ok((await probe(path.join(o, f))).duration < 1.5, `${f} is longer than a shot`); });
   T('lightcraft hdr sets', 'hdr-batch', ['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng'], {}, async ([o]) => { const pics = files(o).filter((f) => /\.(jpe?g|png|tiff?)$/i.test(f)); ok(pics.length === 1, `merged ${files(o)}`); await fmt(path.join(o, pics[0])); });
   T('designcraft package', 'package-layout', ['layout.idml'], {}, ([o]) => { const all = files(o); ok(all.some((f) => f.endsWith('.idml')) && all.some((f) => f.endsWith('.pdf')) && all.includes('Links'), `packaged ${all}`); ok(files(path.join(o, 'Links')).length >= 1, 'no linked pictures'); });
@@ -1178,6 +1219,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'blur-faces': [['faces.png']], 'animation-speed': [['anim.gif']], 'gif-to-video': [['anim.gif']], 'extract-subtitles': [['subs.mkv']], 'burn-subtitles': [0, { subtitles: fx('sub.srt') }],
     'trim-media': [0, { end: '0.5' }], 'merge-media': [['tone.mp3', 'sweep.m4a']], 'add-audio': [['sweep.mp4', 'tone.wav']], 'render-motion': [0, { resolution: 'quarter' }],
     'merge-documents': [['doc.md', 'photo2.jpg']], 'merge-sheets': [['sheet.xlsx', 'sheet.csv']], 'json-to-sheet': [['data.json']], 'decompress-file': [['notes.txt.gz']], 'rename-files': [0, { pattern: '{name} {n}' }],
+    'export-form-data': [['fillable.pdf']], 'fill-form-data': [['fillable.pdf'], { data: formCsv }], 'background-pdf': [0, { image: fx('alpha.png') }],
     'overlay-pdf': [0, { overlay: fx('v1.pdf') }], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
   };
   // Choices that refuse this input on purpose: the same format again, several files into a one-file compressor, or ODT where
@@ -1200,7 +1242,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const PIXEL_EXT = new Set(['heic', 'heif', 'bmp', 'ico', 'icns', 'cur', 'jxl', 'jp2', 'tga', 'qoi', 'dds', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xpm', 'xbm', 'wbmp', 'psd']);
   const TEXT_EXT = { csv: /\S/, tsv: /\S/, txt: /\S/, md: /\S/, html: /<(html|body|table|p|div|h1)\b/i, srt: /-->/, vtt: /^\ufeff?WEBVTT/, ass: /\[Script Info\]/, lrc: /\[\d\d:\d\d/, sub: /^\{\d+\}\{\d+\}/m,
     smi: /<SAMI>/i, edl: /^(TITLE|001)/m, rtf: /^\{\\rtf/, eml: /^[\w-]+: /m, vcf: /BEGIN:VCARD/, obj: /^v /m, dxf: /SECTION[\s\S]*EOF/ };
-  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2']);
+  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2', 'xfdf']);
   const ZIP_MAIN = { docx: 'word/document.xml', xlsx: 'xl/workbook.xml', pptx: 'ppt/presentation.xml', odt: 'content.xml', ods: 'content.xml', epub: 'META-INF/container.xml', htmlz: 'index.html', txtz: 'index.txt',
     '3mf': '3D/3dmodel.model', idml: 'designmap.xml', designcraft: 'mimetype' };
   const utf8 = (b) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch (_) { return null; } };
@@ -1240,6 +1282,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     if (e === 'eps' || e === 'ai') return ok(head.startsWith('%!PS') || b.readUInt32BE(0) === 0xc5d0d3c6, `${name} is not PostScript`);
     if (e === 'emf') return ok(b.readUInt32LE(0) === 1 && head.slice(40, 44) === ' EMF', `${name} is not an EMF`);
     if (e === 'dng') return ok(/^(II\*\0|MM\0\*)/.test(head), `${name} is not a DNG`);
+    if (e === 'fdf') return ok(head.startsWith('%FDF-'), `${name} is not an FDF`);
     if (e === 'xls' || e === 'aaf') { ok(b.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1', `${name} is not a compound file`); return ok(e !== 'xls' || XLSX.read(b).SheetNames.length, `${name} has no sheets`); }
     throw new Error(`no check for .${e} files`);
   };

@@ -993,6 +993,311 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${stamp.status} ${stamp.name.padEnd(44)}        ${stamp.detail}`);
   results.push(stamp);
 
+  // The editor tests below share this: open a copy of a PDF (or one made for the test), drive the editor, then check
+  // what Save wrote. LIME_EDITOR (a pattern) picks some of them while working on the editor.
+  const E = require('../src/main/pdfedit');
+  const editorTest = async (name, srcName, make, fn) => {
+    if (process.env.LIME_EDITOR && !new RegExp(process.env.LIME_EDITOR, 'i').test(name)) return;
+    const r = { name, status: 'PASS', detail: '' };
+    let win = null;
+    const openDialog = dialog.showOpenDialog;
+    try {
+      const src = path.join(OUT, srcName);
+      if (typeof make === 'function') fs.writeFileSync(src, await make()); else fs.copyFileSync(fx(make), src);
+      openEditor(src, 'edit');
+      win = [...editors].pop();
+      const wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+      if (!(await wait('!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")'))) throw new Error('editor did not load');
+      await sleep(500);
+      const at = (page) => `const l = document.querySelectorAll('.pdfpage .layer')[${page}], b = l.getBoundingClientRect(), p = (u, v) => ({ clientX: b.left + b.width * u, clientY: b.top + b.height * v });`;
+      const ed = {
+        ejs, wait, wc, src,
+        // Waits for the editor to finish what it is doing (its busy tip goes away).
+        idle: async () => { await sleep(250); return wait('document.querySelector(".ed-status").hidden || !/…$/.test(document.querySelector(".ed-status").textContent)', 20000); },
+        click: (u, v, page = 0) => ejs(`(() => { ${at(page)} l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ...p(${u}, ${v}) })); window.dispatchEvent(new PointerEvent('pointerup', p(${u}, ${v}))); })()`),
+        drag: (u0, v0, u1, v1, page = 0) => ejs(`(() => { ${at(page)} l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ...p(${u0}, ${v0}) })); window.dispatchEvent(new PointerEvent('pointermove', p(${(u0 + u1) / 2}, ${(v0 + v1) / 2}))); window.dispatchEvent(new PointerEvent('pointermove', p(${u1}, ${v1}))); window.dispatchEvent(new PointerEvent('pointerup', p(${u1}, ${v1}))); })()`),
+        tool: (t) => ejs(`document.querySelector('[data-tool="${t}"]').click()`),
+        set: (sel, value, ev = 'input') => ejs(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event(${JSON.stringify(ev)}, { bubbles: true })); return true; })()`),
+        press: (sel) => ejs(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.click(); return true; })()`),
+        pick: (file) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] }); },
+        save: async () => {
+          const out = path.join(OUT, `${srcName.replace(/\.pdf$/, '')} (edited).pdf`), was = fs.existsSync(out) ? fs.statSync(out).mtimeMs : 0;
+          await ejs('document.querySelector(\'[data-a="save"]\').click()');
+          const t = Date.now();
+          while (!(fs.existsSync(out) && fs.statSync(out).mtimeMs !== was) && Date.now() - t < 30000) await sleep(200);
+          if (!fs.existsSync(out) || fs.statSync(out).mtimeMs === was) throw new Error('Save wrote nothing');
+          await sleep(600);
+          return out;
+        },
+      };
+      r.detail = await fn(ed);
+    } catch (e) { r.status = 'FAIL'; r.detail = e.message; }
+    dialog.showOpenDialog = openDialog;
+    win?.destroy();
+    console.log(`${r.status} ${r.name.padEnd(44)}        ${r.detail}`);
+    results.push(r);
+  };
+  const annotsOf = async (file, password) => { const s = await E.open(file, password); return { s, list: E.annots(s.id) }; };
+
+  await editorTest('edit pdf · notes, replies and markup as comments', 'notes.pdf', 'doc.pdf', async (ed) => {
+    await ed.tool('note');
+    await ed.click(0.62, 0.1);
+    if (!(await ed.wait('!!document.querySelector(".cm.sel textarea")', 8000))) throw new Error('the new note did not open in the Comments panel');
+    await ed.set('.cm.sel textarea', 'Should this heading be bigger?', 'change');
+    await ed.idle();
+    await ed.set('.cm.sel .cmrow input', 'Yes, 24 pt.');
+    await ed.ejs(`document.querySelector('.cm.sel .cmrow input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+    if (!(await ed.wait('!!document.querySelector(".cm.sel .cmreply")', 8000))) throw new Error('the reply did not show');
+    await ed.tool('highlight');
+    await ed.drag(0.1, 0.135, 0.5, 0.152);
+    await ed.tool('rect');
+    await ed.drag(0.55, 0.5, 0.8, 0.6);
+    await ed.press('[data-tool="select"]');
+    const out = await ed.save();
+    const { list } = await annotsOf(out);
+    const note = list.find((a) => a.type === 'Text' && a.replyTo == null), reply = list.find((a) => a.replyTo != null);
+    if (note?.contents !== 'Should this heading be bigger?') throw new Error(`note: ${JSON.stringify(note)}`);
+    if (reply?.contents !== 'Yes, 24 pt.' || reply.replyTo !== note.num) throw new Error(`reply: ${JSON.stringify(reply)}`);
+    for (const t of ['Highlight', 'Square']) if (!list.some((a) => a.type === t && a.page === 0)) throw new Error(`no ${t} comment in ${list.map((a) => a.type)}`);
+    // Saved again with Flatten chosen: no comments left, but the highlight's yellow is part of the page.
+    await ed.press('[data-a="saveopts"]');
+    await ed.press('.popmenu [data-k="flatten"]');
+    await ed.ejs('document.querySelector(".popmenu")?.remove()');
+    await ed.ejs('document.querySelector(".pdfpage .layer").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }))');
+    await ed.tool('highlight');
+    await ed.drag(0.1, 0.17, 0.4, 0.19);
+    const flat = await ed.save();
+    const after = await annotsOf(flat);
+    if (after.list.length) throw new Error(`flattened file still has ${after.list.map((a) => a.type)}`);
+    const { data, info } = await require('sharp')(await E.render(after.s.id, 0, 1)).raw().toBuffer({ resolveWithObject: true });
+    let yellow = 0;
+    for (let i = 0; i < data.length; i += info.channels) if (data[i] > 200 && data[i + 1] > 180 && data[i + 2] < 140) yellow++;
+    if (yellow < 300) throw new Error(`flattened highlight: ${yellow} yellow pixels`);
+    return `note by ${note.author || 'someone'} with a reply, highlight and box saved as comments; flattened on the second save (${yellow} px of highlight)`;
+  });
+
+  await editorTest('edit pdf · links and bookmarks', 'links.pdf', 'chapters.pdf', async (ed) => {
+    await ed.tool('link');
+    await ed.drag(0.1, 0.07, 0.6, 0.11);
+    if (!(await ed.wait('!!document.querySelector(".props [data-l=url]")', 4000))) throw new Error('no link panel');
+    await ed.set('.props [data-l=url]', 'example.com/lime');
+    await ed.press('.props .cmrow .btn.primary');
+    await ed.idle();
+    await ed.drag(0.1, 0.13, 0.5, 0.15);
+    await ed.press('.props [data-to="page"]');
+    await ed.set('.props [data-l=page]', '3');
+    await ed.press('.props .cmrow .btn.primary');
+    await ed.idle();
+    if (!(await ed.wait('document.querySelectorAll(".plink:not(.draft):not(.new)").length === 2', 6000))) throw new Error(`${await ed.ejs('document.querySelectorAll(".plink").length')} links on the page`);
+    await ed.press('[data-side="bookmarks"]');
+    if (!(await ed.wait('document.querySelectorAll(".bm").length === 3', 4000))) throw new Error('the bookmarks are not listed');
+    await ed.press('.bm[data-path="2"]');
+    await ed.press('[data-b="del"]');
+    await ed.idle();
+    await ed.press('.bm[data-path="1"]');
+    await ed.press('[data-b="add"]');
+    if (!(await ed.wait('!!document.querySelector(".bmedit")', 4000))) throw new Error('a new bookmark did not ask for its name');
+    await ed.set('.bmedit', 'Appendix');
+    await ed.ejs(`document.querySelector('.bmedit').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+    await ed.idle();
+    if (!(await ed.wait('[...document.querySelectorAll(".bm .t")].some((t) => t.textContent === "Appendix")', 4000))) throw new Error('the new bookmark is not listed');
+    await ed.ejs(`[...document.querySelectorAll('.bm')].find((b) => b.textContent.includes('Appendix')).click()`);
+    await ed.press('[data-b="in"]');
+    await ed.idle();
+    const out = await ed.save();
+    const s = await E.open(out), links = E.links(s.id), tree = E.outline(s.id);
+    if (!links.some((l) => l.page === 0 && l.url === 'https://example.com/lime')) throw new Error(`links ${JSON.stringify(links)}`);
+    if (!links.some((l) => l.page === 0 && l.toPage === 2)) throw new Error(`no link to page 3: ${JSON.stringify(links)}`);
+    const shape = JSON.stringify(tree.map((b) => [b.title, b.kids.map((k) => k.title)]));
+    if (shape !== JSON.stringify([['Introduction', []], ['Middle', ['Appendix']]])) throw new Error(`bookmarks ${shape}`);
+    return `a web link and a link to page 3; bookmarks ${shape}`;
+  });
+
+  await editorTest('edit pdf · prepare a form: add, rename and fill fields', 'formmake.pdf', 'doc.pdf', async (ed) => {
+    await ed.tool('field');
+    await ed.drag(0.1, 0.3, 0.5, 0.33);
+    if (!(await ed.wait('document.querySelectorAll(".pfield.edit").length === 1', 10000))) throw new Error('no text field');
+    await ed.press('.props [data-fk="checkbox"]');
+    await ed.click(0.12, 0.37);
+    if (!(await ed.wait('document.querySelectorAll(".pfield.edit").length === 2', 10000))) throw new Error('no tick box');
+    await ed.press('.props [data-fk="combo"]');
+    await ed.drag(0.1, 0.4, 0.4, 0.43);
+    if (!(await ed.wait('document.querySelectorAll(".pfield.edit").length === 3 && !!document.querySelector(".props textarea")', 10000))) throw new Error('no drop-down');
+    await ed.set('.props textarea', 'Tea\nCoffee\nWater', 'change');
+    await ed.idle();
+    await ed.ejs(`(() => { const f = [...document.querySelectorAll('.pfield.edit')].find((x) => x.title === 'Text1'); const b = f.getBoundingClientRect(); f.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + 5, clientY: b.top + 5 })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: b.left + 5, clientY: b.top + 5 })); })()`);
+    if (!(await ed.wait('document.querySelector(".props .field input")?.value === "Text1"', 4000))) throw new Error('selecting the field did not show its name');
+    await ed.set('.props .field input', 'Full name', 'change');
+    await ed.idle();
+    if (!(await ed.wait('[...document.querySelectorAll(".pfield.edit")].some((x) => x.title === "Full name")', 6000))) throw new Error('the field was not renamed');
+    await ed.tool('select');
+    if (!(await ed.wait('document.querySelectorAll(".pfield.fill").length === 3', 4000))) throw new Error('no inputs to fill in');
+    await ed.set('.pfield.fill input[type=text]', 'Ada Lovelace');
+    await ed.ejs(`(() => { const c = document.querySelector('.pfield.fill input[type=checkbox]'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await ed.set('.pfield.fill select', 'Coffee', 'change');
+    const out = await ed.save();
+    const s = await E.open(out), fields = Object.fromEntries(E.fields(s.id).map((f) => [f.name, f]));
+    if (fields['Full name']?.value !== 'Ada Lovelace') throw new Error(`Full name = ${fields['Full name']?.value}`);
+    if (!fields['Check Box1'] || fields['Check Box1'].value === 'Off' || !fields['Check Box1'].value) throw new Error(`tick box = ${fields['Check Box1']?.value}`);
+    if (fields.Dropdown1?.value !== 'Coffee' || fields.Dropdown1.options.join() !== 'Tea,Coffee,Water') throw new Error(`drop-down = ${fields.Dropdown1?.value} of ${fields.Dropdown1?.options}`);
+    // Flattening from the Document menu turns them into page content.
+    await ed.press('[data-a="docmenu"]');
+    await ed.press('.popmenu [data-d="flatfields"]');
+    await ed.idle();
+    const flat = await ed.save();
+    const f2 = await E.open(flat), text = (await E.text(f2.id, 0)).map((l) => l.text).join(' ');
+    if (E.fields(f2.id).length) throw new Error('flattened file still has fields');
+    if (!text.includes('Ada Lovelace')) throw new Error(`the typed name is not on the page: ${text.slice(0, 160)}`);
+    return 'text field renamed “Full name”, tick box and drop-down (Tea, Coffee, Water) filled and saved, then flattened';
+  });
+
+  await editorTest('edit pdf · fill in an existing form', 'fillme.pdf', 'fillable.pdf', async (ed) => {
+    if (!(await ed.wait('document.querySelector(\'[data-tool="select"]\').getAttribute("aria-pressed") === "true" && document.querySelectorAll(".pfield.fill").length === 4', 8000))) throw new Error('the form did not open ready to fill in');
+    await ed.ejs(`(() => { const by = (n) => [...document.querySelectorAll('.pfield.fill')].find((x) => x.dataset.name === n); const t = by('Full name').querySelector('input'); t.value = 'Grace Hopper'; t.dispatchEvent(new Event('input', { bubbles: true })); const d = by('Date of birth').querySelector('input'); d.value = '9 December 1906'; d.dispatchEvent(new Event('input', { bubbles: true })); const c = by('Agree').querySelector('input'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); const s = by('Colour').querySelector('select'); s.value = 'Blue'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await ed.press('[data-side="fields"]');
+    if (!(await ed.wait('[...document.querySelectorAll(".fl .cmtext")].some((x) => x.textContent === "Grace Hopper")', 3000))) throw new Error('the Fields panel does not show the typed value');
+    const out = await ed.save();
+    const s = await E.open(out), v = Object.fromEntries(E.fields(s.id).map((f) => [f.name, f.value]));
+    const got = [v['Full name'], v['Date of birth'], v.Agree, v.Colour];
+    if (JSON.stringify(got) !== JSON.stringify(['Grace Hopper', '9 December 1906', 'Yes', 'Blue'])) throw new Error(`saved ${JSON.stringify(got)}`);
+    return `saved ${got.join(', ')}`;
+  });
+
+  await editorTest('edit pdf · redact words, e-mails and an area', 'redact.pdf', 'doc.pdf', async (ed) => {
+    await ed.tool('redact');
+    await ed.set('.props .field input', 'Invoice 2026-0419');
+    await ed.press('.props .field .btn');
+    if (!(await ed.wait('document.querySelectorAll(".obj.redact").length >= 1', 6000))) throw new Error('finding the words marked nothing');
+    await ed.press('.props [data-pat="email"]');
+    if (!(await ed.wait('document.querySelectorAll(".obj.redact").length >= 2', 6000))) throw new Error('no e-mail address marked');
+    await ed.drag(0.15, 0.4, 0.35, 0.5);
+    const marked = await ed.ejs('document.querySelectorAll(".obj.redact").length');
+    await ed.ejs(`[...document.querySelectorAll('.props .btn')].find((b) => /Apply redactions/.test(b.textContent)).click()`);
+    await ed.idle();
+    if (!(await ed.wait('!document.querySelector(".obj.redact")', 8000))) throw new Error('the marks are still waiting');
+    const out = await ed.save();
+    const s = await E.open(out);
+    let all = '';
+    for (let i = 0; i < 3; i++) all += (await E.text(s.id, i)).map((l) => l.text).join(' ');
+    if (/2026-0419|hello@example\.com/.test(all)) throw new Error(`still readable: ${all.slice(0, 200)}`);
+    if (!/quick brown fox/.test(all)) throw new Error('too much was removed');
+    const { data, info } = await require('sharp')(await E.render(s.id, 0, 1)).raw().toBuffer({ resolveWithObject: true });
+    let black = 0;
+    for (let i = 0; i < data.length; i += info.channels) if (data[i] < 20 && data[i + 1] < 20 && data[i + 2] < 20) black++;
+    if (black < 4000) throw new Error(`only ${black} black pixels: no boxes`);
+    return `${marked} marks applied: the invoice number and e-mail addresses are gone from all pages, black boxes in their place`;
+  });
+
+  await editorTest('edit pdf · edit a paragraph, measure and crop', 'para.pdf', async () => {
+    const { PDFDocument, StandardFonts } = require('pdf-lib');
+    const doc = await PDFDocument.create(), page = doc.addPage([400, 500]), f = await doc.embedFont(StandardFonts.Helvetica);
+    ['Lime keeps every line of this paragraph', 'together, so that editing one word lets', 'the rest flow on to the next line as it', 'would in a word processor.'].forEach((t, i) => page.drawText(t, { x: 40, y: 440 - i * 14, size: 11, font: f }));
+    page.drawText('A line well below the paragraph.', { x: 40, y: 200, size: 11, font: f });
+    return doc.save();
+  }, async (ed) => {
+    await ed.tool('edittext');
+    await ed.press('.props [data-k="paragraph"]');
+    if (!(await ed.wait('document.querySelectorAll(".tline.para").length >= 2', 6000))) throw new Error('no paragraphs to click');
+    await ed.ejs(`(() => { const el = [...document.querySelectorAll('.tline.para')].sort((a, b) => b.offsetHeight - a.offsetHeight)[0]; el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); })()`);
+    if (!(await ed.wait('!!document.querySelector(".obj.text[contenteditable=plaintext-only]")', 3000))) throw new Error('the paragraph did not open for editing');
+    const words = 'Lime now keeps every single line of this rather longer paragraph together, so that editing any one word lets all of the rest flow on to the next line, as it would in a word processor, and nothing runs off the side.';
+    await ed.ejs(`(() => { const el = document.querySelector('.obj.text[contenteditable=plaintext-only]'); el.textContent = ${JSON.stringify(words)}; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    ed.wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await sleep(300);
+    await ed.tool('measure');
+    await ed.drag(0.1, 0.8, 0.6, 0.8);
+    const value = await ed.ejs('document.querySelector(".props .readout")?.textContent || ""');
+    if (!/^\d+(\.\d+)? mm$/.test(value)) throw new Error(`measured “${value}”`);
+    await ed.tool('crop');
+    await ed.drag(0.05, 0.05, 0.95, 0.75);
+    await ed.ejs(`[...document.querySelectorAll('.props .btn')].find((b) => b.textContent === 'Crop this page').click()`);
+    await ed.idle();
+    const out = await ed.save();
+    const s = await E.open(out), lines = await E.text(s.id, 0), { list } = await annotsOf(out);
+    const para = lines.filter((l) => l.bbox[1] < 140);
+    const text = para.map((l) => l.text).join(' ');
+    if (!text.includes('nothing runs off the side')) throw new Error(`paragraph text: ${text}`);
+    if (para.length < 6) throw new Error(`the paragraph has ${para.length} lines: it did not rewrap`);
+    const right = Math.max(...para.map((l) => l.bbox[2]));
+    if (right > 40 + 225) throw new Error(`a line runs to ${right.toFixed(0)} pt, past the paragraph's width`);
+    const m = list.find((a) => a.type === 'Line' && a.intent === 'LineDimension');
+    if (!m || m.contents !== value) throw new Error(`measurement comment ${JSON.stringify(m)} for ${value}`);
+    if (Math.abs(s.pages[0].h - 500 * 0.7) > 4 || Math.abs(s.pages[0].w - 400 * 0.9) > 4) throw new Error(`cropped to ${s.pages[0].w}×${s.pages[0].h}`);
+    return `paragraph rewrapped into ${para.length} lines within its width; measured ${value}; page cropped to ${Math.round(s.pages[0].w)}×${Math.round(s.pages[0].h)} pt`;
+  });
+
+  await editorTest('edit pdf · header, footer, watermark, properties and password', 'decor.pdf', 'doc.pdf', async (ed) => {
+    await ed.press('[data-a="docmenu"]');
+    await ed.press('.popmenu [data-d="headerFooter"]');
+    if (!(await ed.wait('!!document.querySelector(\'[data-box="header_left"]\')', 3000))) throw new Error('no header and footer dialog');
+    await ed.set('[data-box="header_left"]', 'Lime handbook');
+    await ed.ejs(`document.querySelector('[data-box="footer_right"]').focus(); document.querySelector('[data-tok="<<Page 1 of n>>"]').click()`);
+    if (!(await ed.wait('!!document.querySelector(".dlgpreview img")?.src', 6000))) throw new Error('no preview');
+    await ed.press('.scrim [data-a="ok"]');
+    await ed.idle();
+    await ed.press('[data-a="docmenu"]');
+    await ed.press('.popmenu [data-d="watermark"]');
+    await ed.set('.scrim [data-o="text"]', 'DRAFT');
+    await ed.press('.scrim [data-a="ok"]');
+    await ed.idle();
+    await ed.press('[data-a="docmenu"]');
+    await ed.press('.popmenu [data-d="props"]');
+    if (!(await ed.wait('!!document.querySelector(\'.scrim [data-p="title"]\')', 6000))) throw new Error('no properties dialog');
+    await ed.set('.scrim [data-p="title"]', 'The Lime handbook');
+    await ed.set('.scrim [data-p="author"]', 'Ada');
+    await ed.press('.scrim [data-a="ok"]');
+    await ed.idle();
+    await ed.press('[data-a="saveopts"]');
+    await ed.press('.popmenu [data-d="security"]');
+    await ed.press('.scrim [data-on="1"]');
+    await ed.set('.scrim [data-f="pw"]', 'lime123');
+    await ed.set('.scrim [data-f="pw2"]', 'lime123');
+    await ed.press('.scrim [data-a="ok"]');
+    const out = await ed.save();
+    let locked = false;
+    try { await E.open(out); } catch (e) { locked = /password/i.test(e.message); }
+    if (!locked) throw new Error('the saved file opens without a password');
+    const s = await E.open(out, 'lime123');
+    let all = '';
+    for (let i = 0; i < 3; i++) all += `${(await E.text(s.id, i)).map((l) => l.text).join(' ')} `;
+    for (const want of ['Lime handbook', 'Page 1 of 3', 'Page 3 of 3', 'DRAFT']) if (!all.includes(want)) throw new Error(`“${want}” is not in the file: ${all.slice(0, 240)}`);
+    const p = await E.props(s.id);
+    if (p.title !== 'The Lime handbook' || p.author !== 'Ada') throw new Error(`properties ${p.title} / ${p.author}`);
+    return 'header, page numbers and a DRAFT watermark on every page, title and author set, saved with a password';
+  });
+
+  await editorTest('edit pdf · bulleted text and a replaced picture', 'lists.pdf', 'doc.pdf', async (ed) => {
+    await ed.tool('addtext');
+    await ed.click(0.1, 0.8);
+    if (!(await ed.wait('!!document.querySelector(".obj.text[contenteditable=plaintext-only]")', 3000))) throw new Error('no text box');
+    await ed.ejs(`(() => { const el = document.querySelector('.obj.text[contenteditable=plaintext-only]'); el.textContent = 'Milk\\nEggs\\nBread'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await ed.press('.props [data-list="bullet"]');
+    if (!(await ed.wait('document.querySelector(".obj.text")?.textContent.startsWith("• Milk")', 2000))) throw new Error('no bullets');
+    ed.wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await sleep(200);
+    await ed.tool('select');
+    if (!(await ed.wait('!!document.querySelector(\'.pobj[title^="Picture"]\')', 6000))) throw new Error('the picture is not selectable');
+    await ed.ejs(`document.querySelector('.pobj[title^="Picture"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`);
+    ed.pick(fx('photo2.jpg'));
+    await ed.ejs(`[...document.querySelectorAll('.props .btn')].find((b) => /Replace/.test(b.textContent)).click()`);
+    if (!(await ed.wait('!!document.querySelector(".obj img") && !!document.querySelector(".obj.erase")', 8000))) throw new Error('the picture was not replaced');
+    await ed.press('.props [data-x="h"]');
+    await ed.ejs(`(() => { const n = document.querySelector('.props input.num[aria-label="Opacity (%)"]'); n.value = 60; n.dispatchEvent(new Event('change')); })()`);
+    const out = await ed.save();
+    const s = await E.open(out), lines = (await E.text(s.id, 0)).map((l) => l.text);
+    for (const w of ['Milk', 'Eggs', 'Bread']) if (!lines.some((l) => l.startsWith('•') && l.includes(w))) throw new Error(`no bullet for ${w}: ${lines.join(' | ')}`);
+    const before = await E.open(fx('doc.pdf'));
+    const px = async (id) => { const { data, info } = await require('sharp')(await E.render(id, 0, 0.5)).raw().toBuffer({ resolveWithObject: true }); return { data, info }; };
+    const a = await px(before.id), b = await px(s.id);
+    const box = (await E.objects(before.id, 0)).find((o) => o.kind === 'image').bbox.map((v) => Math.round(v * 0.5));
+    let changed = 0;
+    for (let y = box[1]; y < box[3]; y++) for (let x = box[0]; x < box[2]; x++) { const i = (y * a.info.width + x) * a.info.channels; if (Math.abs(a.data[i] - b.data[i]) + Math.abs(a.data[i + 1] - b.data[i + 1]) > 40) changed++; }
+    if (changed < (box[2] - box[0]) * (box[3] - box[1]) * 0.3) throw new Error(`the picture looks the same (${changed} pixels changed)`);
+    return 'three bulleted lines; the page’s picture replaced with another, flipped and at 60%';
+  });
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
