@@ -988,7 +988,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   const ffmpegBin = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).binPath('ffmpeg');
   const frameAt = async (p, t) => {
     const png = path.join(OUT, `frame-${Date.now()}-${Math.round(t * 1000)}.png`);
-    require('child_process').execFileSync(ffmpegBin, ['-v', 'error', '-y', '-ss', String(t), '-i', p, '-frames:v', '1', png]);
+    require('child_process').execFileSync(ffmpegBin, ['-v', 'error', '-y', '-ss', String(t), '-i', p, '-frames:v', '1', '-vf', 'scale=in_color_matrix=bt709', png]);
     return require('sharp')(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   };
   const loudness = (p, from, len) => {
@@ -1010,7 +1010,12 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await key('Delete');
     const keep = await ejs('JSON.stringify(window.__media.kept())');
     if (keep !== '[[0.5,1.5],[2,3.5]]') throw new Error(`kept ${keep}`);
-    await ejs(`document.querySelector('[data-tool="titles"]').click()`);
+    // Playing from just before the cut carries on after it.
+    await ejs('window.__media.seek(1.3); window.__media.play()');
+    await sleep(900);
+    const played = await ejs('(() => { const t = document.querySelector("video").currentTime; window.__media.pause(); return t; })()');
+    if (!(played > 2.05 && played < 3.5)) throw new Error(`playing from 1.3 s reached ${played.toFixed(2)} s instead of skipping the cut`);
+    await ejs(`document.querySelector('[data-tool="titles"]').click(); window.__media.seek(2)`);
     await ed.press('Add title');
     await sleep(200);
     await ejs(`(() => { const ta = document.querySelector('.props textarea'); ta.value = 'Lime'; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.dispatchEvent(new Event('change', { bubbles: true })); })()`);
@@ -1035,8 +1040,60 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const diff = (y0, y1, x0, x1) => { let s = 0, n = 0; for (let y = Math.floor(a.info.height * y0); y < a.info.height * y1; y++) for (let x = Math.floor(a.info.width * x0); x < a.info.width * x1; x++) { const o = (y * a.info.width + x) * 3; s += Math.abs(a.data[o] - b.data[o]) + Math.abs(a.data[o + 1] - b.data[o + 1]) + Math.abs(a.data[o + 2] - b.data[o + 2]); n++; } return s / n / 3; };
     const inTitle = diff(0.76, 0.88, 0.42, 0.58), elsewhere = diff(0.1, 0.4, 0.1, 0.4);
     if (!(inTitle > 12 && inTitle > elsewhere * 4)) throw new Error(`title not found: ${inTitle.toFixed(1)} under it, ${elsewhere.toFixed(1)} elsewhere (${title})`);
+    const view = await ed.ejs('window.__media.st.view');
     ed.win.destroy();
-    return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${info.video.width}×${info.video.height} with sound; fade ${first.toFixed(0)}→${mid.toFixed(0)}, title ${inTitle.toFixed(0)} vs ${elsewhere.toFixed(1)}`;
+    return `${view} preview played past the cut; ${path.basename(out)}: ${info.duration.toFixed(2)} s, ${info.video.width}×${info.video.height} with sound; fade ${first.toFixed(0)}→${mid.toFixed(0)}, title ${inTitle.toFixed(0)} vs ${elsewhere.toFixed(1)}`;
+  });
+  await check('edit video · crop, look, music, frame, save as WebM', async () => {
+    const src = path.join(OUT, 'clipgrade.mp4');
+    fs.copyFileSync(fx('clip.mp4'), src);
+    const ed = await mediaEditor(src), { ejs } = ed;
+    await ejs(`document.querySelector('[data-tool="crop"]').click()`);
+    await sleep(150);
+    await ed.press('Right');
+    await sleep(100);
+    await ed.press('Flip horizontal');
+    await sleep(100);
+    await ejs(`document.querySelector('.props [data-v="1:1"]').click()`);
+    await ejs(`document.querySelector('[data-tool="colour"]').click()`);
+    if (!(await ed.wait('!!document.querySelector(\'.props [data-look="lumetri:Neutral Mono"]\')', 30000))) throw new Error('FilmCraft looks did not load');
+    await ejs(`document.querySelector('.props [data-look="lumetri:Neutral Mono"]').click()`);
+    await ejs(`window.__media.edit((x) => { x.music = { file: ${JSON.stringify(fx('song.mp3'))}, volume: -6, mode: 'mix', duck: 10, loop: true, fit: false, fadeOut: 1 }; })`);
+    if (!(await ed.wait('!!window.__media.st.cube', 15000))) throw new Error('the look was not applied to the preview');
+    // The preview is grey too: sample the drawn picture.
+    const grey = await ejs(`(() => { const c = document.querySelector('.me-gl'), t = document.createElement('canvas'); t.width = 64; t.height = 64; const g = t.getContext('2d'); g.drawImage(c, 0, 0, 64, 64); const d = g.getImageData(0, 0, 64, 64).data; let m = 0; for (let i = 0; i < d.length; i += 4) m = Math.max(m, Math.abs(d[i] - d[i + 1]), Math.abs(d[i + 1] - d[i + 2])); return m; })()`);
+    if (grey > 24) throw new Error(`the preview still has colour (${grey})`);
+    await ejs('window.__media.seek(1)');
+    await ejs(`document.querySelector('[data-tool="frame"]').click()`);
+    await sleep(150);
+    await ed.press('Save frame');
+    const still = path.join(OUT, 'clipgrade - 0.01.00.png');
+    const t0 = Date.now();
+    while (!fs.existsSync(still) && Date.now() - t0 < 20000) await sleep(200);
+    if (!fs.existsSync(still)) throw new Error('Save frame wrote nothing');
+    const sm = await require('sharp')(still).metadata();
+    if (sm.width !== 720 || sm.height !== 720) throw new Error(`frame is ${sm.width}×${sm.height}`);
+    // What the preview shows is what was saved: the turned, flipped, cropped and graded frame, side by side.
+    const shown = await ejs(`(() => { const c = document.querySelector('.me-gl'), t = document.createElement('canvas'); t.width = 24; t.height = 24; const g = t.getContext('2d'); g.drawImage(c, 0, 0, 24, 24); return [...g.getImageData(0, 0, 24, 24).data].filter((_, i) => i % 4 !== 3); })()`);
+    const saved = await require('sharp')(still).resize(24, 24, { fit: 'fill' }).removeAlpha().raw().toBuffer();
+    const off = shown.reduce((s_, v, i) => s_ + Math.abs(v - saved[i]), 0) / shown.length;
+    if (off > 14) throw new Error(`the preview and the saved frame differ by ${off.toFixed(1)} on average`);
+    asked = [];
+    await ejs(`document.querySelector('[data-a="saveas"]').click()`);
+    if (!(await ed.wait('!!document.querySelector(\'.scrim [data-f="webm"]\')', 5000))) throw new Error('no format choice');
+    await ejs(`document.querySelector('.scrim [data-f="webm"]').click(); document.querySelector('.scrim [data-v="small"]').click(); document.querySelector('.scrim [data-a="ok"]').click()`);
+    if (!(await ed.wait('!!window.__media.st.savePath && /\\.webm$/.test(window.__media.st.savePath) && !window.__media.st.busy', 180000))) throw new Error('Save as did not finish');
+    const out = await ejs('window.__media.st.savePath');
+    if (!asked.length || !fs.existsSync(out)) throw new Error('not saved where asked');
+    const info = await probeMedia(out);
+    if (info.video?.codec !== 'vp9' || info.audio?.codec !== 'opus') throw new Error(`saved ${info.video?.codec} and ${info.audio?.codec}`);
+    if (info.video.width !== 720 || info.video.height !== 720) throw new Error(`saved ${info.video.width}×${info.video.height}`);
+    const { data } = await frameAt(out, 1.5);
+    let colour = 0;
+    for (let i = 0; i < data.length; i += 3) colour = Math.max(colour, Math.abs(data[i] - data[i + 1]), Math.abs(data[i + 1] - data[i + 2]));
+    if (colour > 24) throw new Error(`the saved picture still has colour (${colour})`);
+    ed.win.destroy();
+    return `turned, flipped, square crop and Neutral Mono shown and saved alike (${off.toFixed(1)} apart; ${path.relative(OUT, out)}, ${info.video.width}×${info.video.height} VP9 + Opus), frame ${sm.width}×${sm.height}`;
   });
   await check('edit audio · trim, gain, fade, save', async () => {
     const src = path.join(OUT, 'toneedit.wav');

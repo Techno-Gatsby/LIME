@@ -24,6 +24,15 @@ const PLAY_EXT = new Set(['mp4', 'm4v', 'mov', 'webm', 'ogv', 'ogg', 'oga', 'mp3
 const PLAY_V = new Set(['h264', 'vp8', 'vp9', 'av1', 'theora', 'hevc']);
 const PLAY_A = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_u8', 'pcm_f32le']);
 const squareOf = (v) => !!v && Math.abs(v.sar - 1) > 0.01;
+// The colour matrix the picture is decoded with. Untagged clips are read as Chromium reads them (BT.709 when HD,
+// BT.601 when smaller), and every converted or saved picture is converted and tagged the same way, so colours keep
+// matching the preview after a crop, a look or a resize changes what a player would guess.
+function colourOf(v) {
+  const c = v.color || {}, sd = !(v.width >= 1280 || v.height > 576);
+  const mx = { bt709: 'bt709', smpte170m: 'smpte170m', bt470bg: 'bt470bg', bt2020nc: 'bt2020', bt2020c: 'bt2020' }[c.matrix] || (sd ? 'smpte170m' : 'bt709');
+  const space = mx === 'bt2020' ? c.matrix : mx, std = mx === 'bt470bg' ? 'bt470bg' : mx === 'bt2020' ? 'bt2020' : mx;
+  return { mx, tags: ['-colorspace', space, '-color_primaries', c.primaries || std, '-color_trc', c.transfer || (mx === 'bt2020' ? 'bt709' : mx === 'bt470bg' ? 'gamma28' : mx)] };
+}
 function playable(p, info) {
   const e = U.ext(p), v = info.video, a = info.audio;
   if (!PLAY_EXT.has(e)) return false;
@@ -141,7 +150,7 @@ async function proxy(id) {
     const short = "'if(gt(iw,ih),-2,min(iw,540))':'if(gt(iw,ih),min(ih,540),-2)'";
     await ff(t, v
       ? ['-i', s.file, '-map', '0:V:0', '-map', '0:a:0?', '-vf', `${squareOf(v) ? "scale=w='trunc(iw*sar/2)*2':h=ih,setsar=1," : ''}scale=${short}:flags=bicubic,format=yuv420p`,
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'fastdecode', '-crf', '24', '-g', '12', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out]
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'fastdecode', '-crf', '24', '-g', '12', ...colourOf(v).tags, '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out]
       : ['-i', s.file, '-map', '0:a:0', '-c:a', 'flac', out], { duration: s.info.duration });
     s.proxy = out;
     return out;
@@ -436,17 +445,19 @@ async function plan(s, e, tmp, fmt, quality) {
     const can = hasFilter('vidstabtransform') ? 'vidstab' : hasFilter('deshake') ? 'deshake' : null;
     if (e.stabilise && can === 'vidstab') {
       pre.push('vidstabtransform=input=shake.trf:smoothing=15:optzoom=1:interpol=bicubic', 'unsharp=5:5:0.6:3:3:0.3');
-      stab = [...args, '-filter_complex', `${fc.join(';')};[cv]${squareOf(v) ? "scale=w='trunc(iw*sar/2)*2':h=ih," : ''}vidstabdetect=shakiness=6:accuracy=15:result=shake.trf[sv]`, '-map', '[sv]', '-f', 'null', '-'];
+      const pv = joined(s, e, true, false);
+      stab = [...pv.args, '-filter_complex', `${pv.fc.join(';')};[cv]${squareOf(v) ? "scale=w='trunc(iw*sar/2)*2':h=ih," : ''}vidstabdetect=shakiness=6:accuracy=15:result=shake.trf[sv]`, '-map', '[sv]', '-f', 'null', '-'];
     } else if (e.stabilise && can) pre.push('deshake=rx=32:ry=32');
     if (e.reverse) pre.push('reverse');
     const g = geometry(e, info.video);
     W = g.W; H = g.H;
     fc.push(`[cv]${[...pre, ...g.f].join(',')}[gv]`);
     vl = 'gv';
+    const cm = colourOf(info.video), rgb = `scale=in_color_matrix=${cm.mx}:out_color_matrix=${cm.mx}`;
     if (e.lut && (e.lut.byteLength ?? e.lut.length) === LUT ** 3 * 3) {
       await pngOf(e.lut, 512, 512, path.join(tmp, 'colour.png'));
       args.push('-i', 'colour.png');
-      fc.push(`[${n++}:v]format=rgb24[cube]`, `[${vl}][cube]haldclut=interp=trilinear[cc]`);
+      fc.push(`[${n++}:v]format=rgb24[cube]`, `[${vl}]${rgb},format=rgb24[rgb]`, `[rgb][cube]haldclut=interp=trilinear,${rgb},format=yuv420p[cc]`);
       vl = 'cc';
     }
     const post = [];
@@ -468,7 +479,7 @@ async function plan(s, e, tmp, fmt, quality) {
       await fsp.writeFile(path.join(tmp, `title${i}.png`), Buffer.from(t.png));
       args.push('-loop', '1', '-framerate', String(fpsOut), '-t', f6(D), '-i', `title${i}.png`);
       const fades = fd > 0 ? `,fade=t=in:st=${f6(a)}:d=${f6(fd)}:alpha=1,fade=t=out:st=${f6(b - fd)}:d=${f6(fd)}:alpha=1` : '';
-      fc.push(`[${n++}:v]format=rgba,scale=${W}:${H}${fades}[t${i}]`, `[${vl}][t${i}]overlay=0:0:enable='between(t,${f6(a)},${f6(b)})':format=auto[o${i}]`);
+      fc.push(`[${n++}:v]format=rgba,scale=${W}:${H}:${rgb.slice(6)},format=yuva420p${fades}[t${i}]`, `[${vl}][t${i}]overlay=0:0:enable='between(t,${f6(a)},${f6(b)})':format=auto[o${i}]`);
       vl = `o${i}`;
     }
     const fi = U.clamp(num(e.fadeIn), 0, D / 2), fo = U.clamp(num(e.fadeOut), 0, D / 2), fv = [];
@@ -476,7 +487,7 @@ async function plan(s, e, tmp, fmt, quality) {
     if (e.fadePicture !== false && fo > 0) fv.push(`fade=t=out:st=${f6(D - fo)}:d=${f6(fo)}`);
     if (fmt.kind === 'gif') {
       const [gw, gfps, colours, dither] = { high: [640, 15, 256, 'sierra2_4a'], small: [320, 10, 128, 'bayer:bayer_scale=5'] }[quality] || [480, 12, 256, 'bayer:bayer_scale=4'];
-      fv.push(`fps=${Math.min(gfps, fpsOut)}`, `scale='min(iw,${gw})':-2:flags=lanczos`, 'split[ga][gb]');
+      fv.push(`fps=${Math.min(gfps, fpsOut)}`, `scale='min(iw,${gw})':-2:flags=lanczos:in_color_matrix=${cm.mx}`, 'format=bgra', 'split[ga][gb]');
       fc.push(`[${vl}]${fv.join(',')};[ga]palettegen=max_colors=${colours}:stats_mode=diff[pal];[gb][pal]paletteuse=dither=${dither}:diff_mode=rectangle[gif]`);
       vl = 'gif';
     } else if (fv.length) { fc.push(`[${vl}]${fv.join(',')}[fv]`); vl = 'fv'; }
@@ -525,7 +536,7 @@ async function plan(s, e, tmp, fmt, quality) {
   if (fmt.kind === 'gif') out.push('-loop', '0', '-f', 'gif');
   else if (fmt.kind === 'video') {
     const T = M.VIDEO_TARGETS[fmt.target], enc = fmt.codec === 'hevc' ? 'libx265' : T.v, pal = Math.abs(fpsOut - 25) < 0.5 || Math.abs(fpsOut - 50) < 1;
-    out.push(...M.videoCodecArgs(fmt.target, enc, qual, { ...info.video, width: W, height: H, fps: fpsOut }, pal));
+    out.push(...M.videoCodecArgs(fmt.target, enc, qual, { ...info.video, width: W, height: H, fps: fpsOut }, pal), ...colourOf(info.video).tags);
     if (al) out.push(...M.audioCodecArgs(fmt.target, T.a, { quality: qual }, { channels: chOut, rate: info.audio?.rate || 48000 }, true));
     else out.push('-an');
     out.push('-map_metadata', '0', ...M.containerArgs(fmt.target), '-max_muxing_queue_size', '4096', '-f', T.mux);
@@ -583,7 +594,8 @@ async function frame(id, e, at, out) {
     const args = ['-ss', f6(U.clamp(num(at.t), 0, Math.max(0, s.info.duration - 0.04))), '-i', s.file], fc = [];
     const g = geometry(e, v);
     let n = 1, vl = 'g';
-    fc.push(`[0:V:0]${[...(squareOf(v) ? ["scale=w='trunc(iw*sar/2)*2':h=ih"] : []), ...g.f].join(',')}[g]`);
+    const mx = colourOf(v).mx;
+    fc.push(`[0:V:0]${[...(squareOf(v) ? ["scale=w='trunc(iw*sar/2)*2':h=ih"] : []), ...g.f, `scale=in_color_matrix=${mx}`, 'format=rgb24'].join(',')}[g]`);
     if (e.lut && (e.lut.byteLength ?? e.lut.length) === LUT ** 3 * 3) {
       await pngOf(e.lut, 512, 512, path.join(tmp, 'colour.png'));
       args.push('-i', 'colour.png');
@@ -599,11 +611,12 @@ async function frame(id, e, at, out) {
     for (const [i, t] of (at.titles || []).entries()) {
       await fsp.writeFile(path.join(tmp, `title${i}.png`), Buffer.from(t.png));
       args.push('-i', `title${i}.png`);
-      fc.push(`[${n++}:v]format=rgba,scale=${g.W}:${g.H},colorchannelmixer=aa=${U.clamp(num(t.opacity, 1), 0, 1).toFixed(3)}[t${i}]`, `[${vl}][t${i}]overlay=0:0:format=auto[o${i}]`);
+      fc.push(`[${n++}:v]format=rgba,scale=${g.W}:${g.H},colorchannelmixer=aa=${U.clamp(num(t.opacity, 1), 0, 1).toFixed(3)}[t${i}]`, `[${vl}][t${i}]overlay=0:0:format=rgb[o${i}]`);
       vl = `o${i}`;
     }
     const k = U.clamp(num(at.fade, 1), 0, 1);
-    if (k < 0.999) { fc.push(`[${vl}]format=rgb24,colorchannelmixer=rr=${k.toFixed(3)}:gg=${k.toFixed(3)}:bb=${k.toFixed(3)}[fd]`); vl = 'fd'; }
+    fc.push(`[${vl}]format=rgb24${k < 0.999 ? `,colorchannelmixer=rr=${k.toFixed(3)}:gg=${k.toFixed(3)}:bb=${k.toFixed(3)}` : ''}[fd]`);
+    vl = 'fd';
     const jpg = /\.jpe?g$/i.test(out), part = `${out}.lime-part`;
     await U.run(U.binPath('ffmpeg'), ['-hide_banner', '-nostdin', '-v', 'error', '-y', ...args, '-filter_complex', fc.join(';'), '-map', `[${vl}]`, '-frames:v', '1', ...(jpg ? ['-q:v', '2', '-f', 'mjpeg'] : ['-f', 'image2', '-c:v', 'png']), part], { cwd: tmp, errorMessage: 'Couldn’t save the frame' });
     await fsp.rename(part, out);

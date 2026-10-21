@@ -227,7 +227,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         e.destroy();
       };
       await media(demo, [
-        ['40-media', 'window.__media.seek(2.4); await new Promise((r) => setTimeout(r, 500)); const m = document.querySelector("video"); return JSON.stringify({ t: m.currentTime, seekable: m.seekable.length && m.seekable.end(0), rs: m.readyState, dur: m.duration })'],
+        ['40-media', 'window.__media.seek(2.4); await new Promise((r) => setTimeout(r, 500)); return window.__media.st.view'],
         ['41-media-cuts', 'const M = window.__media; M.seek(0.6); M.act("in"); M.seek(10.8); M.act("out"); M.seek(4.2); M.act("split"); M.seek(6.1); M.act("split"); M.st.sel = 1; M.act("cut"); M.seek(3.2)'],
         ['42-media-colour', 'document.querySelector(\'[data-tool="colour"]\').click()', 5000],
         ['43-media-look', 'window.__media.edit((x) => { x.look = "lumetri:Golden Dusk"; x.color.contrast = 12; }); document.querySelector(\'[data-tool="colour"]\').click()', 4000],

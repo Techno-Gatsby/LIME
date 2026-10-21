@@ -118,13 +118,17 @@ function buildCube(c, look, log, mix) {
 // Drawn the same way for the preview and, at the output size, for the picture FFmpeg lays over the video.
 function drawTitle(g, W, H, t, op = 1) {
   if (!String(t.text || '').trim() || op <= 0) return null;
-  const px = Math.max(4, t.size * H), lines = String(t.text).split('\n'), lh = px * 1.22;
+  const lines = String(t.text).split('\n');
+  let px = Math.max(4, t.size * H);
   g.save();
   g.globalAlpha = clamp(op, 0, 1);
-  g.font = `${t.bold ? 700 : 400} ${px}px ${fontCss(t.font)}`;
   g.textBaseline = 'middle';
   g.textAlign = t.align || 'center';
-  const bw = Math.max(...lines.map((l) => g.measureText(l).width)), bh = lh * lines.length, cx = t.x * W, cy = t.y * H;
+  const font = () => { g.font = `${t.bold ? 700 : 400} ${px}px ${fontCss(t.font)}`; return Math.max(...lines.map((l) => g.measureText(l).width)); };
+  let bw = font();
+  // Words that would run off a narrow (cropped or upright) picture are made smaller to fit.
+  if (bw > W * 0.92) { px *= (W * 0.92) / bw; bw = font(); }
+  const lh = px * 1.22, bh = lh * lines.length, cx = t.x * W, cy = t.y * H;
   const x = t.align === 'left' ? cx - bw / 2 : t.align === 'right' ? cx + bw / 2 : cx;
   if (t.style === 'box') {
     const pad = px * 0.36;
@@ -470,7 +474,7 @@ export function openEditor(view, { file }, ctx) {
       for (const t of e.titles) {
         const op = st.selTitle === t.id && st.tool === 'titles' && !st.playing ? Math.max(titleOpacity(t, o), 0.35) : titleOpacity(t, o);
         const box = drawTitle(g, over.width, over.height, t, op);
-        if (box && st.tool === 'titles' && st.selTitle === t.id) {
+        if (box && st.tool === 'titles' && st.selTitle === t.id && !st.playing) {
           const k = 1 / (devicePixelRatio || 1), el = h(`<div class="me-titlebox" style="left:${box.x * k - 6}px;top:${box.y * k - 4}px;width:${box.w * k + 12}px;height:${box.h * k + 8}px"></div>`);
           el.addEventListener('pointerdown', (ev2) => dragTitle(ev2, t));
           frameEl.append(el);
@@ -488,7 +492,6 @@ export function openEditor(view, { file }, ctx) {
     if (!inKept(s)) tags.push(['cut', 'Cut from the saved clip']);
     if (e.reverse) tags.push(['', 'Reversed when saved']);
     if (e.stabilise) tags.push(['', 'Stabilised when saved']);
-    if (cropping()) { const gg = geom(); tags.push(['', `Crop ${gg.cw} × ${gg.ch}`]); }
     badges.innerHTML = tags.map(([c, t]) => `<span class="me-badge ${c}">${esc(t)}</span>`).join('');
     timeEl.innerHTML = `${fmtT(s)} <span>/ ${fmtT(dur())}</span>`;
   }
@@ -595,8 +598,12 @@ export function openEditor(view, { file }, ctx) {
   const PAD = 14;
   const rows = () => {
     const H = tlc.clientHeight, r = { ruler: [0, 22] };
-    if (st.kind === 'video') { r.strip = [24, 54]; r.wave = [80, st.s?.audio ? 40 : 0]; r.titles = [r.wave[0] + r.wave[1] + 2, 14]; }
-    else r.wave = [26, Math.max(40, H - 30)];
+    if (st.kind === 'video') {
+      const tt = E()?.titles.length ? 14 : 0, rest = Math.max(20, H - 80 - (tt ? tt + 4 : 2));
+      r.strip = [24, 54];
+      r.wave = [80, st.s?.audio ? rest : 0];
+      if (tt) r.titles = [80 + r.wave[1] + 2, tt];
+    } else r.wave = [26, Math.max(40, H - 30)];
     return r;
   };
   const xOf = (t) => PAD + t * st.zoom - st.scroll;
@@ -661,14 +668,18 @@ export function openEditor(view, { file }, ctx) {
     if (R.wave && R.wave[1]) {
       const [y, hh] = R.wave, mid = y + hh / 2, gain = dB(totalGain()) * (e.mute ? 0 : 1);
       g.fillStyle = C['--surface']; g.fillRect(Math.max(0, x0), y, Math.min(W, x1) - Math.max(0, x0), hh);
+      g.fillStyle = C['--line']; g.fillRect(Math.max(0, x0), Math.round(mid), Math.min(W, x1) - Math.max(0, x0), 1);
+      if (st.kind === 'audio') for (const f of [0.25, 0.75]) g.fillRect(Math.max(0, x0), Math.round(y + hh * f), Math.min(W, x1) - Math.max(0, x0), 1);
       if (st.wave) {
-        const { per, peaks } = st.wave, amp = (p) => { const v = (p / 255) * gain; return v <= 0 ? 0 : clamp((20 * Math.log10(v) + 54) / 54, 0, 1); };
+        const fill = g.createLinearGradient(0, y, 0, y + hh);
+        fill.addColorStop(0, css('--lime-500')); fill.addColorStop(0.5, C['--green-2']); fill.addColorStop(1, css('--lime-500'));
+        const { per, peaks } = st.wave, amp = (p) => clamp(((p / 255) * gain) ** 0.6, 0, 1);
         for (let x = Math.max(0, Math.floor(x0)); x < Math.min(W, x1); x++) {
           const a = Math.floor(tOf(x) * per), b = Math.max(a + 1, Math.floor(tOf(x + 1) * per));
           let m = 0;
           for (let i = a; i < b && i < peaks.length; i++) if (peaks[i] > m) m = peaks[i];
           const v = amp(m), hv = Math.max(0.5, (v * hh) / 2 - 1);
-          g.fillStyle = (m / 255) * gain > 0.999 ? C['--danger'] : C['--green-2'];
+          g.fillStyle = (m / 255) * gain > 0.999 ? C['--danger'] : fill;
           g.fillRect(x, mid - hv, 1, hv * 2);
         }
       } else { g.fillStyle = C['--line']; g.fillRect(Math.max(0, x0), mid, Math.min(W, x1) - Math.max(0, x0), 1); }
@@ -933,7 +944,7 @@ export function openEditor(view, { file }, ctx) {
     $('[data-a="undo"]', root).disabled = !st.hist.length;
     $('[data-a="redo"]', root).disabled = !st.fut.length;
     const s = st.s, g = geom(), D = outLen();
-    const src = [s.video && `${s.video.width} × ${s.video.height}`, s.video && `${Math.round(s.video.fps * 100) / 100} fps`, fmtT(s.duration, 1)].filter(Boolean).join(' · ');
+    const src = [s.video && `${s.video.width} × ${s.video.height}`, s.video && `${Math.round(s.video.fps * 100) / 100} fps`, !s.video && s.audio && `${s.audio.rate / 1000} kHz`, !s.video && s.audio && (s.audio.channels === 1 ? 'mono' : s.audio.channels === 2 ? 'stereo' : `${s.audio.channels} channels`), fmtT(s.duration, 1)].filter(Boolean).join(' · ');
     const to = [g && (g.W !== s.video.width || g.H !== s.video.height) && `${g.W} × ${g.H}`, Math.abs(D - s.duration) > 0.01 && fmtT(D, 1)].filter(Boolean).join(' · ');
     $('.me-info', root).innerHTML = `${esc(src)}${to ? ` → <b>${esc(to)}</b>` : ''}`;
     lenEl.textContent = `Saved length ${fmtT(D, 1)}`;
@@ -1175,7 +1186,9 @@ export function openEditor(view, { file }, ctx) {
   }
   function eqPanel() {
     const a = E().audio;
-    sec('EQ', seg(EQS.slice(0, 4).map(([v, l]) => [v, l]), a.eq, (x, v) => setEq(x, v), { key: 'eq' }), seg(EQS.slice(4).map(([v, l]) => [v, l]), a.eq, (x, v) => setEq(x, v), { key: 'eq' }),
+    const chips = h(`<div class="chips">${EQS.map(([v, l]) => `<button type="button" class="chip" data-v="${v}" aria-pressed="${a.eq === v}">${esc(l)}</button>`).join('')}</div>`);
+    chips.addEventListener('click', (ev2) => { const b = ev2.target.closest('[data-v]'); if (b) edit((x) => setEq(x, b.dataset.v)); });
+    sec('EQ', chips,
       slider('Bass', () => a.bass, (x, v) => { x.audio.bass = v; x.audio.eq = 'custom'; }, { min: -12, max: 12, step: 0.5, fmt: dbFmt, key: 'bass' }),
       slider('Presence', () => a.mid, (x, v) => { x.audio.mid = v; x.audio.eq = 'custom'; }, { min: -12, max: 12, step: 0.5, fmt: dbFmt, key: 'mid' }),
       slider('Treble', () => a.treble, (x, v) => { x.audio.treble = v; x.audio.eq = 'custom'; }, { min: -12, max: 12, step: 0.5, fmt: dbFmt, key: 'treble' }));
@@ -1248,7 +1261,7 @@ export function openEditor(view, { file }, ctx) {
   }
   function addTitle() {
     const D = outLen(), at = clamp(outOf(st.t), 0, Math.max(0, D - 0.5)), id = `t${Date.now().toString(36)}`;
-    edit((x) => { x.titles.push({ id, text: 'Title', font: 'sans', bold: true, size: 0.08, color: '#ffffff', style: 'shadow', x: 0.5, y: 0.82, align: 'center', start: at, end: Math.min(D, at + Math.min(4, D)), fade: 0.3 }); });
+    edit((x) => { x.titles.push({ id, text: 'Title', font: 'sans', bold: true, size: 0.08, color: '#ffffff', style: 'shadow', x: 0.5, y: 0.85, align: 'center', start: at, end: Math.min(D, at + Math.min(4, D)), fade: 0.3 }); });
     st.selTitle = id;
     renderProps();
     const ta = $('textarea', props);
@@ -1472,13 +1485,14 @@ export function openEditor(view, { file }, ctx) {
     const s = st.s;
     st.kind = s.video ? 'video' : 'audio';
     root.classList.add(st.kind);
+    (st.kind === 'video' ? stage : tl).append(status);
     if (st.kind === 'audio') $('.doc', root).firstElementChild.outerHTML = icon('music');
     st.E = fresh(s.duration);
     st.saved = JSON.stringify(st.E);
     st.tool = 'trim';
     $('.toolbar', root).innerHTML = GROUPS[st.kind].map(([name, ids], gi) => `<div class="tgroup${gi ? ' opt' : ''}" role="group" aria-label="${name}">${ids.map((id) => { const [icn, label, tp] = TOOLS[id]; return `<button class="tool" data-tool="${id}" aria-pressed="${id === st.tool}" title="${esc(`${label}: ${tp}`)}">${ic(icn)}<span class="lbl">${label}</span></button>`; }).join('')}</div>`).join('');
     makeMedia();
-    if (st.kind === 'video') viewer = glView(glc) || flatView(glc);
+    if (st.kind === 'video') { viewer = glView(glc); st.view = viewer ? 'webgl' : '2d'; viewer ||= flatView(glc); }
     makeGraph();
     applySound();
     let src = s.playable ? file : null;
