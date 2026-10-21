@@ -88,6 +88,15 @@ const P = {
   indent: 'M4 6h16M10 10h10M10 14h10M4 18h16M4 9.5l3 2.5-3 2.5',
   outdent: 'M4 6h16M10 10h10M10 14h10M4 18h16M7 9.5L4 12l3 2.5',
   replace: 'M4 5h9v9H4zM11 19h9v-9M15 8l2-2 2 2M17 6v4',
+  web: 'M3 5h18v14H3zM3 9h18M9.5 12l-2.5 2.5L9.5 17M14.5 12l2.5 2.5-2.5 2.5',
+  code: 'M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5',
+  split: 'M4 4h16v16H4zM4 12h16',
+  phone: 'M8 3h8v18H8zM11 18h2',
+  tablet: 'M5 3h14v18H5zM11 18h2',
+  desktop: 'M3 4h18v12H3zM9 20h6M12 16v4',
+  blocks: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM16.5 13v7M13 16.5h7',
+  format: 'M4 6h16M8 10h12M8 14h12M4 18h16',
+  help: 'M12 21a9 9 0 100-18 9 9 0 000 18zM9.6 9.4a2.5 2.5 0 014.8.9c0 1.7-2.4 2.2-2.4 3.7M12 17h.01',
 };
 export function icon(name, size = '') {
   const d = P[name] || P.doc;

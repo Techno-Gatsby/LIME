@@ -6,7 +6,7 @@ const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 4
 const TAB = 76, PAD_L = 10, PAD_B = 20, OPEN = { w: 330, h: 416, cx: 165, cy: 194 };
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
-const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], pdfcraft: ['pdf', '#d93b3b'] };
+const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], pdfcraft: ['pdf', '#d93b3b'], webcraft: ['web', '#1f8f5f'] };
 const isMac = api.platform === 'darwin';
 const stage = $('#stage'), wheelEl = $('.wheel'), svg = $('.dial'), petalsG = $('.petals'), center = $('.center'), pill = $('.pill'), card = $('.card');
 const capName = $('.caption .name'), capMeta = $('.caption .meta');
@@ -743,7 +743,7 @@ function orderList(tool, changed) {
   return box;
 }
 const CATS = [['pdf', 'PDF'], ['image', 'Images'], ['media', 'Video & audio'], ['docs', 'Documents'], ['cad', 'CAD & vector'], ['archive', 'Archives'], ['utility', 'Utilities']];
-const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft' };
+const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft', webcraft: 'WebCraft' };
 function fuzzy(q, text) {
   const t = text.toLowerCase();
   let score = 0, ti = 0, last = -2;

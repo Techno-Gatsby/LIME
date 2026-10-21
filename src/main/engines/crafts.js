@@ -14,6 +14,7 @@ const APPS = {
   effectcraft: { name: 'EffectCraft', role: 'Motion graphics', short: 'Motion', opens: ['motion', 'lottie', 'ecproj'] },
   filmcraft: { name: 'FilmCraft', role: 'Video editing', short: 'Video', opens: ['video', 'timeline', 'fcproj', 'otio', 'fcpxml'] },
   pdfcraft: { name: 'PdfCraft', role: 'PDF workbench', short: 'PDF', opens: ['pdf'] },
+  webcraft: { name: 'WebCraft', role: 'Web pages', short: 'Web', opens: ['html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'md', 'svg'], builtin: true },
 };
 const exe = (id) => `${id}-cli${U.isWin ? '.exe' : ''}`;
 const unpacking = new Map();
@@ -630,13 +631,13 @@ function installedApp(id) {
     : U.isWin ? [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean).map((b) => path.join(b, name, `${id}.exe`)) : [`/usr/bin/${id}`, `/usr/local/bin/${id}`];
   return cands.find((c) => fs.existsSync(c)) || null;
 }
-const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 'vectorcraft', ai: 'vectorcraft', eps: 'vectorcraft', afdesign: 'vectorcraft', pdf: 'pdfcraft', idml: 'designcraft', indd: 'designcraft', ecproj: 'effectcraft', lottie: 'effectcraft', fcproj: 'filmcraft', otio: 'filmcraft', fcpxml: 'filmcraft' };
+const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 'vectorcraft', ai: 'vectorcraft', eps: 'vectorcraft', afdesign: 'vectorcraft', pdf: 'pdfcraft', idml: 'designcraft', indd: 'designcraft', ecproj: 'effectcraft', lottie: 'effectcraft', fcproj: 'filmcraft', otio: 'filmcraft', fcpxml: 'filmcraft', html: 'webcraft', htm: 'webcraft', xhtml: 'webcraft', css: 'webcraft' };
 const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'vectorcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft' };
 let bundled = null;
 const bundledApps = () => { if (!bundled) { try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
 const appSource = (id) => path.join(U.cfg.apps, `${id}.app.tar.br`);
 // Whether the full app can be opened: installed on this computer, or shipped inside Lime.
-const hasApp = (id) => !!APPS[id] && (!!installedApp(id) || (!!bundledApps()[id] && fs.existsSync(appSource(id))));
+const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || (!!bundledApps()[id] && fs.existsSync(appSource(id))));
 const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)));
 // The apps that open every one of these files, the likeliest first.
 function appsFor(files) {
@@ -711,7 +712,7 @@ async function getApp(id, progress) {
 }
 function status() {
   const manifest = versions(), apps = bundledApps();
-  return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
+  return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
 module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, getApp, bundledApp, status,

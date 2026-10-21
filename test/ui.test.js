@@ -1938,6 +1938,41 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${(now - was).toFixed(1)} dB louder, fades in from ${start.toFixed(0)} dB`;
   });
 
+  await check('edit web page · design and code in step, save', async () => {
+    const site = path.join(OUT, 'site');
+    fs.mkdirSync(path.join(site, 'images'), { recursive: true });
+    await require('sharp')({ create: { width: 48, height: 32, channels: 3, background: '#3d8a28' } }).png().toFile(path.join(site, 'images', 'pic.png'));
+    fs.writeFileSync(path.join(site, 'style.css'), 'body { font-family: Georgia, serif; }\nh1 { color: #2f6f1e; }\n');
+    const src = path.join(site, 'page.html');
+    fs.writeFileSync(src, '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <title>Test page</title>\n  <link rel="stylesheet" href="style.css">\n  <style>\n    .note { color: #8a5a00; }\n  </style>\n</head>\n<body>\n  <h1>Old heading</h1>\n  <img src="images/pic.png" alt="A green box">\n  <p class="note">A note.</p>\n  <script>window.x = 1;</script>\n</body>\n</html>\n');
+    openEditor(src, 'web');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!window.__web?.st.ready'))) throw new Error('the editor did not load');
+    if (!(await wait('(() => { const i = window.__web.gjs().Canvas.getDocument().querySelector("img"); return !!i && i.complete && i.naturalWidth === 48; })()', 8000))) throw new Error('the picture did not load in Design view');
+    await ejs('void window.__web.gjs().getWrapper().find("h1")[0].components("Fresh heading")');
+    if (!(await wait('window.__web.textOf(0).includes("<h1>Fresh heading</h1>")', 5000))) throw new Error('the Design edit did not reach the code');
+    await ejs(`(() => { const cm = window.__web.cm(), t = cm.state.doc.toString(), i = t.indexOf('#8a5a00'); cm.dispatch({ changes: { from: i, to: i + 7, insert: '#c4291f' } }); })()`);
+    if (!(await wait('/196, 41, 31|c4291f/i.test(window.__web.gjs().getCss())', 5000))) throw new Error('the Code edit did not reach Design view');
+    if (!(await ejs('window.__web.gjs().getWrapper().find("h1")[0].getInnerHTML() === "Fresh heading"'))) throw new Error('the heading was lost when the code was reloaded');
+    const key = (k, extra = '') => ejs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '${k}', ctrlKey: true, bubbles: true${extra} }))`);
+    await key('z');
+    if (!(await wait('window.__web.textOf(0).includes("#8a5a00")', 4000))) throw new Error('Ctrl+Z did not undo the CSS edit');
+    await key('y');
+    if (!(await wait('window.__web.textOf(0).includes("#c4291f")', 4000))) throw new Error('Ctrl+Y did not redo it');
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = path.join(site, 'page (edited).html');
+    if (!(await wait(`window.__web.st.savePath === ${JSON.stringify(out)} && document.querySelector('.dirty').hidden`, 15000))) throw new Error('Save did not finish');
+    const saved = fs.readFileSync(out, 'utf8');
+    const want = { doctype: saved.startsWith('<!DOCTYPE html>'), heading: saved.includes('<h1>Fresh heading</h1>'), css: saved.includes('.note { color: #c4291f; }'), image: saved.includes('src="images/pic.png"'), link: saved.includes('href="style.css"'), script: saved.includes('<script>window.x = 1;</script>') };
+    const missing = Object.entries(want).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) throw new Error(`saved page lacks ${missing.join(', ')}:\n${saved}`);
+    if (fs.readFileSync(src, 'utf8').includes('Fresh')) throw new Error('the original was changed');
+    win.destroy();
+    return `${path.basename(out)}: heading from Design, colour from Code, doctype, picture, stylesheet and script kept; undo and redo work`;
+  });
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);

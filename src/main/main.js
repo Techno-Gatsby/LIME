@@ -531,7 +531,7 @@ function buildTray() {
     { label: 'Quit Lime', accelerator: isMac ? 'Command+Q' : undefined, click: () => { app.isQuitting = true; app.quit(); } },
   ]));
 }
-const appsMenu = () => ({ label: 'Open App', submenu: Object.entries(crafts.APPS).map(([id, a]) => ({ label: `${a.name} — ${a.role}`, enabled: crafts.hasApp(id), click: () => crafts.openApp(id, []).catch(log) })) });
+const appsMenu = () => ({ label: 'Open App', submenu: Object.entries(crafts.APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ label: `${a.name} — ${a.role}`, enabled: crafts.hasApp(id), click: () => crafts.openApp(id, []).catch(log) })) });
 async function pickFiles() {
   const r = await dialog.showOpenDialog({ properties: ['openFile', 'openDirectory', 'multiSelections'], title: 'Choose files for Lime' });
   if (!r.canceled && r.filePaths.length) showWheel(r.filePaths);
@@ -584,7 +584,7 @@ async function doAction(item, files) {
 
 // Each app's ring: open the full app, then every Lime tool its engine powers. With no files (the wheel opened by a
 // click) every tool is listed, and choosing one asks for files of the kinds it takes.
-const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'] };
+const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'], webcraft: ['edit-web'] };
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
@@ -592,7 +592,7 @@ function appRing(id, files) {
   // Open is the app inside Lime: its editor in a Lime window, for the files given or a file to choose. The app's own
   // program is the next slice.
   const edit = (EDIT_IN[id] || []).map((t) => tools.get(t)).find((t) => t && (!files.length || tools.accepts(t, files)));
-  const ring = edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
+  const ring = [...(edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }] : []), ...(a.builtin ? [] : [full])];
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
@@ -712,7 +712,7 @@ function registerIpc() {
   hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });
   h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
   // The other editors: ns is image, media or studio (see worker.js).
-  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
+  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio', 'web'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
   hE('dialog:open', async (e, o = {}) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });
     return r.canceled ? [] : r.filePaths;
@@ -764,7 +764,7 @@ function registerProtocols() {
 }
 // Byte ranges, so audio and video can seek, and readable across origins, so the editors can draw and process the
 // pictures and sound (WebGL, Web Audio).
-const MIME = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', ogv: 'video/ogg', mkv: 'video/x-matroska', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', weba: 'audio/webm', ttf: 'font/ttf', otf: 'font/otf', woff2: 'font/woff2', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
+const MIME = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', ogv: 'video/ogg', mkv: 'video/x-matroska', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', weba: 'audio/webm', ttf: 'font/ttf', otf: 'font/otf', woff2: 'font/woff2', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon', woff: 'font/woff', css: 'text/css', js: 'text/javascript', mjs: 'text/javascript', html: 'text/html', htm: 'text/html', json: 'application/json' };
 function fileResponse(p, range) {
   const size = fs.statSync(p).size, headers = { 'Content-Type': MIME[path.extname(p).slice(1).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*' };
   const body = (o) => require('stream').Readable.toWeb(fs.createReadStream(p, o));

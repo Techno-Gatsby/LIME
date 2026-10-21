@@ -4,7 +4,7 @@ const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
 const word = lazy('word'), excel = lazy('excel'), slides = lazy('slides'), kit = lazy('officekit');
-const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email');
+const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email'), web = lazy('web');
 
 const MORE_GROUPS = { subtitle: ['smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc'], data: ['jsonl', 'ndjson', 'jsonc', 'toml'], contacts: ['vcf', 'vcard'],
   font: ['ttf', 'otf', 'woff', 'woff2', 'eot', 'ttc'], mail: ['eml', 'msg'], webarchive: ['mht', 'mhtml'], comic: ['cbz', 'cbr', 'cb7', 'cbt', 'cbc'], ebook: ['epub', 'kepub', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'fb2', 'htmlz', 'txtz'] };
@@ -32,6 +32,7 @@ const cells = (key, label, extra = {}) => ({ key, type: 'cells', label, default:
 const file = (key, label, filters, extra = {}) => ({ key, type: 'file', label, filters, default: '', ...extra });
 const level = (def = 'recommended') => choice('level', 'Compression', [['low', 'Light'], ['recommended', 'Balanced'], ['extreme', 'Strong']], def);
 const pdfPassword = password('password', 'Password, if locked', { advanced: true });
+const WEB_PAGE = ['html', 'htm', 'xhtml'], WEB_CODE = [...WEB_PAGE, 'css', 'js', 'mjs'], WEB_OPEN = [...WEB_CODE, 'md', 'svg'];
 
 const each = (fn) => async (files, opts, ctx) => {
   const out = [];
@@ -123,6 +124,7 @@ const TOOLS = [
   { id: 'edit-vector', cat: 'cad', name: 'Edit vector', desc: 'Recolour, trace, outline and export artwork, with VectorCraft.', accepts: ['vector'], extAccept: ['svg', 'svgz', 'pdf'], max: 1, editor: 'studio:vectorcraft' },
   { id: 'edit-layout', cat: 'docs', name: 'Edit layout', desc: 'Check, fix and export a page layout, with DesignCraft.', accepts: ['layout'], max: 1, editor: 'studio:designcraft' },
   { id: 'edit-motion', cat: 'media', name: 'Edit animation', desc: 'Retime, recolour and render an animation, with EffectCraft.', accepts: ['motion'], max: 1, editor: 'studio:effectcraft' },
+  { id: 'edit-web', cat: 'docs', name: 'Edit web page', desc: 'Design view and code side by side, kept in step, with a preview at phone, tablet and desktop widths.', accepts: [], extAccept: WEB_OPEN, max: 1, editor: 'web' },
   { id: 'edit-timeline', cat: 'media', name: 'Edit timeline', desc: 'Look through, trim and render an edit, with FilmCraft.', accepts: ['timeline'], max: 1, editor: 'studio:filmcraft' },
   { id: 'merge-pdf', cat: 'pdf', name: 'Merge PDF', desc: 'Combine PDFs and images into one PDF.', accepts: ['pdf', 'image'], min: 2, ordered: true, ext: 'pdf', suffix: ' - merged',
     run: async (files, opts, ctx) => {
@@ -636,6 +638,18 @@ const TOOLS = [
     run: each((f, o, c) => pdf().printerMarks(f, o, outFile('-marks', 'pdf')(f, c))) },
   { id: 'bookmark-headings', cat: 'pdf', name: 'Bookmarks from headings', desc: 'A bookmark for every heading, nested like a table of contents.', accepts: ['pdf'], suffix: '-bookmarked', ext: 'pdf',
     options: [toggle('replace', 'Replace the bookmarks it has', true), pdfPassword], run: each((f, o, c) => pdf().bookmarksFromHeadings(f, o, outFile('-bookmarked', 'pdf')(f, c))) },
+
+  { id: 'format-html', cat: 'docs', name: 'Format HTML', desc: 'Indent a page, stylesheet or script neatly, one element per line.', tags: 'prettify beautify tidy indent', accepts: [], extAccept: WEB_CODE, craft: 'webcraft', prio: 10, petal: ['Format', 'Tidy'], suffix: '-formatted', ext: (o, files) => U.ext(files?.[0] || 'x.html'),
+    options: [choice('indent', 'Indent', [['2', '2 spaces'], ['4', '4 spaces'], ['tab', 'Tabs']])], run: each((f, o, c) => web().formatFile(f, o, c)) },
+  { id: 'minify-web', cat: 'docs', name: 'Minify', desc: 'The smallest page, stylesheet or script that works the same, for publishing.', tags: 'minify compress html css js', accepts: [], extAccept: WEB_CODE, craft: 'webcraft', prio: 12, petal: ['Minify', 'Smaller'], outName: (files) => `${U.base(files[0]).replace(/\.min$/, '')}.min.${U.ext(files[0])}`,
+    run: each((f, o, c) => web().minifyFile(f, o, c)) },
+  { id: 'check-links', cat: 'docs', name: 'Check links and images', desc: 'Missing pictures, files and #anchors the page points to.', tags: 'broken links images anchors', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 14, petal: ['Links', 'Check'], save: 'none', run: each((f, o, c) => web().checkLinksFile(f, o, c)) },
+  { id: 'inline-css', cat: 'docs', name: 'Inline CSS for e-mail', desc: 'Put the styles on each element, as e-mail programs need.', tags: 'email newsletter juice inline styles', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 16, petal: ['E-mail', 'Inline CSS'], suffix: '-email', ext: 'html', run: each((f, o, c) => web().inlineCss(f, o, c)) },
+  { id: 'web-to-pdf', cat: 'docs', name: 'Page to PDF', desc: 'Print the page to a PDF, with its pictures and styles.', tags: 'html print', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 18, petal: ['PDF', 'Print'], ext: 'pdf', suffix: '',
+    options: [select('pageSize', 'Page size', [['A4', 'A4'], ['Letter', 'Letter'], ['A3', 'A3'], ['Legal', 'Legal']]), choice('orientation', 'Orientation', [['portrait', 'Portrait'], ['landscape', 'Landscape']])],
+    run: each((f, o, c) => web().pageToPdf(f, o, c)) },
+  { id: 'web-text', cat: 'docs', name: 'Extract text', desc: 'The words of the page as plain text, without the markup.', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 20, petal: ['Text', 'Extract'], ext: 'txt', suffix: '', run: each((f, o, c) => web().extractText(f, o, c)) },
+  { id: 'validate-html', cat: 'docs', name: 'Validate', desc: 'Unclosed tags, ids used twice, pictures without alt text and more.', tags: 'validator lint html errors', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 22, petal: ['Validate', 'Errors'], save: 'none', run: each((f, o, c) => web().validateFile(f, o, c)) },
 ];
 function keepExt(f) { const e = U.ext(f || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'png'; }
 
@@ -665,7 +679,7 @@ const WHEELS = {
   },
   doc: {
     convert: [W('convert-document', 'PDF', 'Document', { to: 'pdf' }), W('convert-document', 'DOCX', 'Word', { to: 'docx' }), W('convert-document', 'MD', 'Markdown', { to: 'md' }), W('convert-document', 'TXT', 'Text', { to: 'txt' }), W('convert-document', 'HTML', 'Web', { to: 'html' }), W('convert-document', 'EPUB', 'eBook', { to: 'epub' }), W('convert-document', 'RTF', 'Rich text', { to: 'rtf' })],
-    tools: [W('replace-text', 'Replace', 'Find', {}, { ask: true }), W('track-changes', 'Accept', 'All edits', { action: 'accept' }), W('clean-office', 'Clean', 'Personal info'), W('doc-stats', 'Stats', 'Words'), W('watermark-doc', 'Watermark', 'Draft', {}, { ask: true }),
+    tools: [W('edit-web', 'Edit', 'Web page', {}, { only: WEB_PAGE }), W('replace-text', 'Replace', 'Find', {}, { ask: true }), W('track-changes', 'Accept', 'All edits', { action: 'accept' }), W('clean-office', 'Clean', 'Personal info'), W('doc-stats', 'Stats', 'Words'), W('watermark-doc', 'Watermark', 'Draft', {}, { ask: true }),
       W('mail-merge', 'Mail merge', 'From a list', {}, { ask: true }), W('split-doc', 'Split', 'Headings'), W('office-media', 'Images', 'Extract'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
   comic: { convert: [W('convert-comic', 'PDF', 'Document', { to: 'pdf' }), W('convert-comic', 'EPUB', 'Fixed layout', { to: 'epub' }), W('convert-comic', 'CBZ', 'Repack', { to: 'cbz' }), W('convert-comic', 'Pages', 'Pictures', { to: 'images' }, { full: true })], tools: [ZIP, HASH] },
@@ -763,7 +777,7 @@ const MULTI = {
 const SINGLE_OUTPUT = new Set(['compare-docs', 'merge-slides', 'hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama', 'merge-models']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
-const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js' };
+const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js', web: 'vendor/weblibs.js' };
 const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
 if (unshipped.size) {
   TOOLS.splice(0, TOOLS.length, ...TOOLS.filter((t) => !unshipped.has(t.id)));

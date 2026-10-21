@@ -608,6 +608,42 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('52-paragraphs', e);
       }
     }
+    if (want('webedit')) {
+      const site = path.join(dir, 'site');
+      fs.mkdirSync(path.join(site, 'images'), { recursive: true });
+      fs.copyFileSync(path.join(samples, 'photo.jpg'), path.join(site, 'images', 'lake.jpg'));
+      fs.writeFileSync(path.join(site, 'style.css'), 'body { font: 17px/1.6 Georgia, serif; margin: 0; color: #1d2b22; background: #f6f3ec; }\nheader { background: #2f6f1e; color: #fff; padding: 36px 48px; }\nheader h1 { margin: 0; font: 600 40px/1.1 -apple-system, "Segoe UI", sans-serif; }\nmain { max-width: 820px; margin: 0 auto; padding: 32px 48px; }\nimg.hero { width: 100%; border-radius: 10px; }\n.cards { display: flex; gap: 18px; }\n.card { flex: 1; background: #fff; padding: 16px 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }\n');
+      fs.writeFileSync(path.join(site, 'index.html'), '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <title>Lakeside cabins</title>\n  <link rel="stylesheet" href="style.css">\n  <style>\n    .note { color: #8a5a00; }\n  </style>\n</head>\n<body>\n  <header>\n    <h1>Lakeside cabins</h1>\n    <p>Quiet weekends by the water</p>\n  </header>\n  <main>\n    <img class="hero" src="images/lake.jpg" alt="The lake at dawn">\n    <h2>Stay with us</h2>\n    <p>Three wooden cabins on the north shore, each with a stove, a deck and a boat.</p>\n    <div class="cards">\n      <div class="card"><h3>Cabin one</h3><p>Sleeps two.</p></div>\n      <div class="card"><h3>Cabin two</h3><p>Sleeps four.</p></div>\n    </div>\n    <p class="note">Open from April to October.</p>\n  </main>\n  <script>document.title += "";</script>\n</body>\n</html>\n');
+      const file = path.join(site, 'index.html');
+      openEditor(file, 'web');
+      let e = null;
+      for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.file === file && !x.webContents.isLoading()); }
+      if (e) {
+        e.webContents.on('console-message', (ev, level, message) => { const lv = ev?.level ?? level, msg = ev?.message ?? message; if (lv === 3 || lv === 'error' || lv === 2 || lv === 'warning') console.log('editor:', String(msg).slice(0, 300)); });
+        const ejs = (code) => e.webContents.executeJavaScript(`(async () => { ${code} })()`, true).catch((er) => console.error('web step failed:', er.message));
+        for (let t = 0; t < 80 && !(await e.webContents.executeJavaScript('!!window.__web?.st.ready').catch(() => false)); t++) await sleep(250);
+        await sleep(2000);
+        if (process.env.LIME_WEB_DEBUG) console.log('debug', await ejs(process.env.LIME_WEB_DEBUG));
+        await shot('70-web-split', e);
+        await ejs('const g = window.__web.gjs(); g.select(g.getWrapper().find("h2")[0]);');
+        await shot('71-web-select', e);
+        await ejs('document.querySelector(\'[data-ptab="element"]\').click()');
+        await shot('72-web-element', e);
+        await ejs('document.querySelector(\'[data-stab="layers"]\').click(); document.querySelector(\'[data-view="design"]\').click()');
+        await shot('73-web-design', e);
+        await ejs('document.querySelector(\'[data-view="code"]\').click(); document.querySelector(\'[data-tab="1"]\')?.click()');
+        await shot('74-web-code', e);
+        await ejs('document.querySelector(\'[data-tab="0"]\').click(); document.querySelector(\'[data-view="preview"]\').click(); document.querySelector(\'[data-device="phone"]\').click()');
+        await sleep(1500);
+        await shot('75-web-preview', e);
+        await ejs('document.querySelector(\'[data-device="desktop"]\').click(); document.querySelector(\'[data-view="split"]\').click(); document.querySelector(\'[data-ptab="page"]\').click(); document.querySelector(\'[data-a="check"]\').click()');
+        await sleep(1500);
+        await shot('76-web-page', e);
+        await ejs('document.documentElement.dataset.theme = "dark"');
+        await shot('77-web-dark', e);
+        e.destroy();
+      }
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();
