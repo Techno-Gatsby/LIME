@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('lime', {
     return () => ipcRenderer.removeListener(ch, handler);
   },
   drag: (paths) => ipcRenderer.send('drag:start', paths),
-  moveTick: () => ipcRenderer.send('wheel:dragTick'),
+  catch: (on) => ipcRenderer.send('wheel:catch', on),
   pathFor: (file) => { try { return webUtils.getPathForFile(file); } catch (_) { return ''; } },
   platform: process.platform,
 });

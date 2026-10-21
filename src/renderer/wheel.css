@@ -26,7 +26,7 @@ html, body { background: transparent !important; overflow: hidden; }
 .s-edge-hi { stop-color: var(--edge-hi); } .s-edge-lo { stop-color: var(--edge-lo); }
 .s-bezel-in { stop-color: var(--bezel-in); } .s-bezel { stop-color: var(--bezel); } .s-bezel-out { stop-color: var(--bezel-out); }
 
-#stage { position: absolute; left: 0; top: 0; width: var(--w); height: var(--h); transform-origin: 0 0; transform: scale(var(--k, 1)); }
+#stage { position: absolute; left: 0; top: 0; width: 330px; height: 416px; transform-origin: 0 0; will-change: transform; }
 .wheel { position: absolute; left: calc(var(--cx) - 150px); top: calc(var(--cy) - 150px); width: 300px; height: 300px; transform: scale(var(--ws, 1)); transition: transform .42s var(--spring); will-change: transform; }
 .wheel::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; background: rgba(128, 128, 128, .012); }
 .wheel::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; box-shadow: 0 16px 34px -8px var(--drop), 0 3px 8px -2px var(--drop); pointer-events: none; }

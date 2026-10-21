@@ -3,8 +3,8 @@ import { wedge, labelAt, arc, limeSvg, hitIndex } from './petal.js';
 import { api, $, $$, h, esc, nameOf, dirOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
 const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 450;
-// The lime's window has room left of and below the lime for its shadow, which would otherwise be cut off.
-const TAB = 76, PAD_L = 10, PAD_B = 20;
+// The lime's box has room left of and below the lime for its shadow; the open wheel's box is 330×416.
+const TAB = 76, PAD_L = 10, PAD_B = 20, OPEN = { w: 330, h: 416, cx: 165, cy: 194 };
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
 // Each ArtCraft app's mark in the middle of the wheel: an icon and its colour.
@@ -17,38 +17,44 @@ let settings = await applyTheme();
 const catalog = Object.fromEntries((await api.invoke('catalog')).map((t) => [t.id, t]));
 const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, over: false, peek: null, baseMode: 'convert', modKey: null, app: null, home: null, homeOn: false };
 let k = SIZES[settings.size] || 1;
-let collapseT = null, foldT = null, shown = 'tab', geo = null;
+let collapseT = null, foldT = null, shown = 'tab', geo = null, origin = { x: 0, y: 0 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 $('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, '', k));
 
 async function layout() {
   const open = S.state !== 'idle';
   const cardH = card.hidden ? 0 : Math.min(card.scrollHeight, 380) + 14;
-  const L = open ? { w: 330, h: cardH ? 364 + cardH : 416, cx: 165, cy: 194 } : { w: TAB + PAD_L, h: TAB + PAD_B, cx: PAD_L + TAB / 2, cy: TAB / 2 };
   const growing = open && shown === 'tab';
   if (growing) stage.classList.add('pre');
-  stage.style.setProperty('--w', `${L.w}px`);
-  stage.style.setProperty('--h', `${L.h}px`);
-  stage.style.setProperty('--cx', `${L.cx}px`);
-  stage.style.setProperty('--cy', `${L.cy}px`);
-  stage.style.setProperty('--k', k);
+  stage.style.setProperty('--cx', `${open ? OPEN.cx : PAD_L + TAB / 2}px`);
+  stage.style.setProperty('--cy', `${open ? OPEN.cy : TAB / 2}px`);
   const at = growing ? S.bloomAt : null;
   S.bloomAt = null;
   shown = open ? 'open' : 'tab';
-  const r = await api.invoke('wheel:layout', { w: Math.ceil(L.w * k), h: Math.ceil(L.h * k), ax: Math.round(L.cx * k), ay: Math.round(L.cy * k), mode: open ? 'open' : 'tab', at: at || undefined });
+  const r = await api.invoke('wheel:layout', { mode: open ? 'open' : 'tab', at: at || undefined, h: open ? (cardH ? 364 + cardH : OPEN.h) : TAB + PAD_B });
   if (r) geo = r;
-  if (growing) { if (S.pop) popIn(); else bloomFrom(at || r?.tab); }
+  place();
+  if (growing) { if (S.pop) popIn(); else bloomFrom(at || geo?.tab); }
   S.pop = false;
   return r;
 }
-// Where the wheel grows from or folds toward, kept inside the window: the lime at the edge can be far outside it
-// (after a Shift-drag or a move), and an animation heading there was cut off half-way.
+// The window covers the screen; the stage (the lime's box, or the wheel's) is moved inside it to where the lime or
+// the wheel belongs, so nothing is ever resized or cut off.
+function place() {
+  if (!geo) return;
+  const wa = geo.wa;
+  if (S.state === 'idle') origin = { x: Math.round(wa.width - (TAB + PAD_L) * k), y: Math.round(geo.tab.y - wa.y - (TAB / 2) * k) };
+  else {
+    const at = geo.at || geo.tab, h = card.hidden ? OPEN.h : 364 + Math.min(card.scrollHeight, 380) + 14;
+    origin = { x: Math.round(at.x - wa.x - OPEN.cx * k), y: Math.round(Math.max(0, Math.min(at.y - wa.y - OPEN.cy * k, wa.height - h * k))) };
+  }
+  stage.style.transform = `translate(${origin.x}px, ${origin.y}px) scale(${k})`;
+}
+// Where the wheel grows from or folds toward, in the stage's own units: the lime at the edge can be far away.
 function offsetTo(pt) {
   if (!pt || !geo) return { x: 120, y: 0 };
-  const cl = (v, a, b) => Math.max(a, Math.min(b, v));
-  return { x: cl((pt.x - geo.bounds.x) / k - 165, -125, 125), y: cl((pt.y - geo.bounds.y) / k - 194, -150, 180) };
+  return { x: (pt.x - geo.wa.x - origin.x) / k - OPEN.cx, y: (pt.y - geo.wa.y - origin.y) / k - OPEN.cy };
 }
-// The wheel shows on the next frame; a window Windows or macOS thinks is covered gets no frames, so a timer backs it up.
 function unpre() { const go = () => stage.classList.remove('pre'); requestAnimationFrame(go); setTimeout(go, 60); }
 function bloomFrom(pt) {
   const o = offsetTo(pt);
@@ -806,27 +812,52 @@ stage.addEventListener('pointerdown', (e) => {
   if (i >= 0) $(`.petal[data-i="${i}"]`)?.classList.add('press');
 });
 window.addEventListener('pointermove', (e) => {
-  if (!downAt || moving || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) <= 5) return;
-  if (S.state === 'done' && downAt.onBtn && S.result?.outs?.length) return;
-  moving = true;
-  $$('.petal.press').forEach((g) => g.classList.remove('press'));
-  setHot(-1);
-  stage.classList.add('moving');
-  try { stage.setPointerCapture(downAt.id); } catch (_) {}
-  api.invoke('wheel:dragStart');
-  const step = () => { if (!moving) return; api.moveTick(); requestAnimationFrame(step); };
-  requestAnimationFrame(step);
+  if (!downAt) return;
+  if (!moving) {
+    if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) <= 5) return;
+    if (S.state === 'done' && downAt.onBtn && S.result?.outs?.length) return;
+    moving = true;
+    $$('.petal.press').forEach((g) => g.classList.remove('press'));
+    setHot(-1);
+    stage.classList.add('moving');
+    try { stage.setPointerCapture(downAt.id); } catch (_) {}
+    downAt.from = { ...origin };
+    api.invoke('wheel:dragStart');
+  }
+  // The lime slides along the edge; the wheel goes anywhere it fits on the screen.
+  const idle = S.state === 'idle', wa = geo?.wa;
+  let x = downAt.from.x + (idle ? 0 : e.clientX - downAt.x), y = downAt.from.y + e.clientY - downAt.y;
+  if (wa) { x = Math.max(0, Math.min(wa.width - OPEN.w * k, x)); y = Math.max(0, Math.min(wa.height - (idle ? TAB + PAD_B : OPEN.h) * k, y)); }
+  origin = { x, y };
+  stage.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
 });
 function endMove() {
   if (!moving) return false;
   moving = false;
   stage.classList.remove('moving');
-  api.invoke('wheel:dragEnd');
+  const wa = geo?.wa || { x: 0, y: 0 }, idle = S.state === 'idle';
+  const p = { x: wa.x + origin.x + (idle ? PAD_L + TAB / 2 : OPEN.cx) * k, y: wa.y + origin.y + (idle ? TAB / 2 : OPEN.cy) * k };
+  api.invoke('wheel:dragEnd', p).then((g) => { if (g) { geo = g; place(); } }).catch(() => {});
   justMoved = true;
   setTimeout(() => { justMoved = false; }, 0);
   return true;
 }
 window.addEventListener('click', (e) => { if (justMoved) { e.preventDefault(); e.stopPropagation(); } }, true);
+// The window passes the mouse through to what is underneath except over the lime or the wheel (with its pill, card and
+// close button); the page says which from where the pointer is.
+let caught = null;
+function hitTest(x, y) {
+  const within = (el, m) => { if (!el || el.hidden) return false; const b = el.getBoundingClientRect(); return b.width > 0 && x >= b.left - m && x <= b.right + m && y >= b.top - m && y <= b.bottom + m; };
+  if (S.state === 'idle') return within($('.tab'), 6);
+  const r = svg.getBoundingClientRect();
+  return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) <= r.width / 2 + 24 * k || [pill, card, $('.close')].some((el) => within(el, 8));
+}
+function setCaught(on) { if (on === caught) return; caught = on; api.catch(on); }
+window.addEventListener('pointermove', (e) => setCaught(moving || hitTest(e.clientX, e.clientY)), true);
+document.addEventListener('pointerleave', () => { if (!moving) setCaught(false); });
+api.on('wheel:moveEnd', () => { downAt = null; endMove(); });
+api.on('wheel:at', (at) => { if (geo) { geo.at = at; place(); } });
+api.on('wheel:geo', (g) => { geo = g; place(); });
 stage.addEventListener('pointercancel', () => { downAt = null; endMove(); });
 stage.addEventListener('lostpointercapture', () => { if (moving) { downAt = null; endMove(); } });
 window.addEventListener('pointerup', async (e) => {

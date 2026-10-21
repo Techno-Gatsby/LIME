@@ -93,10 +93,12 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   };
   const until = async (code, ms = 4000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await lime(code)) return true; await sleep(100); } return false; };
   const wa = () => screen.getPrimaryDisplay().workArea;
+  // The window covers the work area; what is on screen (the lime, or the wheel) is where the page put it.
+  const box = () => debug().placed;
   const dragIn = (wc, type = 'dragenter') => js(`(() => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt', { type: 'text/plain' })); window.dispatchEvent(new DragEvent(${JSON.stringify(type)}, { dataTransfer: dt, bubbles: true, cancelable: true })); })()`, wc);
   await check('starts as the lime tab on the right edge', async () => {
     await until('return L.S.state === "idle"');
-    const b = wheel().getBounds(), a = wa();
+    const b = box(), a = wa();
     if (b.width > 120 || b.height > 120) throw new Error(`tab window is ${b.width}×${b.height}`);
     if (Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`tab not at the right edge: ${b.x + b.width} vs ${a.x + a.width}`);
     return `${b.width}×${b.height} at x=${b.x}`;
@@ -105,7 +107,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await dragIn(wheel().webContents);
     if (!(await until('return L.S.state === "ready"'))) throw new Error('did not open');
     await sleep(900);
-    const b = wheel().getBounds(), a = wa();
+    const b = box(), a = wa();
     if (b.width < 300) throw new Error(`window ${b.width}×${b.height}`);
     if (b.x + b.width > a.x + a.width || b.x < a.x) throw new Error('wheel off screen');
     await dragIn(wheel().webContents, 'dragleave');
@@ -121,7 +123,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await dragIn(sn.webContents);
     if (!(await until('return L.S.state === "ready"'))) throw new Error('corner did not open the wheel');
     await sleep(900);
-    const b = wheel().getBounds();
+    const b = box();
     if (b.x > a.x + 120 || b.y + b.height < a.y + a.height - 120) throw new Error(`wheel not near the corner: ${JSON.stringify(b)}`);
     return `wheel at ${b.x},${b.y}`;
   });
@@ -132,7 +134,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       shiftSummon({ ...cur });
       if (!(await until('return L.S.state === "ready"'))) throw new Error('did not open');
       await sleep(900);
-      const centre = () => { const b = wheel().getBounds(); return { x: b.x + 165, y: b.y + 194 }; };
+      const centre = () => debug().bloomAt;
       const c0 = centre(), d0 = Math.hypot(cur.x - c0.x, cur.y - c0.y);
       // Beside the pointer, outside the ring (radius 147), so neither the file nor what is under it is covered.
       if (d0 < 150 || d0 > 200) throw new Error(`pointer ${Math.round(d0)} px from the centre`);
@@ -158,7 +160,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     setCursor(() => ({ ...cur }));
     const drag = async (sel) => {
       const r = await js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()`);
-      const wc = wheel().webContents, b0 = wheel().getBounds();
+      const wc = wheel().webContents, b0 = box();
       Object.assign(cur, { x: b0.x + r.x, y: b0.y + r.y });
       wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
       wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
@@ -166,10 +168,11 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       wc.sendInputEvent({ type: 'mouseMove', x: r.x + 12, y: r.y + 8, modifiers: ['leftButtonDown'] });
       await sleep(80);
       cur.x -= 70; cur.y -= 45;
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x - 70, y: r.y - 45, modifiers: ['leftButtonDown'] });
       await sleep(250);
-      wc.sendInputEvent({ type: 'mouseUp', x: r.x + 12, y: r.y + 8, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseUp', x: r.x - 70, y: r.y - 45, button: 'left', clickCount: 1 });
       await sleep(200);
-      const b1 = wheel().getBounds();
+      const b1 = box();
       return { dx: b1.x - b0.x, dy: b1.y - b0.y };
     };
     try {
@@ -360,7 +363,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   const healthy = async (label) => {
     if (!(await until('return L.S.state === "idle" && !L.folding()', 8000))) throw new Error(`${label}: stuck in ${await lime('return L.S.state;')}`);
     await sleep(900);
-    const b = wheel().getBounds(), a = wa();
+    const b = box(), a = wa();
     const r = await lime('const t = document.querySelector(".tab"), cs = getComputedStyle(t); return { shown: cs.display !== "none" && cs.visibility !== "hidden", over: L.S.over, cls: document.querySelector("#stage").className };');
     if (wheels() !== 1) throw new Error(`${label}: ${wheels()} wheel windows`);
     if (b.width > 120 || b.height > 120 || Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`${label}: the lime is ${b.width}×${b.height} at ${b.x},${b.y}, not at the edge`);
@@ -370,7 +373,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await dragIn(wheel().webContents);
     if (!(await until('return L.S.state === "ready"', 3000))) throw new Error(`${label}: a drag onto the lime didn't open the wheel`);
     await sleep(700);
-    if (wheel().getBounds().width < 300) throw new Error(`${label}: opened but the window stayed small: ${JSON.stringify({ bounds: wheel().getBounds(), main: debug(), page: await lime('return { state: L.S.state, cls: document.querySelector("#stage").className, geo: L.geo() };') })}`);
+    if (box().width < 300) throw new Error(`${label}: opened but the wheel stayed small: ${JSON.stringify({ bounds: box(), main: debug(), page: await lime('return { state: L.S.state, cls: document.querySelector("#stage").className, geo: L.geo() };') })}`);
     await dragIn(wheel().webContents, 'dragleave');
     if (!(await until('return L.S.state === "idle" && !L.folding()', 5000))) throw new Error(`${label}: didn't fold after the drag left`);
     await sleep(600);
@@ -450,8 +453,8 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       await dragIn(wheel().webContents, 'dragleave');
       await sleep(Math.floor(rnd() * 1800));
       // Whatever moment it is caught in, the page and the window agree.
-      const st = await lime('return { s: L.S.state, f: L.folding() };'), w = wheel().getBounds().width;
-      if (st.s === 'idle' && !st.f && w > 120) { await sleep(400); if (wheel().getBounds().width > 120 && (await lime('return L.S.state === "idle" && !L.folding();'))) throw new Error(`cycle ${i}: idle but the window is ${w} wide`); }
+      const st = await lime('return { s: L.S.state, f: L.folding() };'), w = box().width;
+      if (st.s === 'idle' && !st.f && w > 120) { await sleep(400); if (box().width > 120 && (await lime('return L.S.state === "idle" && !L.folding();'))) throw new Error(`cycle ${i}: idle but the window is ${w} wide`); }
       if (wheels() !== 1) throw new Error(`cycle ${i}: ${wheels()} wheel windows`);
     }
     await healthy('after 60 cycles');

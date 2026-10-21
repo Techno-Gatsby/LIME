@@ -89,7 +89,7 @@ function winProbe(koffi) {
   return probe;
 }
 
-function detector(probe, { onDrag, onShift, onEnd }, threshold = 8) {
+function detector(probe, { onDrag, onShift, onEnd, onMove }, threshold = 8) {
   let last = null, press = null, dragging = false, shifted = false;
   return () => {
     const s = probe();
@@ -112,6 +112,7 @@ function detector(probe, { onDrag, onShift, onEnd }, threshold = 8) {
     // folding): onShift returns false then. Letting go and pressing again offers it again.
     if (!s.shift) shifted = false;
     else if (dragging && !shifted) shifted = onShift?.() !== false;
+    if (dragging) onMove?.();
     if (!dragging && 'count' in s) last = s;
   };
 }
