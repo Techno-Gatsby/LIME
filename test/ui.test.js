@@ -1312,8 +1312,11 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ed.set('.props .field input', 'Invoice 2026-0419');
     await ed.press('.props .field .btn');
     if (!(await ed.wait('document.querySelectorAll(".obj.redact").length >= 1', 6000))) throw new Error('finding the words marked nothing');
+    await ed.idle();
+    const terms = await ed.ejs('document.querySelectorAll(".obj.redact").length');
     await ed.press('.props [data-pat="email"]');
-    if (!(await ed.wait('document.querySelectorAll(".obj.redact").length >= 2', 6000))) throw new Error('no e-mail address marked');
+    // The address is on every page: wait for all three marks, or the apply below can run before they arrive.
+    if (!(await ed.wait(`document.querySelectorAll(".obj.redact").length >= ${terms + 3}`, 8000))) throw new Error('no e-mail address marked');
     await ed.drag(0.15, 0.4, 0.35, 0.5);
     const marked = await ed.ejs('document.querySelectorAll(".obj.redact").length');
     await ed.ejs(`[...document.querySelectorAll('.props .btn')].find((b) => /Apply redactions/.test(b.textContent)).click()`);
