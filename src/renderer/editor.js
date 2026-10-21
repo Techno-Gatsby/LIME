@@ -653,7 +653,7 @@ export function openEditor(view, { file, mode }, ctx) {
       case 'line': case 'arrow': return { ...base, ...by, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2, stroke: o.stroke, width: o.width };
       case 'ink': return { ...base, ...by, points: o.points, stroke: o.stroke, width: o.width };
       case 'measure': return o.points.length >= (o.kind === 'area' ? 3 : 2) ? { ...base, ...by, kind: o.kind, points: o.points, stroke: o.stroke, width: o.width || 1.5, contents: measureLabel(o) } : null;
-      case 'image': case 'signature': return { ...base, rect: o.rect, data: o.data, opacity: o.opacity ?? 1 };
+      case 'image': case 'signature': return { ...base, rect: o.rect, data: o.data, opacity: o.opacity ?? 1, ...(o.alt?.trim() ? { alt: o.alt.trim() } : {}) };
       default: return null;
     }
   }
@@ -1316,8 +1316,15 @@ export function openEditor(view, { file, mode }, ctx) {
       if (t === 'image') {
         const ops = h(`<div class="seg full"><button class="tb" data-x="rot" title="Turn 90° right">${icon('rotate')}<span class="lbl">Turn</span></button><button class="tb" data-x="h" title="Flip left to right">${icon('flipH')}<span class="lbl">Flip</span></button><button class="tb" data-x="v" title="Flip upside down">${icon('flipV')}<span class="lbl">Flip down</span></button></div>`);
         ops.addEventListener('click', (e) => { const b = e.target.closest('[data-x]'); if (b) transformImage(o, b.dataset.x); });
-        props.append(ops);
+        const crop = h(`<details class="more"${o.crop?.some(Boolean) ? ' open' : ''}><summary>Crop</summary></details>`);
+        [['Left', 0], ['Top', 1], ['Right', 2], ['Bottom', 3]].forEach(([label, i]) => crop.append(numSlider(`crop${i}`, `${label} (%)`, 0, 45, 0, 1, (v) => cropImage(o, i, v))));
+        for (const [i, el] of $$('.field', crop).entries()) $$('input', el).forEach((x) => { x.value = o.crop?.[i] || 0; });
+        props.append(ops, crop);
       }
+      // Alternative text: what a screen reader says for the picture, kept as a tagged figure in the file.
+      const alt = h(`<div class="field"><label class="label">Alternative text</label><textarea class="input" rows="2" placeholder="What the picture shows, for people who can’t see it">${esc(o.alt || '')}</textarea></div>`);
+      $('textarea', alt).addEventListener('input', (e) => { o.alt = e.target.value; updateChrome(); });
+      props.append(alt, h(`<p class="tip">${st.sess.tagged ? 'Saved as a tagged figure, read out by screen readers.' : 'Saved as a tagged figure. This PDF isn’t tagged yet, so screen readers may not read it until the rest is tagged too.'}</p>`));
       props.append(h(`<p class="tip">Drag to move. Drag the dot to resize.</p>`));
     } else if (t === 'redact') {
       redactProps(o, head, button);
@@ -1468,9 +1475,32 @@ export function openEditor(view, { file, mode }, ctx) {
     auto.append(button('This page', () => pageOp({ type: 'crop', pages: [page], auto: true }, true)), button('All pages', () => pageOp({ type: 'crop', pages: all, auto: true }, true)));
     props.append(row, h(`<div class="label">Remove white margins</div>`), auto, h(`<div class="label">Undo a crop</div>`), button('Show the whole page again', () => pageOp({ type: 'uncrop', pages: [c?.page ?? page] }, true)));
   }
+  // Cropping an added picture trims its edges by a share of the original, which stays at hand until it is turned or
+  // flipped; the box shrinks with it, so the rest stays where it was on the page.
+  const loadImg = async (src) => { const img = new Image(); await new Promise((r) => { img.onload = r; img.src = src; }); return img; };
+  async function cropImage(o, side, pct) {
+    const was = (o.crop || [0, 0, 0, 0]).map((v) => v / 100);
+    if (!o.orig) o.orig = o.data;
+    const c = [...(o.crop || [0, 0, 0, 0])];
+    c[side] = pct;
+    const [l, t, r, b] = c.map((v) => v / 100);
+    if (l + r > 0.9 || t + b > 0.9) return;
+    const [x, y, w, hh] = o.rect, w0 = w / (1 - was[0] - was[2]), h0 = hh / (1 - was[1] - was[3]), x0 = x - was[0] * w0, y0 = y - was[1] * h0;
+    o.crop = c;
+    o.rect = [x0 + l * w0, y0 + t * h0, w0 * (1 - l - r), h0 * (1 - t - b)];
+    const turn = (o.cropSeq = (o.cropSeq || 0) + 1);
+    const img = await loadImg(o.orig), W = img.naturalWidth, H = img.naturalHeight, cv = document.createElement('canvas');
+    if (turn !== o.cropSeq) return;
+    cv.width = Math.max(1, Math.round(W * (1 - l - r))); cv.height = Math.max(1, Math.round(H * (1 - t - b)));
+    cv.getContext('2d').drawImage(img, W * l, H * t, cv.width, cv.height, 0, 0, cv.width, cv.height);
+    o.data = cv.toDataURL('image/png');
+    $('img', o.el).src = o.data;
+    positionObj(o);
+    updateChrome();
+  }
   async function transformImage(o, how) {
-    const img = new Image();
-    await new Promise((r) => { img.onload = r; img.src = o.data; });
+    o.orig = null; o.crop = null;
+    const img = await loadImg(o.data);
     const turn = how === 'rot', c = document.createElement('canvas'), w = img.naturalWidth, hh = img.naturalHeight;
     c.width = turn ? hh : w; c.height = turn ? w : hh;
     const g = c.getContext('2d');

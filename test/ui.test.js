@@ -1285,6 +1285,9 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(await ed.wait('!!document.querySelector(".obj img") && !!document.querySelector(".obj.erase")', 8000))) throw new Error('the picture was not replaced');
     await ed.press('.props [data-x="h"]');
     await ed.ejs(`(() => { const n = document.querySelector('.props input.num[aria-label="Opacity (%)"]'); n.value = 60; n.dispatchEvent(new Event('change')); })()`);
+    await ed.ejs(`(() => { const n = document.querySelector('.props input.num[aria-label="Left (%)"]'); n.value = 25; n.dispatchEvent(new Event('change')); })()`);
+    await sleep(500);
+    await ed.set('.props textarea', 'A photo of a lime');
     const out = await ed.save();
     const s = await E.open(out), lines = (await E.text(s.id, 0)).map((l) => l.text);
     for (const w of ['Milk', 'Eggs', 'Bread']) if (!lines.some((l) => l.startsWith('•') && l.includes(w))) throw new Error(`no bullet for ${w}: ${lines.join(' | ')}`);
@@ -1295,7 +1298,28 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     let changed = 0;
     for (let y = box[1]; y < box[3]; y++) for (let x = box[0]; x < box[2]; x++) { const i = (y * a.info.width + x) * a.info.channels; if (Math.abs(a.data[i] - b.data[i]) + Math.abs(a.data[i + 1] - b.data[i + 1]) > 40) changed++; }
     if (changed < (box[2] - box[0]) * (box[3] - box[1]) * 0.3) throw new Error(`the picture looks the same (${changed} pixels changed)`);
-    return 'three bulleted lines; the page’s picture replaced with another, flipped and at 60%';
+    const pic = (await E.objects(s.id, 0)).find((o) => o.kind === 'image');
+    if (!pic || pic.bbox[2] - pic.bbox[0] > (box[2] - box[0]) * 2 * 0.8) throw new Error(`the cropped picture is ${pic ? (pic.bbox[2] - pic.bbox[0]).toFixed(0) : 'missing'} pt wide`);
+    const [, figs] = await require('../src/main/engines/crafts').pdfScript([{ tool: 'doc_open', args: { path: out } }, { tool: 'accessibility_figures', args: { doc: 1 } }], null, '');
+    if (!figs?.figures?.some((f) => f.alt === 'A photo of a lime' && f.page === 1)) throw new Error(`figures ${JSON.stringify(figs)}`);
+    return 'three bulleted lines; the page’s picture replaced, flipped, cropped, at 60% and tagged with its alternative text';
+  });
+
+  await editorTest('edit pdf · recognise text in a scan', 'scanned.pdf', 'scan.pdf', async (ed) => {
+    const before = (await E.text((await E.open(ed.src)).id, 0)).length;
+    await ed.press('[data-a="docmenu"]');
+    await ed.press('.popmenu [data-d="ocr"]');
+    await ed.press('.scrim [data-a="ok"]');
+    await sleep(400);
+    if (!(await ed.wait('!/Recognising/.test(document.querySelector(".ed-status").textContent) || document.querySelector(".ed-status").hidden', 90000))) throw new Error('recognising did not finish');
+    const out = await ed.save();
+    const s = await E.open(out), text = (await E.text(s.id, 0)).map((l) => l.text).join(' ');
+    if (before || !/quick/i.test(text) || !/fox/i.test(text)) throw new Error(`text ${before} → “${text.slice(0, 120)}”`);
+    const a = await require('sharp')(await E.render((await E.open(ed.src)).id, 0, 0.5)).raw().toBuffer(), b = await require('sharp')(await E.render(s.id, 0, 0.5)).raw().toBuffer();
+    let off = 0;
+    for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 8) off++;
+    if (a.length !== b.length || off > a.length * 0.002) throw new Error(`the page looks different after recognising (${off} values changed)`);
+    return `found “${text.slice(0, 40)}…”; the page looks as it did`;
   });
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };

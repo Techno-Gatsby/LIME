@@ -1,6 +1,6 @@
 'use strict';
 
-const { PDFDocument, rgb, degrees, BlendMode, LineCapStyle, setCharacterSpacing } = require('pdf-lib');
+const { PDFDocument, rgb, degrees, BlendMode, LineCapStyle, setCharacterSpacing, endMarkedContent, PDFOperator, PDFOperatorNames, PDFName, PDFNumber, PDFArray, PDFDict, PDFHexString } = require('pdf-lib');
 const P = require('./engines/pdf');
 const U = require('./engines/util');
 const { fsp, path } = U;
@@ -21,7 +21,9 @@ function info(s) {
     const b = s.doc.loadPage(i).getBounds();
     pages.push({ w: b[2] - b[0], h: b[3] - b[1] });
   }
-  return { id: s.id, pages, path: s.path, name: path.basename(s.path), canUndo: s.undo.length > 0, canRedo: s.redo.length > 0, dirty: s.dirty, protected: !!s.password };
+  let tagged = false;
+  try { tagged = s.doc.getTrailer().get('Root').get('MarkInfo').get('Marked').asBoolean() === true; } catch (_) {}
+  return { id: s.id, pages, path: s.path, name: path.basename(s.path), canUndo: s.undo.length > 0, canRedo: s.redo.length > 0, dirty: s.dirty, protected: !!s.password, tagged };
 }
 async function open(file, password) {
   const bytes = new Uint8Array(await fsp.readFile(file));
@@ -290,6 +292,43 @@ function addAnnot(page, e) {
   a.update();
 }
 
+// A Figure element with alternative text in the document's structure (made if the file has none), tied to the page
+// through the parent tree; returns the marked-content id the picture is drawn under.
+function tagFigure(doc, page, alt) {
+  const ctx = doc.context, cat = doc.catalog, K = PDFName.of('K'), num = (o) => (o instanceof PDFNumber ? o.asNumber() : null);
+  let rootRef = cat.get(PDFName.of('StructTreeRoot')), root = cat.lookup(PDFName.of('StructTreeRoot'));
+  if (!(root instanceof PDFDict)) { root = ctx.obj({ Type: 'StructTreeRoot', K: [] }); rootRef = ctx.register(root); cat.set(PDFName.of('StructTreeRoot'), rootRef); }
+  // The figure goes under the Document element when there is one, else straight under the root.
+  let parentRef = rootRef, parent = root;
+  const top = root.lookup(K), first = top instanceof PDFArray ? top.lookup(0) : top;
+  if (first instanceof PDFDict && /Document/.test(String(first.get(PDFName.of('S'))))) { parentRef = top instanceof PDFArray ? top.get(0) : root.get(K); parent = first; }
+  let tree = root.lookup(PDFName.of('ParentTree'));
+  if (!(tree instanceof PDFDict)) { tree = ctx.obj({ Nums: [] }); root.set(PDFName.of('ParentTree'), ctx.register(tree)); }
+  const leaves = [];
+  const walk = (node) => { if (node.lookup(PDFName.of('Nums')) instanceof PDFArray) leaves.push(node); const kids = node.lookup(PDFName.of('Kids')); if (kids instanceof PDFArray) for (let i = 0; i < kids.size(); i++) walk(kids.lookup(i)); };
+  walk(tree);
+  let key = num(page.node.get(PDFName.of('StructParents'))), list = null, max = -1;
+  for (const leaf of leaves) { const nums = leaf.lookup(PDFName.of('Nums')); for (let i = 0; i + 1 < nums.size(); i += 2) { const k = num(nums.get(i)); max = Math.max(max, k ?? -1); if (k === key) list = nums.lookup(i + 1); } }
+  if (!(list instanceof PDFArray)) {
+    key = Math.max(max + 1, num(root.get(PDFName.of('ParentTreeNextKey'))) ?? 0);
+    list = ctx.obj([]);
+    // A new page key goes at the end of the last leaf, which then reaches up to it.
+    const leaf = leaves[leaves.length - 1] || tree;
+    if (!(leaf.lookup(PDFName.of('Nums')) instanceof PDFArray)) leaf.set(PDFName.of('Nums'), ctx.obj([]));
+    const nums = leaf.lookup(PDFName.of('Nums')), limits = leaf.lookup(PDFName.of('Limits'));
+    nums.push(PDFNumber.of(key));
+    nums.push(ctx.register(list));
+    if (limits instanceof PDFArray && limits.size() === 2) limits.set(1, PDFNumber.of(key));
+    page.node.set(PDFName.of('StructParents'), PDFNumber.of(key));
+    root.set(PDFName.of('ParentTreeNextKey'), PDFNumber.of(key + 1));
+  }
+  const mcid = list.size(), elem = ctx.register(ctx.obj({ Type: 'StructElem', S: 'Figure', P: parentRef, Pg: page.ref, K: mcid, Alt: PDFHexString.fromText(alt) }));
+  const kids = parent.lookup(K);
+  if (kids instanceof PDFArray) kids.push(elem); else parent.set(K, ctx.obj(kids ? [parent.get(K), elem] : [elem]));
+  list.push(elem);
+  return mcid;
+}
+
 async function apply(id, edits) {
   const s = get(id);
   if (!edits?.length) return info(s);
@@ -453,7 +492,11 @@ async function apply(id, edits) {
           const bytes = Buffer.from(m2[2], 'base64');
           const im = m2[1] === 'png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
           const [ax, ay] = map(x, y + h);
+          // With alternative text the picture is a tagged figure, so screen readers say what it shows.
+          const mcid = e.alt ? tagFigure(doc, page, String(e.alt)) : null;
+          if (mcid != null) page.pushOperators(PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [PDFName.of('Figure'), doc.context.obj({ MCID: mcid })]));
           page.drawImage(im, { x: ax, y: ay, width: w, height: h, rotate: rot, opacity });
+          if (mcid != null) page.pushOperators(endMarkedContent());
           break;
         }
         default: break;
@@ -900,6 +943,32 @@ async function check(id, kind) {
     return kind === 'print' ? await C.printCheck(f, {}, ctx) : await C.accessCheck(f, {}, ctx);
   } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
+// Recognise text on scanned pages: the words go over the page as invisible text, so it can be searched, copied and
+// edited, while the page itself stays as it was (Acrobat's Recognize Text).
+async function recognise(id, { lang = 'eng', all = false } = {}) {
+  const s = get(id);
+  const m = await P.mupdf();
+  const ocr = require('./engines/ocr');
+  const doc = await PDFDocument.load(s.bytes, { updateMetadata: false });
+  let done = 0, words = 0;
+  for (let i = 0; i < s.doc.countPages(); i++) {
+    const page = s.doc.loadPage(i);
+    if (!all && page.toStructuredText('').asText().trim().length > 40) continue;
+    const b = page.getBounds(), w = b[2] - b[0], h = b[3] - b[1];
+    const png = Buffer.from(page.toPixmap(m.Matrix.scale(300 / 72, 300 / 72), m.ColorSpace.DeviceRGB, false, true).asPNG());
+    const res = await ocr.imageToTextPdf(png, lang);
+    if (!res.text.trim()) continue;
+    const [layer] = await doc.embedPdf(res.pdf, [0]);
+    // Drawn over the page as it is shown, whatever its rotation.
+    const inv = m.Matrix.invert(page.getTransform()), map = (u, v) => [u * inv[0] + v * inv[2] + inv[4], u * inv[1] + v * inv[3] + inv[5]];
+    const [ax, ay] = map(0, h), pg = doc.getPage(i);
+    pg.drawPage(layer, { x: ax, y: ay, width: w, height: h, rotate: degrees((Math.atan2(inv[1], inv[0]) * 180) / Math.PI) });
+    done++;
+    words += res.text.split(/\s+/).filter(Boolean).length;
+  }
+  if (done) { pushUndo(s); await loadState(s, await doc.save({ useObjectStreams: true })); }
+  return { ...info(s), recognised: done, words };
+}
 // Text to redact: every match of the words, or of the patterns the Redact tool offers, as a box per match.
 async function findRedact(id, { terms = [], patterns = [] } = {}) {
   const s = get(id);
@@ -927,4 +996,4 @@ async function findRedact(id, { terms = [], patterns = [] } = {}) {
 function close(id) { sessions.delete(id); return true; }
 
 module.exports = { open, render, patch, objects, fonts, text, search, apply, pageOp, undo, redo, save, exportPages, close,
-  annots, annotOp, links, linkOp, outline, setOutline, paragraphs, fields, fill, fieldOp, props, setProps, docOp, preview, check, findRedact };
+  annots, annotOp, links, linkOp, outline, setOutline, paragraphs, fields, fill, fieldOp, props, setProps, docOp, preview, check, findRedact, recognise };

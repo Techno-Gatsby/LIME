@@ -6,6 +6,7 @@ import { $, $$, esc, h } from './ui.js';
 const COLORS = ['#000000', '#3b3b3b', '#6b6b6b', '#d13438', '#ca5010', '#107c10', '#0f6cbd', '#5c2e91'];
 const BG = ['#fff4ce', '#dff6dd', '#cfe4fa', '#fde7e9', '#e8e0f5', '#f3f3f3', '#ffffff'];
 const LANGS = [['', 'Not set'], ['en-GB', 'English (UK)'], ['en-US', 'English (US)'], ['fr-FR', 'French'], ['de-DE', 'German'], ['es-ES', 'Spanish'], ['it-IT', 'Italian'], ['nl-NL', 'Dutch'], ['pt-PT', 'Portuguese'], ['pl-PL', 'Polish'], ['sv-SE', 'Swedish'], ['ar', 'Arabic'], ['hi-IN', 'Hindi'], ['zh-CN', 'Chinese'], ['ja-JP', 'Japanese']];
+const OCR_LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
 const MARKS = { headerFooter: 'header_footer', pageNumbers: 'header_footer', bates: 'header_footer', watermark: 'watermark', background: 'background' };
 const TITLES = { headerFooter: 'Header and footer', pageNumbers: 'Page numbers', bates: 'Bates numbering', watermark: 'Watermark', background: 'Background' };
 
@@ -29,12 +30,13 @@ export function docTools(ed) {
   function menu(anchor) {
     popover(anchor, `<div class="mlabel">Pages</div>${item('headerFooter', 'text', 'Header and footer…')}${item('pageNumbers', 'listNum', 'Page numbers…')}${item('bates', 'stamp', 'Bates numbering…')}${item('watermark', 'layers', 'Watermark…')}${item('background', 'image', 'Background…')}
       <div class="mlabel">Document</div>${item('props', 'info', 'Properties…')}${item('security', 'lock', 'Password and permissions…')}${item('flatfields', 'field', 'Flatten form fields')}${item('flatcomments', 'comment', 'Flatten comments')}
-      <div class="mlabel">Check</div>${item('access', 'eye', 'Accessibility check')}${item('print', 'warning', 'Print check')}`, (d) => {
+      <div class="mlabel">Scans and checks</div>${item('ocr', 'search', 'Recognise text…')}${item('access', 'eye', 'Accessibility check')}${item('print', 'warning', 'Print check')}`, (d) => {
       if (TITLES[d]) marks(d);
       else if (d === 'props') properties();
       else if (d === 'security') security();
       else if (d === 'flatfields') ed.flattenForm();
       else if (d === 'flatcomments') flattenComments();
+      else if (d === 'ocr') recognise();
       else check(d);
     });
   }
@@ -236,6 +238,24 @@ export function docTools(ed) {
     if (r) { st.sess = r; st.annSel = null; ed.refresh(); toast('Comments are now part of the pages.', { type: 'success' }); }
   }
 
+  // Recognise text in scanned pages, so they can be searched, copied and edited.
+  function recognise() {
+    const d = dialog('Recognise text', { ok: 'Recognise' });
+    d.body.append(h(`<div class="dlgform one">
+      <p class="tip">The words on scanned pages become real text, laid invisibly over the page, so Find, copying and Edit text work. The pages look the same.</p>
+      <label><span class="label">Language</span><select class="input" data-f="lang">${OCR_LANGS.map(([k, label]) => `<option value="${k}">${label}</option>`).join('')}</select></label>
+      <label class="row"><input type="checkbox" data-f="all"> Pages that have text already, too</label>
+    </div>`));
+    d.ok.addEventListener('click', async () => {
+      const lang = $('[data-f=lang]', d.body).value, all = $('[data-f=all]', d.body).checked;
+      d.close();
+      const r = await ed.busy('Recognising text…', async () => { await ed.flush(); return call('recognise', st.sess.id, { lang, all }); });
+      if (!r) return;
+      st.sess = r;
+      ed.refresh();
+      toast(r.recognised ? `Recognised ${r.words} word${r.words === 1 ? '' : 's'} on ${r.recognised} page${r.recognised === 1 ? '' : 's'}. Save to keep it.` : 'Every page already has text; nothing to recognise.', { type: r.recognised ? 'success' : undefined });
+    });
+  }
   async function check(kind) {
     const r = await ed.busy(kind === 'print' ? 'Checking for print…' : 'Checking accessibility…', async () => { await ed.flush(); return call('check', st.sess.id, kind); });
     if (!r) return;
