@@ -926,11 +926,22 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await press(0.1, 0.12);
     const ring = await ejs(`(() => { const el = [...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED'); return el && el.classList.contains('bordered') && getComputedStyle(el, '::after').borderTopColor; })()`);
     if (ring !== 'rgb(16, 124, 16)') throw new Error(`stamp preview border ${ring}`);
+    // Select the stamp and turn it, make it bigger and fainter from the panel.
+    await ejs(`(() => { const el = [...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED'); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 1, clientY: 1 })); window.dispatchEvent(new PointerEvent('pointerup', {})); })()`);
+    if (!(await wait('document.querySelector(".props h3")?.textContent === "Stamp"', 2000))) throw new Error('selecting the stamp did not show its settings');
+    for (const [label, v] of [['Size (pt)', 24], ['Rotation (°)', 30], ['Opacity (%)', 80]]) await ejs(`(() => { const n = document.querySelector('.props input.num[aria-label="${label}"]'); n.value = ${v}; n.dispatchEvent(new Event('change')); })()`);
+    const turned = await ejs(`getComputedStyle([...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED')).transform`);
+    if (!/matrix\(0\.86/.test(turned)) throw new Error(`stamp preview not turned: ${turned}`);
+    // A stamp in the user's own words.
+    await ejs('document.querySelector(\'[data-tool="stamp"]\').click()');
+    await ejs(`(() => { const i = [...document.querySelectorAll('.props input[type=text]')].find((x) => /own words/.test(x.closest('.field').textContent)); i.value = 'CHECKED BY JK'; i.dispatchEvent(new Event('input')); })()`);
+    await press(0.55, 0.62);
+    if (!(await wait('[...document.querySelectorAll(".obj.text")].some((x) => x.textContent === "CHECKED BY JK")', 2000))) throw new Error('own words stamp missing');
     await ejs('document.querySelector(\'.props [data-st="mark:check"]\').click()');
-    await press(0.1, 0.22);
+    await press(0.1, 0.5);
     if (!(await wait('!!document.querySelector(".obj svg path")', 2000))) throw new Error('no tick on the page');
     await ejs('document.querySelector(\'.props [data-st="date"]\').click()');
-    await press(0.1, 0.28);
+    await press(0.1, 0.56);
     // Underline part of a line of text with the markup tool.
     await ejs('document.querySelector(\'[data-tool="highlight"]\').click()');
     await ejs('document.querySelector(\'.props [data-m="underline"]\').click()');
@@ -949,6 +960,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const lines = await E.text(s2.id, 0), was = (await E.text(s1.id, 0)).map((l) => l.text).join('\n');
     const st_ = lines.find((l) => l.text.includes('APPROVED'));
     if (!st_ || !/Bold/.test(st_.font)) throw new Error(`stamp text ${st_ ? st_.font : 'missing'}`);
+    if (!lines.some((l) => l.text.includes('CHECKED BY JK'))) throw new Error('own words stamp not in the file');
     const year = String(new Date().getFullYear());
     if (!lines.some((l) => l.text.includes(year) && !was.includes(l.text))) throw new Error('the date is not in the file');
     // Green ink from the stamp's border and the tick, red from the underline, none of which the page had before.
@@ -964,8 +976,18 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     };
     const a = await ink(s1.id), b = await ink(s2.id);
     if (b.green - a.green < 150) throw new Error(`stamp border and tick: ${b.green - a.green} green pixels`);
+    // Turned 30°, the stamp's green reaches much higher and lower than a level one would (about 40 pt tall).
+    {
+      const { data, info } = await require('sharp')(await E.render(s2.id, 0, 1.5)).raw().toBuffer({ resolveWithObject: true }), { data: d0 } = await require('sharp')(await E.render(s1.id, 0, 1.5)).raw().toBuffer({ resolveWithObject: true });
+      let top = Infinity, bottom = -1;
+      for (let y = 0; y < info.height * 0.35; y++) for (let x = 0; x < info.width; x++) {
+        const i = (y * info.width + x) * info.channels, [r, g, bl] = [data[i], data[i + 1], data[i + 2]], was = d0[i + 1] - d0[i];
+        if (g > 90 && g - r > 50 && g - bl > 50 && was < 30) { top = Math.min(top, y); bottom = Math.max(bottom, y); }
+      }
+      if (bottom - top < 1.5 * 70) throw new Error(`stamp is ${((bottom - top) / 1.5).toFixed(0)} pt tall: not turned in the file`);
+    }
     if (b.red - a.red < 60) throw new Error(`underline: ${b.red - a.red} red pixels`);
-    stamp.detail = `APPROVED in ${st_.font} with its border, a tick, today's date and an underline saved`;
+    stamp.detail = `APPROVED in ${st_.font}, turned 30° with its border, own words, a tick, today's date and an underline saved`;
     win.destroy();
   } catch (e) { stamp.status = 'FAIL'; stamp.detail = e.message; }
   console.log(`${stamp.status} ${stamp.name.padEnd(44)}        ${stamp.detail}`);

@@ -71,6 +71,10 @@ html, body, #view { height: 100%; overflow: hidden; }
 .obj.sel { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 .obj .handle { position: absolute; right: -7px; bottom: -7px; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); cursor: nwse-resize; display: none; }
 .obj.sel .handle { display: block; }
+.obj .rot { position: absolute; left: 50%; top: -30px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); cursor: grab; display: none; }
+.obj .rot::after { content: ""; position: absolute; left: 50%; top: 100%; width: 1.5px; height: 14px; background: var(--accent); transform: translateX(-50%); }
+.obj.sel .rot { display: block; }
+.range .input.num { width: 58px; flex: none; height: 26px; padding: 0 6px; font-variant-numeric: tabular-nums; }
 .obj.text, .tedit { white-space: pre; line-height: 1.2; outline: none; color: #000; min-width: 8px; -webkit-user-select: text; user-select: text; cursor: text; }
 .obj.text.bordered::after { content: ""; position: absolute; inset: calc(-1 * var(--bpad)); border: var(--bw) solid var(--bd); border-radius: var(--brad); pointer-events: none; }
 .props .stamps { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }

@@ -199,6 +199,8 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await place(0.14, 0.355);
         await ejs(`document.querySelector('.props [data-st="CONFIDENTIAL"]').click()`);
         await shot('18-editor-stamp', e);
+        await ejs(`(() => { const el = [...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED'); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); window.dispatchEvent(new PointerEvent('pointerup', {})); const n = document.querySelector('.props input.num[aria-label="Rotation (°)"]'); n.value = -15; n.dispatchEvent(new Event('change')); })()`);
+        await shot('18b-editor-stamp-selected', e);
         await ejs(`document.querySelector('[data-tool="highlight"]').click(); document.querySelector('.props [data-m="underline"]').click()`);
         await shot('19-editor-markup', e);
       }

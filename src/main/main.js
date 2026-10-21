@@ -25,7 +25,7 @@ if (isWin) app.setAppUserModelId('app.lime.converter');
 if (process.env.LIME_NO_GPU) app.disableHardwareAcceleration();
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
-  { scheme: 'media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true } },
+  { scheme: 'media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } },
 ]);
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
@@ -712,7 +712,9 @@ function registerProtocols() {
   protocol.handle('media', (req) => {
     const u = new URL(req.url);
     const p = u.host === 'font' ? path.join(DATA, 'fonts', path.basename(decodeURIComponent(u.pathname))) : decodeURIComponent(u.pathname.slice(1));
-    return fs.existsSync(p) ? net.fetch(pathToFileURL(p).href, { headers: req.headers }) : new Response('Not found', { status: 404 });
+    if (!fs.existsSync(p)) return new Response('Not found', { status: 404 });
+    // Pages are served from app://, so fonts (and anything else fetched with CORS) need saying they may be used there.
+    return net.fetch(pathToFileURL(p).href, { headers: req.headers }).then((r) => { const headers = new Headers(r.headers); headers.set('Access-Control-Allow-Origin', '*'); return new Response(r.body, { status: r.status, statusText: r.statusText, headers }); });
   });
 }
 

@@ -27,6 +27,8 @@ const MARKS = [['check', 'Tick'], ['cross', 'Cross'], ['dot', 'Dot']];
 const MARK_LINES = { check: [[[0.1, 0.55], [0.4, 0.85], [0.92, 0.15]]], cross: [[[0.15, 0.15], [0.85, 0.85]], [[0.85, 0.15], [0.15, 0.85]]] };
 const markSvg = (kind, w, hh, color, sw) => (kind === 'dot' ? `<circle cx="${w / 2}" cy="${hh / 2}" r="${Math.min(w, hh) * 0.3}" fill="${color}"/>`
   : `<path d="${(MARK_LINES[kind] || MARK_LINES.check).map((ln) => ln.map(([u, v], j) => `${j ? 'L' : 'M'}${u * w} ${v * hh}`).join('')).join('')}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`);
+// Added text, stamps and ticks can be turned; the saved file turns them about the same centre.
+const ROTATES = (o) => o.type === 'text' || o.type === 'mark';
 const today = () => new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 // Lime's own fonts, the standard PDF fonts (which add nothing to the file for plain text), then the computer's own.
 const BUILT_IN_FONTS = [['sans', 'Noto Sans', '"Noto Sans","Segoe UI",Arial,sans-serif'], ['serif', 'Noto Serif', '"Noto Serif","Times New Roman",serif'], ['carlito', 'Carlito (like Calibri)', 'Carlito,Calibri,sans-serif'],
@@ -41,7 +43,7 @@ export function openEditor(view, { file, mode }, ctx) {
     sess: null, file, savePath: null, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext',
     pending: [], sel: null, pick: null, pages: [], renders: new Map(), lines: new Map(), objs: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
     fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', border: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff',
-      markup: 'highlight', ul: '#d13438', stamp: 'APPROVED', mark: '#107c10' },
+      markup: 'highlight', ul: '#d13438', stamp: 'APPROVED', stampText: '', stampColor: '#d13438', mark: '#107c10' },
     seq: 0, busy: false,
   };
   const root = h(`<div class="editor">
@@ -396,6 +398,7 @@ export function openEditor(view, { file, mode }, ctx) {
     else if (o.type === 'image' || o.type === 'signature') el = h(`<div class="obj"><img alt="" src="${o.data}"></div>`);
     else el = h(`<div class="obj"><svg></svg></div>`);
     el.append(h(`<span class="handle" aria-hidden="true"></span>`));
+    if (ROTATES(o)) el.append(h(`<span class="rot" aria-hidden="true" title="Drag to rotate (Shift for steps of 15°)"></span>`));
     el.addEventListener('pointerdown', (e) => onObjPointer(e, o));
     el.addEventListener('dblclick', () => { if (o.type === 'text' || o.type === 'replace') editText(o, false); });
     o.el = el;
@@ -425,6 +428,7 @@ export function openEditor(view, { file, mode }, ctx) {
       el.classList.toggle('bordered', !!bd);
       el.style.borderRadius = bd ? `${Math.max(0, rad - pad) * kk}px` : '';
       if (bd) for (const [n, v] of [['--bd', bd], ['--bpad', `${(pad + bw) * kk}px`], ['--bw', `${bw * kk}px`], ['--brad', `${(rad + bw / 2) * kk}px`]]) el.style.setProperty(n, v);
+      el.style.transform = o.rotate ? `rotate(${o.rotate}deg)` : '';
       return;
     }
     if (o.rect) {
@@ -437,7 +441,10 @@ export function openEditor(view, { file, mode }, ctx) {
         el.style.background = at ? `linear-gradient(${o.color}, ${o.color}) left ${at} / 100% ${line}px no-repeat` : o.color;
         el.style.opacity = at ? '1' : '0.5';
       }
-      if (o.type === 'mark') $('svg', el).innerHTML = markSvg(o.kind, w * kk, hh * kk, o.stroke, (o.width || 2) * kk);
+      if (o.type === 'mark') {
+        $('svg', el).innerHTML = markSvg(o.kind, w * kk, hh * kk, o.stroke, (o.width || 2) * kk);
+        Object.assign(el.style, { opacity: String(o.opacity ?? 1), transform: o.rotate ? `rotate(${o.rotate}deg)` : '' });
+      }
       if (o.type === 'rect' || o.type === 'ellipse') {
         const sw = (o.width || 2) * kk;
         const shape = o.type === 'rect' ? `<rect x="${sw / 2}" y="${sw / 2}" width="${Math.max(0, w * kk - sw)}" height="${Math.max(0, hh * kk - sw)}"` : `<ellipse cx="${w * kk / 2}" cy="${hh * kk / 2}" rx="${Math.max(0, w * kk / 2 - sw / 2)}" ry="${Math.max(0, hh * kk / 2 - sw / 2)}"`;
@@ -465,7 +472,7 @@ export function openEditor(view, { file, mode }, ctx) {
       $('svg', el).innerHTML = `<polyline fill="none" stroke="${o.stroke}" stroke-width="${(o.width || 2) * kk}" stroke-linecap="round" stroke-linejoin="round" points="${o.points.map((q) => `${(q[0] - x) * kk},${(q[1] - y) * kk}`).join(' ')}"/>`;
     }
   }
-  const textStyle = (o) => ({ size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color, underline: !!o.underline, strike: !!o.strike, bg: o.bg && o.bg !== 'none' ? o.bg : '', border: o.border && o.border !== 'none' ? o.border : '', align: o.align || 'left', lineHeight: o.lineHeight || 1.2, spacing: o.spacing || 0, opacity: o.opacity ?? 1 });
+  const textStyle = (o) => ({ size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color, underline: !!o.underline, strike: !!o.strike, bg: o.bg && o.bg !== 'none' ? o.bg : '', border: o.border && o.border !== 'none' ? o.border : '', rotate: o.rotate || 0, align: o.align || 'left', lineHeight: o.lineHeight || 1.2, spacing: o.spacing || 0, opacity: o.opacity ?? 1 });
   function serialize(o) {
     const base = { page: o.page, type: o.type };
     switch (o.type) {
@@ -475,7 +482,7 @@ export function openEditor(view, { file, mode }, ctx) {
       case 'whiteout': return { ...base, rect: o.rect, fill: o.fill };
       case 'erase': return { ...base, rect: o.rect };
       case 'highlight': return { ...base, rect: o.rect, color: o.color, opacity: 0.45, markup: o.markup || 'highlight' };
-      case 'mark': return { ...base, rect: o.rect, kind: o.kind, stroke: o.stroke, width: o.width };
+      case 'mark': return { ...base, rect: o.rect, kind: o.kind, stroke: o.stroke, width: o.width, rotate: o.rotate || 0, opacity: o.opacity ?? 1 };
       case 'rect': case 'ellipse': return { ...base, rect: o.rect, stroke: o.stroke, fill: o.fill, width: o.width };
       case 'line': case 'arrow': return { ...base, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2, stroke: o.stroke, width: o.width };
       case 'ink': return { ...base, points: o.points, stroke: o.stroke, width: o.width };
@@ -555,6 +562,7 @@ export function openEditor(view, { file, mode }, ctx) {
     select(o);
     if (o.type === 'erase') return;
     const handle = e.target.classList.contains('handle');
+    if (e.target.classList.contains('rot')) { turnObj(e, o); return; }
     const start = ptOf(e, o.page);
     const snap = JSON.parse(JSON.stringify({ rect: o.rect, x: o.x, y: o.y, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2, points: o.points, size: o.size }));
     let moved = false;
@@ -577,6 +585,25 @@ export function openEditor(view, { file, mode }, ctx) {
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); if (!moved && (o.type === 'text' || o.type === 'replace') && st.tool !== 'select') editText(o, false); renderProps(); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  }
+  // Turning by the knob above the box: the angle from the box's centre to the pointer, Shift for steps of 15°.
+  function turnObj(e, o) {
+    const r = o.el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const move = (ev) => {
+      let a = (Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180) / Math.PI + 90;
+      if (ev.shiftKey) a = Math.round(a / 15) * 15;
+      o.rotate = Math.round(((a + 540) % 360) - 180);
+      positionObj(o);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); renderProps(); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  // Changing words from the panel keeps the handles inside the box.
+  function setText(o) {
+    const t = [...o.el.childNodes].find((n) => n.nodeType === 3) || o.el.insertBefore(document.createTextNode(''), o.el.firstChild);
+    t.textContent = o.text;
+    positionObj(o);
   }
   function onPointerDown(e, i) {
     if (e.button !== 0 || e.target.closest('.obj')) return;
@@ -622,12 +649,14 @@ export function openEditor(view, { file, mode }, ctx) {
     const s = st.style, v = s.stamp, plain = { font: 'sans', italic: false, underline: false, strike: false, bg: 'none', align: 'left', lineHeight: 1.2, opacity: 1 };
     if (v.startsWith('mark:')) return addObj({ type: 'mark', kind: v.slice(5), page: i, rect: [x, y, 16, 16], stroke: s.mark, width: 2 });
     if (v === 'date') return addObj({ type: 'text', page: i, x, y: y + 12 * 0.86, text: today(), size: 12, color: s.color, bold: false, border: 'none', spacing: 0, ...plain });
-    const [text, color] = STAMPS.find(([n]) => n === v) || STAMPS[0], size = 16, pad = size * 0.18 + Math.max(1, size / 12);
+    const [text, color] = v === 'custom' ? [s.stampText.trim() || 'STAMP', s.stampColor] : STAMPS.find(([n]) => n === v) || STAMPS[0], size = 16, pad = size * 0.18 + Math.max(1, size / 12);
     return addObj({ type: 'text', page: i, x: x + pad, y: y + pad + size * 0.86, text, size, color, bold: true, border: color, spacing: 0.6, ...plain, opacity: 0.9 });
   }
   function selectTool(t) {
     commitEditing();
     st.tool = t;
+    // Choosing a tool lets go of what was selected, so the panel shows the tool.
+    if (st.sel) select(null);
     $$('[data-tool]', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.tool === t));
     pagesEl.className = `pages tool-${t}`;
     if (t === 'edittext') st.pages.forEach((p, i) => p.visible && showLines(i)); else hideLines();
@@ -672,7 +701,26 @@ export function openEditor(view, { file, mode }, ctx) {
       props.append(back);
       return;
     }
-    if (t === 'text' || t === 'replace' || t === 'addtext' || t === 'edittext') {
+    // A slider with a number box beside it, both in the units shown (scale turns them into what is stored).
+    const numSlider = (key, label, min, max, def, scale = 1, set = null) => {
+      const shown = Math.round(((o || s)[key] ?? def) * scale);
+      const f = h(`<div class="field"><label class="label">${label}</label><div class="range"><input type="range" min="${min}" max="${max}" step="1" value="${shown}"><input class="input num" type="number" min="${min}" max="${max}" step="1" value="${shown}" aria-label="${label}"></div></div>`);
+      const [r, n] = $$('input', f);
+      const put = (x) => { const y = Math.min(max, Math.max(min, Math.round(Number(x)))); if (Number.isNaN(y)) return; if (set) set(y / scale); else apply({ [key]: y / scale }); r.value = y; n.value = y; paintRange(r); };
+      r.addEventListener('input', () => put(r.value));
+      n.addEventListener('change', () => put(n.value));
+      return f;
+    };
+    if (o?.type === 'text' && o.border && o.border !== 'none') {
+      // A stamp: its words, colour (text and border together), size, angle and transparency, all at hand.
+      head('Stamp');
+      const words = h(`<div class="field"><label class="label">Words</label><input class="input" type="text" maxlength="80" value="${esc(o.text)}"></div>`);
+      $('input', words).addEventListener('input', (e) => { o.text = e.target.value; setText(o); updateChrome(); });
+      props.append(words, h(`<div class="label">Colour</div>`), swatch(COLORS.slice(0, 8), o.color, (c) => apply({ color: c, border: c })),
+        numSlider('size', 'Size (pt)', 6, 120, 16), numSlider('rotate', 'Rotation (°)', -180, 180, 0), numSlider('opacity', 'Opacity (%)', 10, 100, 1, 100),
+        h(`<div class="label">Background</div>`), swatch(TEXT_BG, o.bg || 'none', (c) => apply({ bg: c })));
+      props.append(h(`<p class="tip">Drag the stamp to move it, the dot to resize it and the knob above it to turn it (Shift for 15° steps). Double-click to type on it.</p>`));
+    } else if (t === 'text' || t === 'replace' || t === 'addtext' || t === 'edittext') {
       const v = o || s;
       head(o?.type === 'replace' ? 'Edited text' : t === 'edittext' ? 'Edit text' : 'Text');
       if (t === 'edittext' && !o) { props.append(h(`<p class="tip">Click a line on the page to edit it. The original text is removed from the file when you save, not just covered.</p><p class="tip">Lines in rotated or vertical text can’t be edited directly; erase them and add new text instead.</p>`)); return; }
@@ -703,6 +751,7 @@ export function openEditor(view, { file, mode }, ctx) {
       };
       const more = h(`<details class="more"><summary>Spacing and opacity</summary></details>`);
       more.append(slider('lineHeight', 'Line spacing', 0.8, 3, 0.05, (n) => `${Number(n).toFixed(2)}×`), slider('spacing', 'Letter spacing', -2, 10, 0.1, (n) => `${Number(n).toFixed(1)} pt`), slider('opacity', 'Opacity', 0.1, 1, 0.05, (n) => `${Math.round(n * 100)}%`));
+      if (o?.type === 'text') more.append(slider('rotate', 'Rotation', -180, 180, 1, (n) => `${Math.round(n)}°`));
       props.append(more);
       if (o) props.append(h(`<p class="tip">${o.type === 'replace' ? 'Changes replace the original line when you save.' : 'Double-click to edit. Drag to move. Drag the dot to resize.'}</p>`));
     } else if (t === 'whiteout') {
@@ -727,7 +776,11 @@ export function openEditor(view, { file, mode }, ctx) {
       const grid = h(`<div class="stamps">${STAMPS.map(([n, c]) => `<button class="stampbtn" data-st="${esc(n)}" ${pressed(n)} style="color:${c}">${esc(n)}</button>`).join('')}</div>`);
       const marks = h(`<div class="seg full">${MARKS.map(([id, label]) => `<button class="tb" data-st="mark:${id}" ${pressed(`mark:${id}`)} title="${label}"><svg viewBox="0 0 20 20" width="18" height="18">${markSvg(id, 20, 20, s.mark, 2.2)}</svg><span class="lbl">${label}</span></button>`).join('')}<button class="tb" data-st="date" ${pressed('date')} title="Today’s date: ${esc(today())}">${icon('clock')}<span class="lbl">Date</span></button></div>`);
       for (const el of [grid, marks]) el.addEventListener('click', (e) => { const b = e.target.closest('[data-st]'); if (b) { s.stamp = b.dataset.st; renderProps(); } });
-      props.append(h(`<div class="label">Stamps</div>`), grid, h(`<div class="label">Marks and date</div>`), marks);
+      const own = h(`<div class="field"><label class="label">Your own words</label><input class="input" type="text" maxlength="60" placeholder="e.g. RECEIVED 21 OCT" value="${esc(s.stampText)}"></div>`);
+      $('input', own).addEventListener('input', (e) => { s.stampText = e.target.value; const was = s.stamp; s.stamp = s.stampText.trim() ? 'custom' : (s.stamp === 'custom' ? 'APPROVED' : s.stamp); if (was !== s.stamp) { grid.querySelectorAll('[data-st]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.st === s.stamp)); ownColour.hidden = s.stamp !== 'custom'; } });
+      const ownColour = swatch(COLORS, s.stampColor, (c) => { s.stampColor = c; s.stamp = 'custom'; });
+      ownColour.hidden = s.stamp !== 'custom';
+      props.append(h(`<div class="label">Stamps</div>`), grid, own, ownColour, h(`<div class="label">Marks and date</div>`), marks);
       if (s.stamp.startsWith('mark:')) props.append(h(`<div class="label">Mark colour</div>`), swatch(COLORS, s.mark, (c) => { s.mark = c; }));
       props.append(h(`<p class="tip">Click the page to place it. Stamps are text, so double-click one to change its words; the date can be edited the same way.</p>`));
     } else if (t === 'mark') {
@@ -735,6 +788,9 @@ export function openEditor(view, { file, mode }, ctx) {
       const kinds = h(`<div class="seg full">${MARKS.map(([id, label]) => `<button class="tb" data-k="${id}" aria-pressed="${o.kind === id}" title="${label}"><svg viewBox="0 0 20 20" width="18" height="18">${markSvg(id, 20, 20, o.stroke, 2.2)}</svg><span class="lbl">${label}</span></button>`).join('')}</div>`);
       kinds.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) { apply({ kind: b.dataset.k }); renderProps(); } });
       props.append(kinds, h(`<div class="label">Colour</div>`), swatch(COLORS, o.stroke, (c) => apply({ stroke: c })));
+      // Size keeps the mark's centre where it is.
+      const size = numSlider('size', 'Size (pt)', 6, 120, o.rect[2], 1, (z) => { const [rx, ry, rw, rh] = o.rect; apply({ rect: [rx + rw / 2 - z / 2, ry + rh / 2 - z / 2, z, z] }); });
+      props.append(size, numSlider('rotate', 'Rotation (°)', -180, 180, 0), numSlider('opacity', 'Opacity (%)', 10, 100, 1, 100));
       if (o.kind !== 'dot') {
         const w = h(`<div class="field"><label class="label">Thickness</label><div class="range"><input type="range" min="0.5" max="6" step="0.5" value="${o.width || 2}"><output>${o.width || 2} pt</output></div></div>`);
         $('input', w).addEventListener('input', (e) => { $('output', w).textContent = `${e.target.value} pt`; apply({ width: Number(e.target.value) }); });
