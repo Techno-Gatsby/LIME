@@ -205,6 +205,95 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('19-editor-markup', e);
       }
     }
+    // The app editors: each opened on a sample, then a few of its panels.
+    const STUDIO = [
+      ['studio-vector', 'logo.svg', 'vectorcraft', ['select', 'color', 'arrange', 'path', 'type', 'artboard', 'export'], async (ejs) => { await ejs(`document.querySelector('.vobj')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); window.dispatchEvent(new PointerEvent('pointerup', {}))`); }],
+      ['studio-layout', 'layout.idml', 'designcraft', ['select', 'story', 'swatches', 'fonts', 'pages', 'preflight', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.dframe.text')[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`); }],
+      ['studio-motion', 'anim.json', 'effectcraft', ['layers', 'text', 'color', 'time', 'comp', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.lrow .name')[1]?.click()`); }],
+      ['studio-timeline', 'timeline.otio', 'filmcraft', ['select', 'clip', 'look', 'title', 'sequence', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.clip.video')[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`); }],
+    ];
+    for (const [step, sample, appId, panels, pick] of STUDIO) {
+      if (!want(step) && !want('studio')) continue;
+      openEditor(path.join(samples, sample), `studio:${appId}`);
+      let e = null;
+      for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === `studio:${appId}` && !x.webContents.isLoading()); }
+      if (!e) continue;
+      const ejs = (code) => e.webContents.executeJavaScript(code, true);
+      for (let t = 0; t < 120 && !(await ejs('!!document.querySelector(".studio .props h3") && !document.querySelector(".studio.working")')); t++) await sleep(250);
+      await sleep(2500);
+      await shot(`${step}-0`, e);
+      for (const [i, p] of panels.entries()) {
+        await ejs(`document.querySelector('[data-tool="${p}"]').click()`);
+        for (let t = 0; t < 60 && (await ejs('!!document.querySelector(".studio.working")')); t++) await sleep(250);
+        await sleep(1200);
+        await shot(`${step}-${i + 1}-${p}`, e);
+        if (i) continue;
+        await pick(ejs);
+        await sleep(1500);
+        await shot(`${step}-${i + 1}-${p}-picked`, e);
+      }
+      e.destroy();
+    }
+    // A few things done in each editor, the way a person would: drawing, typing, the history and Save as.
+    if (want('studio-flows')) {
+      const open = async (sample, appId) => {
+        openEditor(path.join(samples, sample), `studio:${appId}`);
+        let e = null;
+        for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === `studio:${appId}` && !x.webContents.isLoading()); }
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        const idle = async () => { await sleep(300); for (let t = 0; t < 240 && (await ejs('!!document.querySelector(".studio.working, .monitor.preparing")')); t++) await sleep(250); await sleep(900); };
+        for (let t = 0; t < 120 && !(await ejs('!!document.querySelector(".studio .props h3") && !document.querySelector(".studio.working")')); t++) await sleep(250);
+        await sleep(1500);
+        return { e, ejs, idle };
+      };
+      const press = (sel, fx, fy, tx, ty) => `(() => { const l = document.querySelector('${sel}'), b = l.getBoundingClientRect(), x = b.left + b.width * ${fx}, y = b.top + b.height * ${fy}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointermove', { clientX: b.left + b.width * ${tx ?? fx}, clientY: b.top + b.height * ${ty ?? fy} })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: b.left + b.width * ${tx ?? fx}, clientY: b.top + b.height * ${ty ?? fy} })); })()`;
+      let w = await open('logo.svg', 'vectorcraft');
+      await w.ejs(`document.querySelector('[data-tool="shape"]').click(); document.querySelector('.props [data-v="star"]').click()`);
+      await w.ejs(press('.pdfpage .layer', 0.72, 0.1, 0.95, 0.45));
+      await w.idle();
+      await w.ejs(`document.querySelector('[data-tool="text"]').click()`);
+      await w.ejs(press('.pdfpage .layer', 0.08, 0.06));
+      await sleep(300);
+      await w.ejs(`(() => { const i = document.querySelector('.vtype'); i.value = 'Fresh'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+      await w.idle();
+      await w.ejs(`document.querySelector('[data-tool="select"]').click()`);
+      await w.idle();
+      await shot('studio-flows-1-vector-drawn', w.e);
+      await w.ejs(`document.querySelector('[data-a="history"]').click()`);
+      await shot('studio-flows-2-vector-history', w.e);
+      await w.ejs(`document.querySelector('.hist')?.remove(); document.querySelector('[data-a="saveas"]').click()`);
+      await shot('studio-flows-3-vector-saveas', w.e);
+      w.e.destroy();
+      w = await open('layout.idml', 'designcraft');
+      await w.ejs(`document.querySelector('[data-tool="preflight"]').click()`);
+      await w.idle();
+      await shot('studio-flows-4-layout-preflight', w.e);
+      await w.ejs(`document.querySelector('[data-tool="find"]').click(); document.querySelector('[data-k=dfind]').value = 'grid'; [...document.querySelectorAll('.props .btn')].find((b) => b.textContent.trim() === 'Find').click()`);
+      await w.idle();
+      await shot('studio-flows-5-layout-find', w.e);
+      w.e.destroy();
+      w = await open('anim.json', 'effectcraft');
+      await w.ejs(`document.querySelector('[data-tool="color"]').click()`);
+      await w.idle();
+      await w.ejs(`[...document.querySelectorAll('.props .switch input')].pop()?.click()`);
+      await w.idle();
+      await shot('studio-flows-6-motion-transparent', w.e);
+      await w.ejs(`document.querySelector('[data-m="play"]').click()`);
+      await w.idle();
+      await sleep(1500);
+      await shot('studio-flows-7-motion-playing', w.e);
+      w.e.destroy();
+      w = await open('timeline.otio', 'filmcraft');
+      await w.ejs(`document.querySelectorAll('.clip.video')[2].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`);
+      await w.idle();
+      await w.ejs(`[...document.querySelectorAll('.props .btn')].find((b) => b.title === 'End earlier').click()`);
+      await w.idle();
+      await w.ejs(`document.querySelector('[data-tool="title"]').click()`);
+      await w.ejs(`[...document.querySelectorAll('.props .btn')].find((b) => /playhead/.test(b.textContent)).click()`);
+      await w.idle();
+      await shot('studio-flows-8-timeline-edited', w.e);
+      w.e.destroy();
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();

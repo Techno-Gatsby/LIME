@@ -118,7 +118,7 @@ const TOOLS = [
   { id: 'edit-image', cat: 'image', name: 'Edit image', desc: 'Crop, straighten, adjust, retouch and add text, with PhotoCraft and LightCraft tools.', accepts: ['image', 'raw'], max: 1, editor: 'image' },
   { id: 'edit-video', cat: 'media', name: 'Edit video', desc: 'Trim, cut, crop, add titles and music, with FilmCraft tools.', accepts: ['video'], max: 1, editor: 'media' },
   { id: 'edit-audio', cat: 'media', name: 'Edit audio', desc: 'Trim, cut, fade, level and clean up a recording.', accepts: ['audio'], max: 1, editor: 'media' },
-  { id: 'edit-vector', cat: 'cad', name: 'Edit vector', desc: 'Recolour, trace, outline and export artwork, with VectorCraft.', accepts: ['vector'], max: 1, editor: 'studio:vectorcraft' },
+  { id: 'edit-vector', cat: 'cad', name: 'Edit vector', desc: 'Recolour, trace, outline and export artwork, with VectorCraft.', accepts: ['vector'], extAccept: ['svg', 'svgz', 'pdf'], max: 1, editor: 'studio:vectorcraft' },
   { id: 'edit-layout', cat: 'docs', name: 'Edit layout', desc: 'Check, fix and export a page layout, with DesignCraft.', accepts: ['layout'], max: 1, editor: 'studio:designcraft' },
   { id: 'edit-motion', cat: 'media', name: 'Edit animation', desc: 'Retime, recolour and render an animation, with EffectCraft.', accepts: ['motion'], max: 1, editor: 'studio:effectcraft' },
   { id: 'edit-timeline', cat: 'media', name: 'Edit timeline', desc: 'Look through, trim and render an edit, with FilmCraft.', accepts: ['timeline'], max: 1, editor: 'studio:filmcraft' },
