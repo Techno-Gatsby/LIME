@@ -11,6 +11,7 @@ export const sh = (c, a, o = {}) => execFileSync(c, a, { stdio: ['ignore', 'igno
 export const which = (env, ...n) => process.env[env] || n.find((x) => { try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [x], { stdio: 'ignore' }); return true; } catch { return false; } });
 export const rm = (...p) => fs.rmSync(path.join(...p), { recursive: true, force: true });
 export const ls = (d) => (fs.existsSync(d) ? fs.readdirSync(d) : []);
+const walkRel = (d, r = '') => ls(path.join(d, r)).flatMap((f) => (fs.statSync(path.join(d, r, f)).isDirectory() ? walkRel(d, path.posix.join(r, f)) : [path.posix.join(r, f)]));
 
 const KEEP = /^\/(src|build|assets|node_modules|package\.json)(\/|$)/;
 const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests__|docs|examples?|benchmarks?|\.github)\/|\/(?!licen[cs]e|copying|notice)[^/]*\.(md|markdown|map|ts|tsbuildinfo|flow)$/i;
@@ -32,6 +33,13 @@ export async function pack(platform, arch, opts) {
     for (const f of ls(path.join(nm, 'meshoptimizer'))) if (!/^(meshopt_decoder\.cjs|meshopt_encoder\.js|index\.js|package\.json|LICENSE\.md)$/.test(f)) rm(nm, 'meshoptimizer', f);
     for (const d of ['lib', 'bitbybit-dev-occt-64-bit', 'bitbybit-dev-occt-64-bit-mt']) rm(nm, '@bitbybit-dev', 'occt', d);
     if (!ls(path.join(nm, '@bitbybit-dev', 'occt', 'bitbybit-dev-occt')).some((f) => f.endsWith('.wasm'))) console.warn('! @bitbybit-dev/occt has no kernel, so exact STEP, IGES and BREP saving won’t work in this build');
+    const keep = (dir, re) => { for (const f of walkRel(path.join(nm, dir))) if (!re.test(f)) rm(nm, dir, f); };
+    keep('bwip-js', /^(package\.json|LICENSE|dist\/bwip-js-node\.js)$/);
+    keep('zxing-wasm', /^(package\.json|LICENSE|dist\/cjs\/(share\.js|reader\/index\.js)|dist\/reader\/zxing_reader\.wasm)$/);
+    keep('gifski-wasm', /^(package\.json|LICENSE|dist\/encode\.js|pkg\/gifski_wasm(_bg\.wasm|\.js))$/);
+    keep('@jsquash/oxipng', /^(package\.json|LICENSE|codec\/pkg\/squoosh_oxipng(_bg\.wasm|\.js))$/);
+    keep('exifr', /^(package\.json|LICENSE|dist\/full\.umd\.js)$/);
+    for (const d of ['type-fest', 'tagged-tag', '@types/emscripten']) rm(nm, d);
   };
   const [dir] = await packager({
     dir: ROOT, out: OUT, platform, arch, overwrite: true, asar: false, prune: true, quiet: true,
@@ -43,6 +51,6 @@ export async function pack(platform, arch, opts) {
 }
 
 export function addResources(res, T) {
-  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], [`helpers/${T}`, 'helpers'], ['web', 'web'], ['data', 'data']]) if (fs.existsSync(path.join(V, from))) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
+  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], [`helpers/${T}`, 'helpers'], [`codecs/${T}`, 'codecs'], ['web', 'web'], ['data', 'data']]) if (fs.existsSync(path.join(V, from))) fs.cpSync(path.join(V, from), path.join(res, to), { recursive: true, dereference: true });
   fs.cpSync(path.join(ROOT, 'LICENSES'), path.join(res, 'LICENSES'), { recursive: true });
 }

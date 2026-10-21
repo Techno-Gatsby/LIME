@@ -426,7 +426,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('docm→docx removes macros', 'convert-document', ['macro.docm'], { to: 'docx' }, async ([o]) => { macroFree(o, 'wordprocessingml.document.main+xml'); const part = (f) => Buffer.from(require('fflate').unzipSync(new Uint8Array(read(f)))['word/document.xml']); ok(part(o).equals(part(fx('macro.docm'))), 'document rebuilt instead of kept as is'); ok((await docxText(o)).includes('quick brown fox'), 'text lost'); });
   T('xlsm→xlsx removes macros', 'convert-sheet', ['macro.xlsm'], { to: 'xlsx' }, ([o]) => { macroFree(o, 'spreadsheetml.sheet.main+xml'); const X = require('xlsx'), a = X.readFile(o), b = X.readFile(fx('sheet.xlsx')); ok(JSON.stringify(X.utils.sheet_to_json(a.Sheets[a.SheetNames[0]])) === JSON.stringify(X.utils.sheet_to_json(b.Sheets[b.SheetNames[0]])), 'cells changed'); });
   T('pdf→pdf/a', 'pdf-to-pdfa', ['v1.pdf'], { level: '2b' }, async ([o], r) => { ok(/no issues/.test(r[0].note), r[0].note); ok(/pdfaid:part[^0-9]*2/.test(read(o).toString('latin1')), 'no PDF/A identification'); });
-  T('pdf/a reports what remains', 'pdf-to-pdfa', ['doc.pdf'], {}, async ([o], r) => ok(/isn.t embedded/.test(r[0].note), r[0].note));
+  // PdfCraft alone left doc.pdf with a font it couldn't embed; Ghostscript now finishes the job, and the note stays honest either way.
+  T('pdf/a embeds what PdfCraft can’t', 'pdf-to-pdfa', ['doc.pdf'], {}, async ([o], r) => { ok(/checked: no issues/.test(r[0].note) || /Saved as PDF\/A-2b, but /.test(r[0].note), r[0].note); ok(/pdfaid:part[^0-9]*2/.test(read(o).toString('latin1')), 'no PDF/A identification'); ok(/Invoice|Lorem|[A-Za-z]{4,}/.test(await pdfText(o)), 'text lost'); });
   const annots = async (o) => { const { PDFDocument, PDFName } = require('pdf-lib'); const d = await PDFDocument.load(read(o)); return d.getPages().flatMap((p) => { const a = p.node.lookup(PDFName.of('Annots')); return a ? a.asArray().map((x) => String(d.context.lookup(x).get(PDFName.of('Subtype')))) : []; }); };
   T('compare pdf marks changes', 'compare-pdf', ['v1.pdf', 'v2.pdf'], { output: 'marked' }, async ([o], r) => { ok(/changed/.test(r[0].note) && /added/.test(r[0].note), r[0].note); const a = await annots(o); ok(a.filter((x) => x === '/Highlight').length >= 2, `annotations ${a}`); ok((await pdfText(o)).includes('red fox'), 'not the newer version'); });
   T('compare pdf report', 'compare-pdf', ['v1.pdf', 'v2.pdf'], { output: 'report' }, async ([o]) => { const t = await pdfText(o); ok(/brown/.test(t) && /red/.test(t), `report: ${t.slice(0, 200)}`); });
@@ -1903,6 +1904,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./accuracy.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./apps2.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./web.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./codecs.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));
