@@ -240,6 +240,18 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       await js('window.__lime.fold()');
       await sleep(600);
     }
+    if (want('craftweb')) {
+      for (const [id, f] of [['cadcraft', 'test.dxf'], ['gridcraft', 'book.xlsx'], ['wordcraft', 'doc.docx'], ['soundcraft', 'song.mp3']]) {
+        await js(`window.lime.invoke('wheel:action', { action: 'craftweb', app: '${id}' }, [${JSON.stringify(path.join(samples, f))}])`);
+        let win = null;
+        for (let t = 0; t < 80 && !win; t++) { await sleep(250); win = BrowserWindow.getAllWindows().find((x) => x.craftWeb?.id === id && !x.webContents.isLoading()); }
+        if (!win) { console.log('no window for', id); continue; }
+        await sleep(9000);
+        await shot(`41-craftweb-${id}`, win);
+        win.craftWeb.dirty = false;
+        win.destroy();
+      }
+    }
     if (want('prefs')) {
       openPrefs();
       await sleep(2500);

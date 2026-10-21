@@ -10,3 +10,4 @@ body:not([data-state="loading"]) .wait { opacity: 0; pointer-events: none; }
 .toast span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toast button { font: inherit; border: 0; border-radius: 8px; padding: 5px 12px; background: var(--green); color: #fff; cursor: pointer; }
 .toast.bad button { display: none; }
+.toast[hidden] { display: none; }
