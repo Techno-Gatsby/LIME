@@ -101,6 +101,15 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       await js('window.__lime.collapse()');
       await sleep(600);
     }
+    if (want('speech')) {
+      for (const [n, f] of [['24-tools-audio', 'song.mp3'], ['25-tools-video', 'clip.mp4']]) {
+        await js(`window.__lime.openWith(${JSON.stringify([path.join(samples, f)])}).then(() => window.__lime.setMode('tools'))`);
+        await sleep(900);
+        await shot(n);
+        await js('window.__lime.collapse()');
+        await sleep(600);
+      }
+    }
     if (want('menu')) {
       await js(`window.__lime.openWith(${JSON.stringify([img])})`);
       await shot('02-menu-convert');
