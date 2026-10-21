@@ -253,6 +253,32 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         e.destroy();
       }
     }
+    if (want('history')) {
+      openEditor(path.join(samples, 'doc.pdf'), 'edit');
+      let e = null;
+      for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === 'edit' && !x.webContents.isLoading()); }
+      if (e) {
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        const settled = async () => { await sleep(300); for (let t = 0; t < 80 && !(await ejs('document.querySelector(".ed-status").hidden && !!document.querySelector(".pdfpage img.r[src]")')); t++) await sleep(250); };
+        await settled();
+        const click = (u, v) => ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * ${u}, y = b.top + b.height * ${v}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y })); })()`);
+        await ejs('document.querySelector(\'[data-tool="stamp"]\').click()');
+        await sleep(300);
+        await ejs('document.querySelector(\'.props [data-st="APPROVED"]\').click()');
+        await click(0.1, 0.12);
+        await ejs('document.querySelector(\'[data-p="rotr"]\').click()');
+        await settled();
+        await ejs('document.querySelector(\'[data-tool="note"]\').click()');
+        await click(0.62, 0.1);
+        await settled();
+        await ejs('document.querySelector(\'[data-side="history"]\').click()');
+        await ejs('document.querySelector(\'.bm.hs[data-i="1"]\').click()');
+        await settled();
+        await sleep(500);
+        await shot('74-editor-history', e);
+        e.destroy();
+      }
+    }
     const STUDIO = [
       ['studio-vector', 'logo.svg', 'vectorcraft', ['select', 'color', 'arrange', 'path', 'type', 'artboard', 'export'], async (ejs) => { await ejs(`document.querySelector('.vobj')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); window.dispatchEvent(new PointerEvent('pointerup', {}))`); }],
       ['studio-layout', 'layout.idml', 'designcraft', ['select', 'story', 'swatches', 'fonts', 'pages', 'preflight', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.dframe.text')[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`); }],

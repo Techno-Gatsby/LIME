@@ -1996,6 +1996,41 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return `${steps.join(' · ')}; closed with Got it, marked as seen`;
   });
 
+  await editorTest('edit pdf · the history lists each step and goes back to any', 'history.pdf', 'doc.pdf', async (ed) => {
+    const landscape = 'document.querySelector(".pdfpage").offsetWidth > document.querySelector(".pdfpage").offsetHeight';
+    const rows = () => ed.ejs('[...document.querySelectorAll(".bm.hs")].map((r) => r.querySelector(".t").textContent)');
+    const dim = () => ed.ejs('[...document.querySelectorAll(".bm.hs")].map((r) => r.classList.contains("ahead") ? "a" : r.classList.contains("sel") ? "s" : "-").join("")');
+    await ed.tool('stamp');
+    if (!(await ed.wait('document.querySelectorAll(".props .stampbtn").length >= 8', 3000))) throw new Error('no stamp choices');
+    await ed.press('.props [data-st="APPROVED"]');
+    await ed.click(0.1, 0.12);
+    await ed.press('[data-p="rotr"]');
+    if (!(await ed.wait(`document.querySelector(".ed-status").hidden && ${landscape}`, 20000))) throw new Error('the page did not turn');
+    await ed.tool('note');
+    await ed.click(0.62, 0.1);
+    if (!(await ed.wait('!!document.querySelector(".cm.sel textarea")', 8000))) throw new Error('the note did not open');
+    await ed.press('[data-side="history"]');
+    const want = ['Opened', 'Stamp APPROVED on page 1', 'Turned page 1', 'Added a note on page 1'];
+    let got = await rows();
+    if (got.join('|') !== want.join('|')) throw new Error(`history: ${got.join(' | ')}`);
+    if ((await dim()) !== '---s') throw new Error(`marks ${await dim()}`);
+    await ed.press('.bm.hs[data-i="1"]');
+    await ed.idle();
+    if (!(await ed.wait(`!(${landscape})`, 10000))) throw new Error('going back did not turn the page upright');
+    if ((await dim()) !== '-saa') throw new Error(`marks after going back: ${await dim()}`);
+    if (!(await ed.ejs('document.querySelector(\'[data-a="undo"]\').title.includes("Stamp APPROVED")'))) throw new Error(`undo says ${await ed.ejs('document.querySelector(\'[data-a="undo"]\').title')}`);
+    await ed.press('.bm.hs[data-i="3"]');
+    await ed.idle();
+    if (!(await ed.wait(landscape, 10000))) throw new Error('going forward did not turn the page again');
+    got = await rows();
+    if (got.join('|') !== want.join('|') || (await dim()) !== '---s') throw new Error(`after going forward: ${got.join(' | ')} ${await dim()}`);
+    const out = await ed.save();
+    const { s, list } = await annotsOf(out);
+    const text = (await E.text(s.id, 0)).map((l) => l.text).join(' ');
+    if (!text.includes('APPROVED') || !(s.pages[0].w > s.pages[0].h) || !list.some((a) => a.type === 'Text')) throw new Error(`saved ${s.pages[0].w}×${s.pages[0].h}, note ${list.length}: ${text.slice(0, 60)}`);
+    return `${want.length - 1} steps named, went back to step 1 (page upright, later steps dimmed) and forward to the last; stamp, turn and note saved`;
+  });
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);

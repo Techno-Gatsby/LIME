@@ -1,7 +1,5 @@
 import { $, $$, esc, h } from './ui.js';
 
-// The PDF editor's left panel beyond the pages: bookmarks, comments and form fields. Each change goes to the working
-// copy straight away (one undo step), and the lists follow the file.
 const KIND = { Text: 'Note', FreeText: 'Text box', Highlight: 'Highlight', Underline: 'Underline', StrikeOut: 'Strike-out', Squiggly: 'Squiggle', Square: 'Box', Circle: 'Oval', Line: 'Line', Ink: 'Drawing',
   Polygon: 'Polygon', PolyLine: 'Lines', Stamp: 'Stamp', Caret: 'Insert', FileAttachment: 'Attachment', Sound: 'Sound' };
 export const kindOf = (a) => (a.intent === 'LineDimension' ? 'Distance' : a.intent === 'PolygonDimension' ? 'Area' : a.intent === 'PolyLineDimension' ? 'Perimeter' : KIND[a.type] || a.type);
@@ -19,7 +17,6 @@ export function sidePanels(ed) {
     tab = name;
     $$('[data-side]', side).forEach((b) => b.setAttribute('aria-pressed', b.dataset.side === name));
     Object.entries(panes).forEach(([k, p]) => { p.hidden = k !== name; });
-    // Comments, bookmarks and fields need more room than page thumbnails.
     $('.ed-body', root).classList.toggle('side-wide', name !== 'pages');
     if ($('.ed-body', root).classList.contains('no-thumbs')) { $('.ed-body', root).classList.remove('no-thumbs'); $('[data-a=thumbs]', root)?.setAttribute('aria-pressed', 'true'); }
     draw();
@@ -33,15 +30,25 @@ export function sidePanels(ed) {
     if (tab === 'bookmarks') drawBookmarks();
     if (tab === 'comments') drawComments();
     if (tab === 'fields') drawFields();
+    if (tab === 'history') drawHistory();
   }
 
-  // ── Bookmarks ──
+  function drawHistory() {
+    const p = panes.history, n = st.history.length - 1, waiting = st.pending.length;
+    p.innerHTML = '';
+    p.append(h(`<div class="cmhead"><b>${n ? `${n} step${n === 1 ? '' : 's'}` : 'No steps yet'}</b></div>`));
+    const list = h('<div class="bmlist" role="list"></div>');
+    st.history.forEach((x, i) => list.append(h(`<div class="bm hs${i === st.histAt ? ' sel' : ''}${i > st.histAt ? ' ahead' : ''}" role="listitem" tabindex="0" data-i="${i}" title="${i === st.histAt ? 'Where you are' : i < st.histAt ? 'Go back to here' : 'Go forward to here'}"><span class="t">${esc(x.label)}</span><small>${i || ''}</small></div>`)));
+    list.addEventListener('click', (e) => { const row = e.target.closest('.bm'); if (row) ed.goToStep(Number(row.dataset.i)); });
+    p.append(list, h(`<p class="tip">${waiting ? `${waiting} edit${waiting === 1 ? '' : 's'} waiting on the pages: they become a step when you save or go to another step. Undo takes them off one at a time.` : 'Click a step to go back to it. The steps after it stay until you make a new change.'}</p>`));
+  }
+
   const at = (path, tree = st.outline) => path.reduce((list, i, k) => (k === path.length - 1 ? list : list[i].kids), tree);
   const nodeAt = (path) => at(path)[path[path.length - 1]];
   async function saveOutline(sel) {
     bmSel = sel ?? bmSel;
     await ed.busy('Saving bookmarks…', async () => { st.sess = await call('setOutline', st.sess.id, st.outline); });
-    ed.updateChrome();
+    ed.record('Changed the bookmarks');
     drawBookmarks();
   }
   function drawBookmarks() {
@@ -100,7 +107,6 @@ export function sidePanels(ed) {
   function bmAction(a) {
     const page = ed.visiblePage();
     if (a === 'add') {
-      // Named after the page's first line of text, as a reader would look for it, else its number.
       ed.linesOf(page).then((lines) => {
         const title = (lines || []).map((l) => l.text.trim()).find((t) => t.length > 1)?.slice(0, 80) || `Page ${page + 1}`;
         const item = { title, page, kids: [] };
@@ -125,11 +131,11 @@ export function sidePanels(ed) {
     if (a === 'out' && path.length > 1) { list.splice(i, 1); const parentPath = path.slice(0, -1), outer = at(parentPath); outer.splice(parentPath[parentPath.length - 1] + 1, 0, b); saveOutline([...parentPath.slice(0, -1), parentPath[parentPath.length - 1] + 1].join('.')); }
   }
 
-  // ── Comments ──
   async function annotOp(op, label = 'Saving…') {
     const r = await ed.busy(label, async () => call('annotOp', st.sess.id, { author: ed.author(), ...op }));
     if (!r) return null;
     st.sess = r;
+    ed.record(op.type === 'reply' ? (op.status ? `Marked a comment ${op.status.toLowerCase()}` : 'Replied to a comment') : op.color ? 'Recoloured a comment' : 'Changed a comment');
     await ed.refresh([op.page]);
     return r;
   }
@@ -183,7 +189,6 @@ export function sidePanels(ed) {
     if (st.annSel === a.id) st.annSel = null;
     await annotOp({ type: 'delete', page: a.page, num: a.num }, 'Deleting…');
   }
-  // Selecting a comment, from the list or the page, opens it here and shows where it is.
   function select(id, scroll) {
     st.annSel = id;
     if (id && tab !== 'comments') show('comments'); else draw();
@@ -197,7 +202,6 @@ export function sidePanels(ed) {
     setTimeout(() => $(`.cm[data-id="${CSS.escape(id)}"] textarea`, panes.comments)?.focus(), 30);
   }
 
-  // ── Fields ──
   function drawFields() {
     const p = panes.fields;
     p.innerHTML = '';
@@ -213,7 +217,7 @@ export function sidePanels(ed) {
       p.append(el);
     }
     const acts = h(`<div class="cmrow"><button class="btn" data-x="reset">Clear form</button><button class="btn" data-x="flat" title="Turn the fields into plain page content">Flatten form</button></div>`);
-    $('[data-x=reset]', acts).addEventListener('click', async () => { st.fieldVals = {}; const r = await ed.busy('Clearing…', () => call('fieldOp', st.sess.id, { type: 'reset' })); if (r) { st.sess = r; ed.refresh(); } });
+    $('[data-x=reset]', acts).addEventListener('click', async () => { st.fieldVals = {}; const r = await ed.busy('Clearing…', () => call('fieldOp', st.sess.id, { type: 'reset' })); if (r) { st.sess = r; ed.record('Cleared the form'); ed.refresh(); } });
     $('[data-x=flat]', acts).addEventListener('click', () => ed.flattenForm());
     p.append(acts);
   }

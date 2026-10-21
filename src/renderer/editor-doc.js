@@ -1,8 +1,5 @@
 import { $, $$, esc, h } from './ui.js';
 
-// The PDF editor's Document menu: page marks (header and footer, page and Bates numbers, watermark, background) with a
-// live preview, properties and how the file opens, its password, flattening, the accessibility and print checks, and
-// what Save does with comments and fields.
 const COLORS = ['#000000', '#3b3b3b', '#6b6b6b', '#d13438', '#ca5010', '#107c10', '#0f6cbd', '#5c2e91'];
 const BG = ['#fff4ce', '#dff6dd', '#cfe4fa', '#fde7e9', '#e8e0f5', '#f3f3f3', '#ffffff'];
 const LANGS = [['', 'Not set'], ['en-GB', 'English (UK)'], ['en-US', 'English (US)'], ['fr-FR', 'French'], ['de-DE', 'German'], ['es-ES', 'Spanish'], ['it-IT', 'Italian'], ['nl-NL', 'Dutch'], ['pt-PT', 'Portuguese'], ['pl-PL', 'Polish'], ['sv-SE', 'Swedish'], ['ar', 'Arabic'], ['hi-IN', 'Hindi'], ['zh-CN', 'Chinese'], ['ja-JP', 'Japanese']];
@@ -41,7 +38,6 @@ export function docTools(ed) {
     });
   }
 
-  // A dialog with a form on the left and the page it changes on the right.
   function dialog(title, { wide = false, ok = 'Apply', extra = '' } = {}) {
     const s = h(`<div class="scrim"><div class="dialog${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="body"><h2>${esc(title)}</h2><div class="dlg"></div></div>
       <div class="foot">${extra}<span class="grow"></span><button class="btn" data-a="cancel">Cancel</button>${ok ? `<button class="btn primary" data-a="ok">${esc(ok)}</button>` : ''}</div></div></div>`);
@@ -59,7 +55,6 @@ export function docTools(ed) {
     }
   }
 
-  // ── Header and footer, page and Bates numbers, watermark and background ──
   function marks(kind) {
     const n = st.sess.pages.length;
     let page = Math.min(ed.visiblePage(), n - 1);
@@ -114,7 +109,6 @@ export function docTools(ed) {
         $('.pvnav span', pv).textContent = `Page ${page + 1} of ${n}`;
         const w = st.sess.pages[page], scale = Math.min(1.4, 340 / Math.max(w.w, w.h)) * (window.devicePixelRatio || 1);
         try {
-          // Nothing to add yet: the page as it is.
           const empty = hf && !Object.values(boxes).some((v) => v.trim());
           const png = await (empty ? call('render', st.sess.id, page, scale) : call('preview', st.sess.id, op(), page, scale));
           if (my !== seq) return;
@@ -168,7 +162,6 @@ export function docTools(ed) {
     update();
   }
 
-  // ── Properties ──
   async function properties() {
     const p = await ed.busy('Reading properties…', () => call('props', st.sess.id));
     if (!p) return;
@@ -196,11 +189,10 @@ export function docTools(ed) {
       d.close();
       if (!Object.keys(changed).length) return;
       const r = await ed.busy('Saving properties…', async () => { await ed.flush(); return call('setProps', st.sess.id, changed); });
-      if (r) { st.sess = r; ed.refresh(); toast('Properties updated. Save to keep them.', { type: 'success' }); }
+      if (r) { st.sess = r; ed.record('Changed the properties'); ed.refresh(); toast('Properties updated. Save to keep them.', { type: 'success' }); }
     });
   }
 
-  // ── Password and permissions (applied when the file is saved) ──
   function security() {
     const cur = st.saveOpts.protect, had = st.sess.protected;
     const on = cur ? true : cur === null ? false : had;
@@ -235,10 +227,9 @@ export function docTools(ed) {
   async function flattenComments() {
     if (!st.marks.annots.length && !st.pending.length) { toast('There are no comments to flatten.'); return; }
     const r = await ed.busy('Flattening comments…', async () => { await ed.flush(); return call('fieldOp', st.sess.id, { type: 'flatten', comments: true, fields: false }); });
-    if (r) { st.sess = r; st.annSel = null; ed.refresh(); toast('Comments are now part of the pages.', { type: 'success' }); }
+    if (r) { st.sess = r; st.annSel = null; ed.record('Flattened the comments'); ed.refresh(); toast('Comments are now part of the pages.', { type: 'success' }); }
   }
 
-  // Recognise text in scanned pages, so they can be searched, copied and edited.
   function recognise() {
     const d = dialog('Recognise text', { ok: 'Recognise' });
     d.body.append(h(`<div class="dlgform one">
@@ -252,6 +243,7 @@ export function docTools(ed) {
       const r = await ed.busy('Recognising text…', async () => { await ed.flush(); return call('recognise', st.sess.id, { lang, all }); });
       if (!r) return;
       st.sess = r;
+      if (r.recognised) ed.record(`Recognised text on ${r.recognised} page${r.recognised === 1 ? '' : 's'}`);
       ed.refresh();
       toast(r.recognised ? `Recognised ${r.words} word${r.words === 1 ? '' : 's'} on ${r.recognised} page${r.recognised === 1 ? '' : 's'}. Save to keep it.` : 'Every page already has text; nothing to recognise.', { type: r.recognised ? 'success' : undefined });
     });
@@ -266,7 +258,6 @@ export function docTools(ed) {
     $('[data-a=props]', d.s)?.addEventListener('click', () => { d.close(); properties(); });
   }
 
-  // Save options, next to Save: keep markup as comments or flatten it, flatten form fields, and the password.
   function saveMenu(anchor) {
     const o = st.saveOpts, pw = o.protect ? 'a new password' : o.protect === null ? 'no password' : st.sess.protected ? 'its password' : 'no password';
     const m = popover(anchor, `<div class="mlabel">Comments and markup</div>

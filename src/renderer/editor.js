@@ -55,7 +55,7 @@ export function openEditor(view, { file, mode }, ctx) {
   const call = (m, ...a) => api.invoke('editor:call', m, ...a).then((r) => { if (MUTATES.has(m)) st.rev++; return r; });
   const pref = ctx.settings() || {};
   const st = {
-    sess: null, file, savePath: null, rev: 0, restored: false, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext', shape: 'rect',
+    sess: null, file, savePath: null, rev: 0, restored: false, history: [{ label: 'Opened' }], histAt: 0, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext', shape: 'rect',
     pending: [], sel: null, pick: null, pages: [], renders: new Map(), lines: new Map(), paras: new Map(), objs: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
     fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', border: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff',
       markup: 'highlight', ul: '#d13438', stamp: 'APPROVED', stampText: '', stampColor: '#d13438', mark: '#107c10', note: '#ffd400', measure: '#d13438' },
@@ -93,6 +93,7 @@ export function openEditor(view, { file, mode }, ctx) {
           <button class="tb" data-side="bookmarks" aria-pressed="false" title="Bookmarks">${icon('bookmark', 'sm')}</button>
           <button class="tb" data-side="comments" aria-pressed="false" title="Comments">${icon('comment', 'sm')}<span class="count" hidden></span></button>
           <button class="tb" data-side="fields" aria-pressed="false" title="Form fields">${icon('field', 'sm')}</button>
+          <button class="tb" data-side="history" aria-pressed="false" title="History">${icon('clock', 'sm')}</button>
         </div>
         <div class="pane" data-pane="pages"><div class="ops">
           <button class="tb" data-p="rotl" title="Rotate left">${icon('rotate', 'sm')}</button>
@@ -109,6 +110,7 @@ export function openEditor(view, { file, mode }, ctx) {
         <div class="pane" data-pane="bookmarks" hidden></div>
         <div class="pane" data-pane="comments" hidden></div>
         <div class="pane" data-pane="fields" hidden></div>
+        <div class="pane" data-pane="history" hidden></div>
       </aside>
       <section class="pages" tabindex="-1"><div class="ed-status" hidden></div></section>
       <aside class="props" aria-label="Properties"></aside>
@@ -332,7 +334,8 @@ export function openEditor(view, { file, mode }, ctx) {
   async function flush() {
     commitEditing();
     finishDraft();
-    if (Object.keys(st.fieldVals).length) { st.sess = await call('fill', st.sess.id, st.fieldVals); st.fieldVals = {}; }
+    const filled = Object.keys(st.fieldVals).length;
+    if (filled) { st.sess = await call('fill', st.sess.id, st.fieldVals); st.fieldVals = {}; record(`Filled in ${filled} field${filled === 1 ? '' : 's'}`); }
     if (!st.pending.length) return true;
     const edits = st.pending.map(serialize).filter(Boolean);
     const info = await call('apply', st.sess.id, edits);
@@ -340,12 +343,45 @@ export function openEditor(view, { file, mode }, ctx) {
     st.pending = [];
     st.sel = null;
     st.sess = info;
+    if (edits.length) record(describe(edits));
     return true;
+  }
+  const WHAT = { replace: ['Replaced text', 'Replaced text in {n} places'], deleteText: ['Deleted a line', 'Deleted {n} lines'], text: ['Added text', 'Added {n} texts'], whiteout: ['Erased an area', 'Erased {n} areas'], erase: ['Removed an object', 'Removed {n} objects'], redact: ['Redacted an area', 'Redacted {n} areas'], highlight: ['Marked up text', 'Marked up {n} passages'], mark: ['Added a mark', 'Added {n} marks'], rect: ['Drew a box', 'Drew {n} boxes'], ellipse: ['Drew an oval', 'Drew {n} ovals'], line: ['Drew a line', 'Drew {n} lines'], arrow: ['Drew an arrow', 'Drew {n} arrows'], ink: ['Drew freehand', 'Drew {n} strokes'], measure: ['Measured', 'Measured {n} times'], image: ['Added a picture', 'Added {n} pictures'], signature: ['Signed', 'Signed {n} times'] };
+  function describe(edits) {
+    const pages = [...new Set(edits.map((e) => e.page))], where = pages.length === 1 ? ` on page ${pages[0] + 1}` : ` on ${pages.length} pages`;
+    if (edits.length === 1) { const e = edits[0]; return `${e.type === 'text' && e.border ? `Stamp ${e.text}` : WHAT[e.type]?.[0] || 'Changed'}${where}`; }
+    const one = new Set(edits.map((e) => e.type)).size === 1 && WHAT[edits[0].type];
+    return `${one ? one[1].replace('{n}', edits.length) : `${edits.length} changes`}${where}`;
+  }
+  function record(label) {
+    st.history = [...st.history.slice(0, st.histAt + 1), { label }];
+    if (st.history.length > 31) st.history.splice(1, 1);
+    st.histAt = st.history.length - 1;
+    updateChrome();
+  }
+  const PAGE_OPS = { rotate: 'Turned', delete: 'Deleted', duplicate: 'Duplicated', move: 'Moved', crop: 'Cropped', uncrop: 'Uncropped' };
+  function pageLabel(op) {
+    if (op.type === 'blank') return 'Inserted a blank page';
+    if (op.type === 'insertFile') return `Inserted pages from ${nameOf(op.file)}`;
+    const n = (op.pages || []).length, pg = n === 1 ? `page ${op.pages[0] + 1}` : `${n} pages`;
+    return op.type === 'crop' && op.auto ? `Trimmed the margins of ${pg}` : `${PAGE_OPS[op.type] || 'Changed'} ${pg}`;
+  }
+  async function goToStep(i) {
+    if (i < 0 || i >= st.history.length || (i === st.histAt && !st.pending.length)) return;
+    await busy(i < st.histAt ? 'Going back…' : 'Going forward…', async () => {
+      await flush();
+      while (st.histAt > i && st.sess.canUndo) { st.sess = await call('undo', st.sess.id); st.histAt--; }
+      while (st.histAt < i && st.sess.canRedo) { st.sess = await call('redo', st.sess.id); st.histAt++; }
+      layout(true);
+    });
+    if (st.histAt !== i) tip('Only the last 30 steps can be undone.');
+    side.draw();
   }
   async function pageOp(op, keep) {
     return busy('Updating pages…', async () => {
       await flush();
       st.sess = await call('pageOp', st.sess.id, op);
+      record(pageLabel(op));
       if (!keep) st.selPages = new Set([Math.min(op.to ?? [...st.selPages][0] ?? 0, st.sess.pages.length - 1)]);
       st.crop = null;
       layout(true);
@@ -1009,7 +1045,7 @@ export function openEditor(view, { file, mode }, ctx) {
       st.annSel = a.id;
       const dx = (ev.clientX - x0) / k(), dy = (ev.clientY - y0) / k();
       const r = await busy('Moving the note…', () => call('annotOp', st.sess.id, { type: 'edit', page: a.page, num: a.num, dx, dy }));
-      if (r) { st.sess = r; refresh([a.page]); }
+      if (r) { st.sess = r; record('Moved a note'); refresh([a.page]); }
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1018,6 +1054,7 @@ export function openEditor(view, { file, mode }, ctx) {
     const r = await busy('Adding a note…', () => call('annotOp', st.sess.id, { type: 'note', page: i, x: x - 3, y: y - 3, text: '', color: st.style.note, author: author() }));
     if (!r) return;
     st.sess = r;
+    record(`Added a note on page ${i + 1}`);
     await refresh([i]);
     side.edit(`${i}:${r.num}`);
     tip('Type the note in the Comments panel. Drag the note to move it.');
@@ -1027,12 +1064,13 @@ export function openEditor(view, { file, mode }, ctx) {
     if (!a) return;
     st.annSel = null;
     const r = await busy('Deleting…', () => call('annotOp', st.sess.id, { type: 'delete', page: a.page, num: a.num }));
-    if (r) { st.sess = r; refresh([a.page]); }
+    if (r) { st.sess = r; record('Deleted a comment'); refresh([a.page]); }
   }
   async function linkOp(op) {
     const r = await busy('Saving the link…', () => call('linkOp', st.sess.id, op));
     if (!r) return false;
     st.sess = r;
+    record({ add: 'Added a link', edit: 'Changed a link', delete: 'Deleted a link' }[op.type]);
     st.linkDraft = null;
     st.linkSel = op.type === 'delete' ? null : { page: op.page, index: r.index };
     await refresh([op.page]);
@@ -1109,6 +1147,9 @@ export function openEditor(view, { file, mode }, ctx) {
     const r = await busy(label, () => call('fieldOp', st.sess.id, op));
     if (!r) return null;
     st.sess = r;
+    const kind = (FIELD_KINDS.find(([id]) => id === op.kind)?.[2] || 'form').toLowerCase();
+    const what = { add: `Added a ${kind} field`, set: `Changed the field ${op.field}`, delete: `Deleted the field ${op.field}`, flatten: op.fields === false ? 'Flattened the comments' : 'Flattened the form', reset: 'Cleared the form', detect: r.added ? `Found ${r.added} field${r.added === 1 ? '' : 's'}` : '' }[op.type];
+    if (what) record(what);
     if (r.field) st.fieldSel = r.field;
     await refresh();
     return r;
@@ -1129,12 +1170,13 @@ export function openEditor(view, { file, mode }, ctx) {
   async function flattenForm() {
     if (!st.marks.fields.length) { toast('This PDF has no form fields to flatten.'); return; }
     const r = await busy('Flattening the form…', async () => { await flush(); return call('fieldOp', st.sess.id, { type: 'flatten', fields: true, comments: false }); });
-    if (r) { st.sess = r; st.fieldSel = null; refresh(); toast('The form is now part of the pages.', { type: 'success' }); }
+    if (r) { st.sess = r; st.fieldSel = null; record('Flattened the form'); refresh(); toast('The form is now part of the pages.', { type: 'success' }); }
   }
   async function docChange(op, msg) {
     const r = await busy('Updating pages…', async () => { await flush(); return call('docOp', st.sess.id, op); });
     if (!r) return;
     st.sess = r;
+    record(msg.replace(/\.$/, ''));
     layout(true);
     toast(`${msg} Save to keep it.`, { type: 'success' });
   }
@@ -1519,8 +1561,12 @@ export function openEditor(view, { file, mode }, ctx) {
   const isDirty = () => st.pending.some((o) => serialize(o)) || !!st.sess?.dirty || st.restored || Object.keys(st.fieldVals).length > 0 || st.saveOpts.protect !== undefined;
   function updateChrome() {
     $('.dirty', root).hidden = !isDirty();
-    $('[data-a=undo]', root).disabled = !(st.pending.length || st.sess?.canUndo);
-    $('[data-a=redo]', root).disabled = !(st.sess?.canRedo && !st.pending.length);
+    const u = $('[data-a=undo]', root), rd = $('[data-a=redo]', root), applied = !st.pending.length;
+    u.disabled = !(st.pending.length || st.sess?.canUndo);
+    rd.disabled = !(st.sess?.canRedo && applied);
+    u.title = `Undo${applied && st.histAt > 0 ? `: ${st.history[st.histAt].label}` : ''} (Ctrl+Z)`;
+    rd.title = `Redo${applied && st.history[st.histAt + 1] ? `: ${st.history[st.histAt + 1].label}` : ''} (Ctrl+Y)`;
+    if (side?.tab === 'history') side.draw();
   }
 
   function visiblePage() {
@@ -1673,9 +1719,9 @@ export function openEditor(view, { file, mode }, ctx) {
     if (st.draft) { removeObj(st.draft); return; }
     if (st.pending.length) { removeObj(st.pending[st.pending.length - 1]); return; }
     if (Object.keys(st.fieldVals).length) { st.fieldVals = {}; marksChanged(); side.draw(); updateChrome(); return; }
-    if (st.sess.canUndo) await busy('Undoing…', async () => { st.sess = await call('undo', st.sess.id); layout(true); });
+    if (st.sess.canUndo) await busy('Undoing…', async () => { st.sess = await call('undo', st.sess.id); st.histAt = Math.max(0, st.histAt - 1); layout(true); });
   }
-  async function redo() { if (st.sess.canRedo) await busy('Redoing…', async () => { st.sess = await call('redo', st.sess.id); layout(true); }); }
+  async function redo() { if (st.sess.canRedo) await busy('Redoing…', async () => { st.sess = await call('redo', st.sess.id); st.histAt = Math.min(st.history.length - 1, st.histAt + 1); layout(true); }); }
   async function close() {
     commitEditing();
     if (isDirty()) {
@@ -1724,7 +1770,7 @@ export function openEditor(view, { file, mode }, ctx) {
     toast(n ? `Replaced in ${n} line${n === 1 ? '' : 's'}. Save to keep it.` : `“${q}” wasn’t found.`, { type: n ? 'success' : undefined });
   }
   const ed = {
-    st, root, icon, call, toast, api, busy, flush, refresh, updateChrome, visiblePage, goTo, linesOf, marksChanged, focusField, flattenForm, docChange,
+    st, root, icon, call, toast, api, busy, flush, refresh, updateChrome, visiblePage, goTo, linesOf, marksChanged, focusField, flattenForm, docChange, record, goToStep,
     author, setAuthor: (v) => api.invoke('settings:set', { author: v }),
   };
   const side = sidePanels(ed);

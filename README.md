@@ -83,6 +83,7 @@ Click the lime and pick an app, or drop files and open **Apps**. **Open** starts
 The PDF, image, video and audio editors and the four app editors work the same way:
 
 - **Save** writes `<name> (edited).<ext>` beside the original (or where Save as… last put it). **Save as…** asks where, suggesting the same name; the original file is never written over. After Save as…, the window shows the new name.
+- The PDF editor's **History** tab (in the side panel) names every step applied, such as "Replaced text on page 2", "Stamp APPROVED on page 1" or "Redacted 3 areas", and takes you back to any of them; the steps after it stay until you make a new change.
 - Unsaved edits are kept in Lime's own folder every two minutes. If the window goes before you save (a crash, a power cut), opening the same file again offers them back.
 - **?** (or the Help button in the top bar) lists the keys of the editor you are in. The same keys mean the same everywhere:
 
