@@ -359,8 +359,10 @@ function writeBrep(topo, { unit = 'mm' } = {}) {
   return `DBRep_DrawableShape\n\nCASCADE Topology V1, (c) Matra-Datavision\nLocations 0\nCurve2ds 0\nCurves ${curves.length}\n${curves.map((c) => `1 ${[...c.a, ...c.d].map(num).join(' ')}`).join('\n')}\nPolygon3D 0\nPolygonOnTriangulations 0\nSurfaces ${surfaces.length}\n${surfaces.join('\n')}\nTriangulations 0\n\nTShapes ${n}\n${body}\n\n+${ref(root)} 0\n`;
 }
 
-let oc = null;
+// The kernel holds a few hundred megabytes once used, so it is let go after two idle minutes.
+let oc = null, idle = null;
 async function kernel() {
+  clearTimeout(idle);
   if (oc) return oc;
   const dir = path.join(path.dirname(require.resolve('@bitbybit-dev/occt/package.json')), 'bitbybit-dev-occt');
   const wasm = fs.readdirSync(dir).find((f) => f.endsWith('.wasm'));
@@ -405,6 +407,8 @@ async function exact(src, to, out, { scale = 100, centre = '', box: bb } = {}) {
   } finally {
     for (const f of [inF, outF]) try { o.FS.unlink(f); } catch (_) {}
     for (const x of junk.reverse()) try { x.delete(); } catch (_) {}
+    idle = setTimeout(() => { oc = null; }, 120000);
+    idle.unref?.();
   }
 }
 
