@@ -94,7 +94,9 @@ async function readOs(png, lang) {
     const back = (b) => (k < 1 ? b.map((v) => v / k) : b);
     const out = r.lines.map((l) => ({ text: String(l.text || ''), box: l.box ? back(l.box) : null, words: (l.words || []).filter((w) => w.text).map((w) => ({ text: String(w.text), box: back(w.box) })) }));
     for (const l of out) if (!l.box && l.words.length) l.box = union(l.words.map((w) => w.box));
-    return { engine: os.name, width: m.width, height: m.height, lines: out.filter((l) => l.box && l.text.trim()) };
+    const lines = out.filter((l) => l.box && l.text.trim());
+    if (!lines.some((l) => l.words.length)) throw new Error('it read nothing');
+    return { engine: os.name, width: m.width, height: m.height, lines };
   } catch (e) {
     engines.note(`${os.name} failed (${e.message}); using tesseract`);
     return null;
