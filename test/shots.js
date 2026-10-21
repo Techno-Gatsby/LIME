@@ -203,6 +203,35 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('19-editor-markup', e);
       }
     }
+    // The app editors: each opened on a sample, then a few of its panels.
+    const STUDIO = [
+      ['studio-vector', 'logo.svg', 'vectorcraft', ['select', 'color', 'arrange', 'path', 'type', 'artboard', 'export'], async (ejs) => { await ejs(`document.querySelector('.vobj')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); window.dispatchEvent(new PointerEvent('pointerup', {}))`); }],
+      ['studio-layout', 'layout.idml', 'designcraft', ['select', 'story', 'swatches', 'fonts', 'pages', 'preflight', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.dframe.text')[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`); }],
+      ['studio-motion', 'anim.json', 'effectcraft', ['layers', 'text', 'color', 'time', 'comp', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.lrow .name')[1]?.click()`); }],
+      ['studio-timeline', 'timeline.otio', 'filmcraft', ['select', 'clip', 'look', 'title', 'sequence', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.clip.video')[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`); }],
+    ];
+    for (const [step, sample, appId, panels, pick] of STUDIO) {
+      if (!want(step) && !want('studio')) continue;
+      openEditor(path.join(samples, sample), `studio:${appId}`);
+      let e = null;
+      for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === `studio:${appId}` && !x.webContents.isLoading()); }
+      if (!e) continue;
+      const ejs = (code) => e.webContents.executeJavaScript(code, true);
+      for (let t = 0; t < 120 && !(await ejs('!!document.querySelector(".studio .props h3") && !document.querySelector(".studio.working")')); t++) await sleep(250);
+      await sleep(2500);
+      await shot(`${step}-0`, e);
+      for (const [i, p] of panels.entries()) {
+        await ejs(`document.querySelector('[data-tool="${p}"]').click()`);
+        for (let t = 0; t < 60 && (await ejs('!!document.querySelector(".studio.working")')); t++) await sleep(250);
+        await sleep(1200);
+        await shot(`${step}-${i + 1}-${p}`, e);
+        if (i) continue;
+        await pick(ejs);
+        await sleep(1500);
+        await shot(`${step}-${i + 1}-${p}-picked`, e);
+      }
+      e.destroy();
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();

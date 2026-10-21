@@ -971,6 +971,88 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${stamp.status} ${stamp.name.padEnd(44)}        ${stamp.detail}`);
   results.push(stamp);
 
+  // The app editors: open a sample, make one real change through the panels, Save, and read the saved file back.
+  const studio = async (name, sample, appId, fn) => {
+    const r = { name, status: 'PASS', detail: '' };
+    let win = null;
+    try {
+      const src = path.join(OUT, `studio-${sample}`);
+      fs.copyFileSync(fx(sample), src);
+      openEditor(src, `studio:${appId}`);
+      win = [...editors].pop();
+      const wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 60000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+      if (!(await wait('!!document.querySelector(".studio .props h3") && !document.querySelector(".studio.working")'))) throw new Error('editor did not load');
+      const idle = () => wait('!document.querySelector(".studio.working")', 120000);
+      const save = async () => {
+        await ejs('document.querySelector(\'[data-a="save"]\').click()');
+        const out = path.join(OUT, `studio-${sample.replace(/\.[^.]+$/, '')} (edited).${sample.split('.').pop()}`), t = Date.now();
+        while (!fs.existsSync(out) && Date.now() - t < 60000) await sleep(200);
+        if (!fs.existsSync(out)) throw new Error('Save wrote nothing');
+        await idle();
+        if (!(await wait('document.querySelector(".dirty").hidden', 5000))) throw new Error('still marked unsaved after saving');
+        return out;
+      };
+      r.detail = await fn({ ejs, wait, idle, save, src });
+    } catch (e) { r.status = 'FAIL'; r.detail = e.message; }
+    win?.destroy();
+    console.log(`${r.status} ${r.name.padEnd(44)}        ${r.detail}`);
+    results.push(r);
+  };
+  await studio('edit vector · recolour, undo, redo, save', 'logo.svg', 'vectorcraft', async ({ ejs, wait, idle, save }) => {
+    await ejs('document.querySelector(\'[data-tool="color"]\').click()');
+    if (!(await wait('[...document.querySelectorAll(".rc .t")].some((x) => x.textContent === "#86c23a")', 10000))) throw new Error(`colours listed: ${await ejs('[...document.querySelectorAll(".rc .t")].map((x) => x.textContent).join(" ")')}`);
+    const swap = (from, to) => ejs(`(() => { const i = [...document.querySelectorAll('.rc')].find((x) => x.querySelector('.t').textContent === '${from}').querySelector('input'); i.value = '${to}'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const has = (c) => wait(`[...document.querySelectorAll(".rc .t")].some((x) => x.textContent === "${c}") && !document.querySelector(".studio.working")`, 30000);
+    await swap('#86c23a', '#d13438');
+    if (!(await has('#d13438'))) throw new Error('the new colour did not appear');
+    if (await ejs('document.querySelector(".dirty").hidden')) throw new Error('not marked unsaved');
+    await ejs('document.querySelector(\'[data-a="undo"]\').click()');
+    if (!(await has('#86c23a'))) throw new Error('undo did not bring the colour back');
+    await idle();
+    await ejs('document.querySelector(\'[data-a="redo"]\').click()');
+    if (!(await has('#d13438'))) throw new Error('redo did not');
+    const out = await save(), svg = fs.readFileSync(out, 'utf8');
+    if (!/#d13438/i.test(svg) || /#86c23a/i.test(svg)) throw new Error(`saved SVG still has the old green: ${svg.slice(0, 200)}`);
+    return `${path.relative(OUT, out)}: #86c23a became #d13438 (undo and redo on the way)`;
+  });
+  await studio('edit layout · find and change text, save IDML', 'layout.idml', 'designcraft', async ({ ejs, wait, save }) => {
+    await ejs('document.querySelector(\'[data-a="replace"]\').click()');
+    if (!(await wait('!!document.querySelector(".scrim input[data-k=find]")', 5000))) throw new Error('no find and change dialog');
+    await ejs(`(() => { const s = document.querySelector('.scrim'), set = (k, v) => { const i = s.querySelector('[data-k=' + k + ']'); if (i.type === 'checkbox') i.checked = v; else i.value = v; i.dispatchEvent(new Event('change')); }; set('find', 'Quiet'); set('change', 'Loud'); set('caseSensitive', true); s.querySelector('[data-a=ok]').click(); })()`);
+    if (!(await wait('!document.querySelector(".scrim") && !document.querySelector(".dirty").hidden && !document.querySelector(".studio.working")', 30000))) throw new Error('nothing changed');
+    const out = await save();
+    const { unzipSync, strFromU8 } = require('fflate'), z = unzipSync(fs.readFileSync(out));
+    const stories = Object.entries(z).filter(([n]) => /^Stories\/.*\.xml$/.test(n)).map(([, b]) => strFromU8(b)).join('\n');
+    if (!stories.includes('Loud') || stories.includes('Quiet')) throw new Error(`stories in the IDML: ${(stories.match(/<Content>[^<]*<\/Content>/g) || []).slice(0, 4).join(' ')}`);
+    return `${path.relative(OUT, out)}: “Quiet” is now “Loud” in the IDML's stories`;
+  });
+  await studio('edit animation · double the speed, save Lottie', 'anim.json', 'effectcraft', async ({ ejs, wait, save, src }) => {
+    const before = JSON.parse(fs.readFileSync(src, 'utf8'));
+    await ejs('document.querySelector(\'[data-tool="time"]\').click()');
+    if (!(await wait('!!document.querySelector(\'.props [data-v="2"]\')', 5000))) throw new Error('no speed buttons');
+    await ejs('document.querySelector(\'.props [data-v="2"]\').click()');
+    if (!(await wait('!document.querySelector(".dirty").hidden && !document.querySelector(".studio.working") && document.querySelector(".tc span").textContent === "0:05:00"', 60000))) throw new Error(`length shown: ${await ejs('document.querySelector(".tc span").textContent')}`);
+    const out = await save(), j = JSON.parse(fs.readFileSync(out, 'utf8'));
+    const len = (a) => (a.op - a.ip) / a.fr;
+    if (Math.abs(len(j) - len(before) / 2) > 0.05) throw new Error(`saved ${len(j).toFixed(2)} s long, was ${len(before).toFixed(2)} s`);
+    if (!j.layers.every((l) => Math.abs((l.sr || 1) - 0.5) < 0.01)) throw new Error(`layer stretch ${j.layers.map((l) => l.sr)}`);
+    return `${path.relative(OUT, out)}: ${len(before).toFixed(2)} s → ${len(j).toFixed(2)} s, every layer at 2×`;
+  });
+  await studio('edit timeline · remove a clip, save OTIO', 'timeline.otio', 'filmcraft', async ({ ejs, wait, save }) => {
+    if (!(await wait('[...document.querySelectorAll(".clip.video")].some((x) => /Aurora/.test(x.title))', 20000))) throw new Error('no clips on the timeline');
+    await ejs(`[...document.querySelectorAll('.clip.video')].find((x) => /Aurora/.test(x.title)).dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`);
+    if (!(await wait('document.querySelector(".props h3")?.textContent.startsWith("Aurora")', 5000))) throw new Error('the clip did not open in the panel');
+    await ejs(`[...document.querySelectorAll('.props .btn')].find((b) => b.textContent.trim() === 'Remove').click()`);
+    if (!(await wait('!document.querySelector(".studio.working") && ![...document.querySelectorAll(".clip.video")].some((x) => /Aurora/.test(x.title))', 30000))) throw new Error('the clip is still on the timeline');
+    const out = await save(), o = JSON.parse(fs.readFileSync(out, 'utf8'));
+    const names = o.tracks.children.flatMap((t) => t.children.filter((c) => /^Clip/.test(c.OTIO_SCHEMA)).map((c) => c.name));
+    const v1 = o.tracks.children.find((t) => t.kind === 'Video').children.filter((c) => /^Clip/.test(c.OTIO_SCHEMA));
+    if (names.some((n) => /Aurora/.test(n)) || v1.length !== 5) throw new Error(`saved clips: ${names.join(', ')}`);
+    return `${path.relative(OUT, out)}: Aurora_Timelapse gone from V1 and A1, ${v1.length} clips left on V1`;
+  });
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
