@@ -73,6 +73,9 @@ Section "Lime"
   WriteRegDWORD HKCU "${UNINST}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST}" "NoRepair" 1
   WriteRegDWORD HKCU "${UNINST}" "EstimatedSize" ${SIZE}
+  ; A silent install is Lime updating itself: open it again afterwards.
+  IfSilent 0 +2
+  Exec '"$INSTDIR\${EXE}"'
 SectionEnd
 
 Section "Uninstall"

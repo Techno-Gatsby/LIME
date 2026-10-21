@@ -78,5 +78,7 @@ jobs:
           LIME_NO_GPU: 1
       - if: github.ref_type == 'tag'
         run: |
+          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')" || echo "::warning::The tag does not match package.json's version; the update check compares package.json versions"
+          node scripts/update-feed.mjs ${{ matrix.asset }} ${{ matrix.target }}
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --title "Lime $GITHUB_REF_NAME" --notes "Lime for Mac (Apple silicon) and Windows (64-bit). See the README for first-launch steps." || true
-          gh release upload "$GITHUB_REF_NAME" ${{ matrix.asset }} -R "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$GITHUB_REF_NAME" ${{ matrix.asset }} dist/lime-update-${{ matrix.target }}.json -R "$GITHUB_REPOSITORY" --clobber

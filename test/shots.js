@@ -260,6 +260,13 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       if (p) { await p.webContents.executeJavaScript('document.querySelector(".wheel-apps")?.scrollIntoView({ block: "start" })'); await sleep(400); await shot('14b-prefs-wheel-apps', p); }
       if (p) { await p.webContents.executeJavaScript('document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)'); await sleep(400); await shot('15-prefs-helpers', p); }
     }
+    if (want('prefs-search')) {
+      openPrefs();
+      await sleep(2500);
+      const p = BrowserWindow.getAllWindows().find((x) => x.getTitle() === 'Lime Settings');
+      const type = (q) => p.webContents.executeJavaScript(`(() => { const i = document.querySelector('.prefs-search input'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`);
+      if (p) { await type('dark'); await shot('16-prefs-search-dark', p); await type('update'); await shot('16b-prefs-search-update', p); await type('zzz'); await shot('16c-prefs-search-none', p); await type(''); }
+    }
     if (want('welcome')) {
       openWelcome();
       let ww = null;

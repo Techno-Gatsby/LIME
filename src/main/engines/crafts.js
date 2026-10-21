@@ -919,7 +919,7 @@ async function bundledApp(id) {
 async function openApp(id, files = []) {
   if (!APPS[id]) throw new Error('Unknown app.');
   const app = installedApp(id) || (await bundledApp(id));
-  if (!app) throw new Error(`${APPS[id].name} isn’t in this build of Lime: Settings can download it.`);
+  if (!app) throw new Error(`${APPS[id].name} isn’t included in this build of Lime.`);
   // A launch that dies at once (blocked, quarantined, a missing runtime) says so instead of silently doing nothing.
   const launch = (cmd, args, opts) => new Promise((done) => {
     const child = spawn(cmd, args, { detached: true, stdio: 'ignore', ...opts });
@@ -957,17 +957,12 @@ async function webApp(id) {
   return unpackingWeb.get(id);
 }
 const versions = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg.crafts, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
-async function getApp(id, progress) {
-  const exe = await require('../helpers').get(id, path.join(U.cfg.user, 'apps'), progress, { version: versions()[id] });
-  if (process.platform === 'darwin') await new Promise((r) => spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', exe], { stdio: 'ignore' }).on('error', r).on('close', r));
-  return exe;
-}
 function status() {
   const manifest = versions(), apps = bundledApps();
   return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), web: hasWeb(id), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
-module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, getApp, bundledApp, status,
+module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
   autoTone, sharpenPhoto, denoisePhoto, liftShadows, paintPhoto, straightenScans, exportLayers, layerInfo, lookPhoto, smartBw, straightenPhoto, removeDust, hdrBatch,
   traceImage, outlineText, exportArtboards, logoPackage, vectorInfo, preflightLayout, packageLayout, layoutPdf, fixedEpub, bookletPdf, posterFrame, alphaRender, frameSequence, motionInfo,
   splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS,
