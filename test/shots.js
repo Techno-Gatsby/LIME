@@ -203,6 +203,53 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('19-editor-markup', e);
       }
     }
+    if (want('imgedit')) {
+      openEditor(process.env.LIME_SHOT_PHOTO || path.join(samples, 'photo.jpg'), 'image');
+      let e = null;
+      for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === 'image' && !x.webContents.isLoading()); }
+      const ejs = (code) => e.webContents.executeJavaScript(code, true);
+      const settle = async () => { for (let t = 0; t < 120; t++) { if (await ejs('(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()')) break; await sleep(150); } await sleep(400); };
+      const slide = (key, v) => ejs(`(() => { const r = document.querySelector('.props [data-k="${key}"] input'); r.value = ${v}; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      const tool = (t) => ejs(`document.querySelector('[data-tool="${t}"]').click()`);
+      if (e) {
+        await settle();
+        await shot('40-imgedit-open', e);
+        await slide('light.exposure', 0.35); await slide('light.shadows', 40); await slide('light.highlights', -30); await slide('color.vibrance', 25); await slide('effects.clarity', 20);
+        await settle();
+        await shot('41-imgedit-adjust', e);
+        await tool('looks');
+        await sleep(4000);
+        await ejs('document.querySelector(\'.look[data-l="lc.golden-hour"]\')?.click()');
+        await settle();
+        await shot('42-imgedit-looks', e);
+        await tool('enhance');
+        await shot('43-imgedit-enhance', e);
+        await tool('crop');
+        await settle();
+        await ejs('document.querySelector(\'.props [data-r="4:5"]\').click()');
+        await slide('angle', 4);
+        await settle();
+        await shot('44-imgedit-crop', e);
+        await tool('text');
+        await ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(); m.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + b.width * 0.08, clientY: b.top + b.height * 0.12 })); })()`);
+        await sleep(300);
+        await ejs(`(() => { const el = document.querySelector('.tedit'); el.textContent = 'Golden hour'; el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); })()`);
+        await sleep(300);
+        await tool('arrow');
+        await ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(), p = (fx, fy) => ({ bubbles: true, button: 0, clientX: b.left + b.width * fx, clientY: b.top + b.height * fy }); m.dispatchEvent(new PointerEvent('pointerdown', p(0.25, 0.3))); window.dispatchEvent(new PointerEvent('pointermove', p(0.42, 0.5))); window.dispatchEvent(new PointerEvent('pointerup', p(0.42, 0.5))); })()`);
+        await settle();
+        await shot('45-imgedit-markup', e);
+        await tool('heal');
+        await settle();
+        await shot('46-imgedit-heal', e);
+        await ejs('window.lime.invoke("settings:set", { theme: "dark" })');
+        await tool('adjust');
+        await settle();
+        await shot('47-imgedit-dark', e);
+        await ejs('window.lime.invoke("settings:set", { theme: "system" })');
+        e.destroy();
+      }
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();
