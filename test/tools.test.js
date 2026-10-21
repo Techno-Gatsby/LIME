@@ -1895,6 +1895,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const odd = quiet.filter(([a]) => !why(a)).map(([a]) => a);
     return `${quiet.length} of ${sweepPairs.filter(([a, b]) => sweepSig.has(a) && sweepSig.has(b)).length} option values match their default run${odd.length ? `; unexplained: ${odd.join(', ')}` : ', all explained'}`;
   });
+  results.push(...(await require('./accuracy.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));

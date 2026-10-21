@@ -1,5 +1,6 @@
 'use strict';
 const { PDFDocument, StandardFonts, rgb, degrees, PDFName, PDFRawStream, PDFNumber, PDFDict, PDFArray } = require('pdf-lib');
+require('regenerator-runtime/runtime');
 const fontkit = require('@pdf-lib/fontkit');
 const zlib = require('zlib');
 const U = require('./util');
@@ -65,7 +66,7 @@ function pageFrame(page) {
 const FONT_FILES = {
   sans: 'NotoSans-Regular.ttf', 'sans-bold': 'NotoSans-Bold.ttf', 'sans-italic': 'NotoSans-Italic.ttf', 'sans-bolditalic': 'NotoSans-BoldItalic.ttf',
   serif: 'NotoSerif-Regular.ttf', 'serif-bold': 'NotoSerif-Bold.ttf', mono: 'NotoSansMono-Regular.ttf',
-  caveat: 'Caveat.ttf', dancing: 'DancingScript.ttf',
+  caveat: 'Caveat.ttf', dancing: 'DancingScript.ttf', arabic: 'NotoSansArabic-Regular.ttf', devanagari: 'NotoSansDevanagari-Regular.ttf', thai: 'NotoSansThai-Regular.ttf',
   carlito: 'Carlito-Regular.ttf', 'carlito-bold': 'Carlito-Bold.ttf', 'carlito-italic': 'Carlito-Italic.ttf', 'carlito-bolditalic': 'Carlito-BoldItalic.ttf',
 };
 const STD = {
@@ -78,7 +79,6 @@ const STD = {
 };
 const WINANSI = /^[\x20-\x7e\u00a0-\u00ff\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178\n\r\t]*$/;
 
-// One face of a TrueType collection as a font of its own: its table directory, then the tables it points at.
 function ttcFace(buf, i) {
   if (buf.readUInt32BE(0) !== 0x74746366) return buf;
   const at = buf.readUInt32BE(12 + 4 * Math.min(i, buf.readUInt32BE(8) - 1)), n = buf.readUInt16BE(at + 4);
@@ -95,8 +95,6 @@ function ttcFace(buf, i) {
 function fontCache(doc) {
   const cache = new Map();
   let fkReady = false;
-  // A key is one of Lime's own fonts (sans-bold, carlito-italic…), a standard PDF font (helvetica, times, courier), or
-  // file:<path> for a font installed on the computer.
   return async function get(key, text = '') {
     const needsUnicode = !WINANSI.test(text);
     const k = key.startsWith('file:') ? key : STD[key] && !needsUnicode && !FONT_FILES[key]?.match(/caveat|dancing/i) ? `std:${key}` : `ttf:${key}`;
@@ -107,8 +105,6 @@ function fontCache(doc) {
       if (!fkReady) { doc.registerFontkit(fontkit); fkReady = true; }
       const file = key.startsWith('file:') ? key.slice(5) : path.join(U.cfg.data, 'fonts', FONT_FILES[key] || FONT_FILES[key.split('-')[0]] || FONT_FILES.sans);
       const face = /^(.*\.ttc)#(\d+)$/i.exec(file), bytes = face ? ttcFace(await fsp.readFile(face[1]), +face[2]) : await fsp.readFile(file);
-      // Cutting a font down to the letters used breaks some fonts' glyphs (Carlito's, and who knows which installed ones),
-      // so only the Noto fonts, which are known to survive it, and very large fonts are cut down.
       const subset = /[\\/]Noto[^\\/]*$/.test(file) || bytes.length > 3e6;
       font = await doc.embedFont(bytes, { subset }).catch(() => doc.embedFont(bytes));
     }
@@ -211,7 +207,6 @@ async function removePages(input, spec, out) {
   if (drop.size >= n) throw new Error('That would remove every page. Leave at least one page.');
   return subset(input, [...Array(n).keys()].filter((i) => !drop.has(i)), out);
 }
-// Slides as handouts, 2, 3, 4, 6 or 9 to a page; with 3, note lines sit beside each slide. "slides" keeps one per page.
 const PAPER_PT = { a4: [595.28, 841.89], letter: [612, 792], legal: [612, 1008], a3: [841.89, 1190.55], a5: [419.53, 595.28] };
 async function handouts(input, o, out) {
   const src = await loadLib(input), idx = U.parseRanges(o.slides || 'all', src.getPageCount());
@@ -233,7 +228,6 @@ async function handouts(input, o, out) {
   }
   return saveLib(doc, out);
 }
-// Pages as they are shown: the crop box, turned by the page's rotation.
 async function embedShown(doc, src, idx) {
   const pages = idx.map((i) => src.getPage(i));
   const es = await doc.embedPages(pages, pages.map((p) => { const b = p.getCropBox(); return { left: b.x, bottom: b.y, right: b.x + b.width, top: b.y + b.height }; }));
@@ -242,7 +236,6 @@ async function embedShown(doc, src, idx) {
     return { e, rot, w: turned ? e.height : e.width, h: turned ? e.width : e.height };
   });
 }
-// Draws a shown page into a box, centred: "fit" scales it to fit, "fill" to cover, "actual" keeps its size.
 function place(page, { e, rot, w: ew, h: eh }, x, y, w, h, mode = 'fit') {
   const s = mode === 'actual' ? 1 : (mode === 'fill' ? Math.max : Math.min)(w / ew, h / eh), dw = ew * s, dh = eh * s, px = x + (w - dw) / 2, py = y + (h - dh) / 2;
   const [ax, ay] = { 0: [px, py], 90: [px, py + dh], 180: [px + dw, py + dh], 270: [px + dw, py] }[rot];
@@ -254,14 +247,12 @@ const sheetSize = (o, first) => {
   if (o.paper === 'custom') return [Math.max(20, Number(o.width) || 210) * MM, Math.max(20, Number(o.height) || 297) * MM];
   return PAPER_PT[o.paper] || [Math.min(first.w, first.h), Math.max(first.w, first.h)];
 };
-// Several pages on each sheet, like printing 2, 4 or 16 pages per sheet.
 const UP = { 2: [1, 2], 4: [2, 2], 6: [2, 3], 8: [2, 4], 9: [3, 3], 16: [4, 4] };
 async function pagesPerSheet(input, o, out) {
   const src = await loadLib(input, o.password), idx = U.parseRanges(o.pages || 'all', src.getPageCount());
   if (!idx.length) throw new Error('None of those pages exist.');
   const doc = await PDFDocument.create(), list = await embedShown(doc, src, idx), n = Number(o.n) || 2;
   const m = (Number(o.margin) || 0) * MM, gap = o.gap == null ? m / 2 : (Number(o.gap) || 0) * MM, [pw, ph] = sheetSize(o, list[0]);
-  // Portrait or landscape: whichever shows the pages bigger, unless chosen.
   const layout = (land) => {
     const [W, H] = land ? [ph, pw] : [pw, ph], [cols, rows] = land ? [...UP[n] || UP[2]].reverse() : UP[n] || UP[2];
     const cw = (W - 2 * m - gap * (cols - 1)) / cols, ch = (H - 2 * m - gap * (rows - 1)) / rows;
@@ -280,7 +271,6 @@ async function pagesPerSheet(input, o, out) {
   }
   return saveLib(doc, out);
 }
-// Every page onto one paper size; the content is scaled to fit, to fill, or kept at its size.
 async function pageSize(input, o, out) {
   const src = await loadLib(input, o.password), doc = await PDFDocument.create();
   const list = await embedShown(doc, src, [...Array(src.getPageCount()).keys()]), m = (Number(o.margin) || 0) * MM;
@@ -292,7 +282,6 @@ async function pageSize(input, o, out) {
   }
   return saveLib(doc, out);
 }
-// Another PDF drawn over or under the pages, like a letterhead or a form background.
 async function overlay(input, o, out) {
   if (!o.overlay) throw new Error('Choose the PDF to lay over the pages.');
   const doc = await loadLib(input, o.password), top = await loadLib(o.overlay), pages = doc.getPages();
@@ -304,15 +293,12 @@ async function overlay(input, o, out) {
     const b = page.getCropBox(), turn = (((page.getRotation().angle || 0) % 360) + 360) % 360, rot = (p.rot - turn + 360) % 360;
     place(page, { ...p, rot, ...(rot % 180 !== p.rot % 180 ? { w: p.h, h: p.w } : {}) }, b.x, b.y, b.width, b.height, o.scale || 'fit');
     if (o.position === 'under') {
-      // Drawing always lands on top; moving the new content stream first puts it underneath.
       const arr = page.node.Contents();
       if (arr instanceof PDFArray && arr.size() > 1) { const last = arr.get(arr.size() - 1); arr.remove(arr.size() - 1); arr.insert(0, last); }
     }
   });
   return saveLib(doc, out);
 }
-// Every colour turned to grey by its brightness. Text and drawings stay sharp and selectable; photos
-// are greyed pixel by pixel and gradients are drawn as grey pictures. Links and bookmarks are not kept.
 async function grayscale(input, o, out, ctx) {
   const { doc, m } = await readPdf(input, o.password), G = m.ColorSpace.DeviceGray, buf = new m.Buffer(), writer = new m.DocumentWriter(buf, 'pdf', 'compress');
   const luma = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b, images = new Map();
@@ -345,7 +331,6 @@ async function grayscale(input, o, out, ctx) {
       clipStrokeText: (x, s, t) => dev.clipStrokeText(x, s, t),
       ignoreText: (x, t) => dev.ignoreText(x, t),
       fillShade: (sh, t, a) => {
-        // A gradient can't be recoloured in place, so it is drawn into a grey picture of its area.
         const r = m.Rect.transform(sh.getBounds(), t), x0 = Math.max(r[0], area[0]), y0 = Math.max(r[1], area[1]), x1 = Math.min(r[2], area[2]), y1 = Math.min(r[3], area[3]);
         if (!(x1 > x0 && y1 > y0)) return;
         const k = 150 / 72, w = Math.ceil((x1 - x0) * k), h = Math.ceil((y1 - y0) * k), pix = new m.Pixmap(G, [0, 0, w, h], true);
@@ -491,9 +476,6 @@ async function watermark(input, opts, out) {
   }
   return saveLib(doc, out);
 }
-// Crop marks at each page's trim corners and a bleed round it, on a sheet big enough for both, as Acrobat's Add
-// Printer Marks does: the trim and bleed boxes are set, and whatever the page has past its trim shows in the bleed
-// (the rest is clipped away).
 async function printerMarks(input, o, out) {
   const { pushGraphicsState, popGraphicsState, rectangle, clip, endPath, cmyk } = require('pdf-lib');
   const doc = await loadLib(input, o.password);
@@ -509,7 +491,6 @@ async function printerMarks(input, o, out) {
     page.setCropBox(...sheet);
     page.setBleedBox(b.x, b.y, b.width, b.height);
     page.setTrimBox(t.x, t.y, t.width, t.height);
-    // Two marks at each corner, in registration colour (every ink), starting past the bleed.
     for (const [x, y, sx, sy] of [[t.x, t.y, -1, -1], [t.x + t.width, t.y, 1, -1], [t.x, t.y + t.height, -1, 1], [t.x + t.width, t.y + t.height, 1, 1]]) {
       page.drawLine({ start: { x: x + sx * gap, y }, end: { x: x + sx * (gap + len), y }, thickness: thin, color: reg });
       page.drawLine({ start: { x, y: y + sy * gap }, end: { x, y: y + sy * (gap + len) }, thickness: thin, color: reg });
@@ -518,8 +499,6 @@ async function printerMarks(input, o, out) {
   await saveLib(doc, out);
   return { path: out, note: `${doc.getPageCount()} page${doc.getPageCount() === 1 ? '' : 's'}, ${Number(o.bleed ?? 3)} mm bleed` };
 }
-// Bookmarks from the headings: lines set clearly larger than the body text (or bold at the body size and short),
-// nested by size, the way a table of contents reads.
 async function bookmarksFromHeadings(input, o, out) {
   const { doc, m } = await readPdf(input, o.password);
   const lines = [];
@@ -530,7 +509,6 @@ async function bookmarksFromHeadings(input, o, out) {
   const body = [...weight.entries()].sort((a, b) => b[1] - a[1])[0][0];
   const heads = lines.filter((l) => { const t = l.text.trim(); return t.length > 1 && t.length <= 90 && /\p{L}/u.test(t) && !/[.:;,]$/.test(t) && (l.size >= body * 1.18 || (l.bold && l.size >= body * 0.98 && t.length <= 60 && !/^\d+$/.test(t))); });
   if (!heads.length) throw new Error('No headings were found: nothing is set larger or bolder than the body text.');
-  // Sizes from the largest down become levels 1–3; lines of a heading that wraps join into one title.
   const sizes = [...new Set(heads.map((l) => Math.round(l.size * 2) / 2))].sort((a, b) => b - a).slice(0, 3);
   const level = (l) => Math.max(0, sizes.findIndex((s) => Math.round(l.size * 2) / 2 >= s));
   const items = [];
@@ -545,7 +523,6 @@ async function bookmarksFromHeadings(input, o, out) {
   const uri = (p) => doc.formatLinkURI({ chapter: 0, page: p, type: 'Fit', x: 0, y: 0, width: 0, height: 0, zoom: 0 });
   let depth = 0;
   for (const b of items) {
-    // Down into the bookmark just added for a deeper heading, out again for a shallower one.
     while (depth < b.level && it.prev() === 0) { it.down(); depth++; }
     while (depth > b.level) { it.up(); it.next(); depth--; }
     it.insert({ title: b.title.slice(0, 120), uri: uri(b.page), open: true });
@@ -579,15 +556,12 @@ async function flatten(input, out) {
   await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('garbage=deduplicate,compress=yes').asUint8Array()));
   return out;
 }
-// MuPDF's save options for AES-256 with a password to open and the permissions allowed.
 function encryption(opts) {
   let p = -1;
   const clear = (bit) => { p &= ~(1 << (bit - 1)); };
   if (opts.allowPrint === false) { clear(3); clear(12); }
   if (opts.allowCopy === false) { clear(5); clear(10); }
   if (opts.allowEdit === false) { clear(4); clear(6); clear(9); clear(11); }
-  // Without a permissions password of its own, a random one keeps the limits from being lifted with the open password
-  // (and a control character in it upsets MuPDF's AES-256 when the file is opened again).
   const owner = opts.ownerPassword || require('crypto').randomBytes(16).toString('hex');
   const esc = (s) => String(s).replace(/,/g, '');
   return `encrypt=aes-256,user-password=${esc(opts.userPassword || '')},owner-password=${esc(owner)},permissions=${p | 0}`;

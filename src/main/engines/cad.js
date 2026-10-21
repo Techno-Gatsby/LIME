@@ -293,7 +293,6 @@ function flatten(model) {
       const lw = weightOf(e, lay, inh), lt = typeOf(e, lay, inh), pat = model.ltypes?.[String(lt).toUpperCase()];
       const dash = pat?.length >= 2 && pat.some((v) => v < 0) && pat.every(Number.isFinite) ? pat.map((v) => v * (model.ltscale || 1) * (e.lts || 1) * scale) : null;
       const item = (pts, closed, fill, ww) => ({ k: 'path', pts, closed, fill, rgb, lw, lt, dash: fill ? null : dash, aci: typeof col === 'number' ? col : null, layer: lay, ...(ww ? { ww } : {}) });
-      // Circles and arcs under a uniform scale stay exact for DXF out.
       const similar = Math.abs(M[0] * M[0] + M[1] * M[1] - M[2] * M[2] - M[3] * M[3]) < 1e-9 * (M[0] * M[0] + M[1] * M[1]) && Math.abs(M[0] * M[2] + M[1] * M[3]) < 1e-9 * (M[0] * M[0] + M[1] * M[1]);
       const exact = (geo) => { if (similar && out.length) out[out.length - 1].geo = geo; };
       const turn = Math.atan2(M[1], M[0]), flip = M[0] * M[3] - M[1] * M[2] < 0;
@@ -556,8 +555,6 @@ function drawingDxf(items, layers) {
   return `${L.join('\r\n')}\r\n`;
 }
 
-// Release 2000 DXF of the laid-out drawing: blocks exploded, colours, lineweights and linetypes kept, circles and arcs
-// exact, fills as solid hatches.
 function drawingDxf2000(items, model) {
   const r2d = (a) => ((((a * 180) / Math.PI) % 360) + 360) % 360, ents = [];
   for (const it of items) {
@@ -585,7 +582,7 @@ async function readMesh(p) {
   if (e === 'obj') return readObj(buf.toString('utf8'), p);
   if (e === 'ply') return readPly(buf);
   if (e === 'off') return readOff(buf.toString('utf8'));
-  if (e === 'glb' || e === 'gltf') return readGltf(buf, p);
+  if (e === 'glb' || e === 'gltf') return await readGltf(buf, p);
   if (e === '3mf') return read3mf(buf);
   if (e === 'fbx') return require('./fbx').readFbx(buf, p);
   if (['step', 'stp', 'iges', 'igs', 'brep'].includes(e)) return readOcct(buf, e);
@@ -775,7 +772,22 @@ function readPly(buf) {
   for (const g of groups.values()) { for (let k = 0; k < 3; k++) s[k] += ((g.color >> (16 - 8 * k)) & 255) * g.idx.length; for (const i of g.idx) idx.push(i); }
   return meshOf(v, [{ idx, color: rgb(...s.map((x) => x / idx.length / 255)) }]);
 }
-function readGltf(buf, p) {
+let draco = null;
+const dracoDecoder = () => (draco ??= require('draco3dgltf').createDecoderModule({}));
+function dracoPrim(D, data, ids) {
+  const dec = new D.Decoder(), db = new D.DecoderBuffer(), m = new D.Mesh();
+  try {
+    db.Init(new Int8Array(data.buffer, data.byteOffset, data.byteLength), data.byteLength);
+    if (!dec.DecodeBufferToMesh(db, m).ok() || !m.ptr) throw new Error('This model’s Draco-compressed geometry is damaged.');
+    const a = dec.GetAttributeByUniqueId(m, ids.POSITION), arr = new D.DracoFloat32Array(), ia = new D.DracoInt32Array();
+    dec.GetAttributeFloatForAllPoints(m, a, arr);
+    const P3 = Float64Array.from({ length: arr.size() }, (_, i) => arr.GetValue(i)), I = new Uint32Array(m.num_faces() * 3);
+    for (let f = 0; f < m.num_faces(); f++) { dec.GetFaceFromMesh(m, f, ia); for (let k = 0; k < 3; k++) I[f * 3 + k] = ia.GetValue(k); }
+    D.destroy(arr); D.destroy(ia);
+    return { P3, I };
+  } finally { D.destroy(m); D.destroy(db); D.destroy(dec); }
+}
+async function readGltf(buf, p) {
   let json, bin = null;
   if (buf.readUInt32LE(0) === 0x46546c67) {
     let o = 12;
@@ -786,22 +798,32 @@ function readGltf(buf, p) {
       o += 8 + len;
     }
   } else json = JSON.parse(buf.toString('utf8'));
-  const buffers = (json.buffers || []).map((b, i) => (b.uri == null ? bin : b.uri.startsWith('data:') ? Buffer.from(b.uri.split(',')[1], 'base64') : fs.readFileSync(path.join(path.dirname(p), decodeURIComponent(b.uri)))));
+  const buffers = (json.buffers || []).map((b, i) => (b.uri == null ? (i ? null : bin) : b.uri.startsWith('data:') ? Buffer.from(b.uri.split(',')[1], 'base64') : fs.existsSync(path.join(path.dirname(p), decodeURIComponent(b.uri))) ? fs.readFileSync(path.join(path.dirname(p), decodeURIComponent(b.uri))) : null));
+  const views = [];
+  for (const bv of json.bufferViews || []) {
+    const mo = bv.extensions?.EXT_meshopt_compression;
+    if (!mo) { views.push({ data: buffers[bv.buffer]?.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength), stride: bv.byteStride || 0 }); continue; }
+    const M = require(path.join(path.dirname(require.resolve('meshoptimizer')), 'meshopt_decoder.cjs'));
+    await M.ready;
+    const out = new Uint8Array(mo.count * mo.byteStride), src = buffers[mo.buffer].subarray(mo.byteOffset || 0, (mo.byteOffset || 0) + mo.byteLength);
+    M.decodeGltfBuffer(out, mo.count, mo.byteStride, src, mo.mode, mo.filter);
+    views.push({ data: Buffer.from(out.buffer), stride: bv.byteStride || mo.byteStride });
+  }
   const NUM = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
+  const NORM = { 5121: 255, 5123: 65535, 5120: 127, 5122: 32767 };
   const acc = (i) => {
-    const a = json.accessors[i], bv = json.bufferViews[a.bufferView];
-    const b = buffers[bv.buffer];
-    const n = NUM[a.type], stride = bv.byteStride || 0;
+    const a = json.accessors[i], v = views[a.bufferView];
+    if (!v?.data) throw new Error('This glTF file’s geometry is in a file that isn’t beside it.');
+    const n = NUM[a.type];
     const T = { 5126: Float32Array, 5125: Uint32Array, 5123: Uint16Array, 5121: Uint8Array, 5122: Int16Array, 5120: Int8Array }[a.componentType];
-    const base = (bv.byteOffset || 0) + (a.byteOffset || 0) + b.byteOffset;
-    const out = new Float64Array(a.count * n);
-    const es = T.BYTES_PER_ELEMENT;
+    const es = T.BYTES_PER_ELEMENT, stride = v.stride || n * es, base = v.data.byteOffset + (a.byteOffset || 0), out = new Float64Array(a.count * n), k0 = a.normalized ? NORM[a.componentType] : 1;
     for (let k = 0; k < a.count; k++) {
-      const view = new T(b.buffer.slice(base + k * (stride || n * es), base + k * (stride || n * es) + n * es));
-      for (let j = 0; j < n; j++) out[k * n + j] = view[j];
+      const view = new T(v.data.buffer.slice(base + k * stride, base + k * stride + n * es));
+      for (let j = 0; j < n; j++) out[k * n + j] = a.normalized ? Math.max(view[j] / k0, -1) : view[j];
     }
     return out;
   };
+  const D = (json.meshes || []).some((m) => m.primitives.some((pr) => pr.extensions?.KHR_draco_mesh_compression)) ? await dracoDecoder() : null;
   const pos = [], idx = [], parts = [];
   const matOf = (node) => {
     if (node.matrix) return node.matrix;
@@ -814,10 +836,11 @@ function readGltf(buf, p) {
     const m = m4(parent, matOf(node));
     if (node.mesh != null) for (const prim of json.meshes[node.mesh].primitives) {
       if (prim.mode != null && prim.mode !== 4) continue;
-      const P3 = acc(prim.attributes.POSITION);
+      const dr = prim.extensions?.KHR_draco_mesh_compression, packed = dr && dracoPrim(D, views[dr.bufferView].data, dr.attributes);
+      const P3 = packed ? packed.P3 : acc(prim.attributes.POSITION);
       const start = pos.length / 3;
       for (let k = 0; k < P3.length; k += 3) { const [x, y, z] = [P3[k], P3[k + 1], P3[k + 2]]; pos.push(m[0] * x + m[4] * y + m[8] * z + m[12], m[1] * x + m[5] * y + m[9] * z + m[13], m[2] * x + m[6] * y + m[10] * z + m[14]); }
-      const I = prim.indices != null ? acc(prim.indices) : Array.from({ length: P3.length / 3 }, (_, k) => k);
+      const I = packed ? packed.I : prim.indices != null ? acc(prim.indices) : Array.from({ length: P3.length / 3 }, (_, k) => k);
       const mat = json.materials?.[prim.material];
       const c = mat?.pbrMetallicRoughness?.baseColorFactor;
       parts.push({ start: idx.length, color: c ? (toSrgb(c[0]) << 16) | (toSrgb(c[1]) << 8) | toSrgb(c[2]) : null, ...(c?.[3] < 1 ? { alpha: c[3] } : {}) });
@@ -880,7 +903,6 @@ async function readOcct(buf, e) {
     const start = pos.length / 3, nt = m.index.array.length / 3, base = idx.length;
     for (const v of m.attributes.position.array) pos.push(v);
     for (const i of m.index.array) idx.push(start + i);
-    // Each B-rep face keeps an id (drawings use them to tell real edges from tessellation) and its own colour.
     const bf = m.brep_faces?.length ? m.brep_faces : [{ first: 0, last: nt - 1 }];
     for (const f of bf) {
       const color = c8(f.color) ?? c8(m.color), at = base + f.first * 3;
@@ -1131,7 +1153,6 @@ async function convert(p, opts, ctx) {
   }
   if (!MODEL_OUT.includes(to)) throw new Error(`Models can be saved as ${MODEL_OUT.filter((x) => !['stp', 'igs', 'jpg'].includes(x)).map((x) => x.toUpperCase()).join(', ')}, not ${to.toUpperCase()}.`);
   const X = require('./mesh'), B = require('./brep');
-  // A B-rep model stays exact through Open CASCADE unless its triangles are to be changed.
   if (B_REP.includes(to) && B_REP.includes(e) && !opts.repair && !(opts.keep < 100)) {
     ctx.progress?.(0.3, 'Open CASCADE');
     const box = opts.centre ? X.box((await readMesh(p)).pos) : null;

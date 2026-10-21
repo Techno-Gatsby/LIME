@@ -3,6 +3,7 @@
 const { PDFDocument, rgb, degrees, BlendMode, LineCapStyle, setCharacterSpacing, endMarkedContent, PDFOperator, PDFOperatorNames, PDFName, PDFNumber, PDFArray, PDFDict, PDFHexString } = require('pdf-lib');
 const P = require('./engines/pdf');
 const U = require('./engines/util');
+const shape = require('./engines/shape');
 const { fsp, path } = U;
 
 const sessions = new Map();
@@ -199,6 +200,7 @@ function fontNames(file) {
       const n = head.readUInt16BE(4), dir = read(16 * n, at + 12), table = {};
       for (let i = 0; i < n; i++) table[dir.toString('latin1', i * 16, i * 16 + 4)] = [dir.readUInt32BE(i * 16 + 8), dir.readUInt32BE(i * 16 + 12)];
       if (table['OS/2'] && (read(2, table['OS/2'][0] + 8).readUInt16BE(0) & 0x000f) === 0x0002) return null;
+      const bits = table['OS/2'] && table['OS/2'][1] >= 58 ? Array.from({ length: 4 }, (_, i) => read(4, table['OS/2'][0] + 42 + 4 * i).readUInt32BE(0)) : null;
       if (!table.name || table.name[1] > 1 << 20) return null;
       const t = read(table.name[1], table.name[0]), count = t.readUInt16BE(2), base = t.readUInt16BE(4), got = {};
       for (let i = 0; i < count; i++) {
@@ -207,7 +209,7 @@ function fontNames(file) {
         const v = plat === 3 || plat === 0 ? utf16(raw) : plat === 1 && enc === 0 ? raw.toString('latin1') : null, rank = plat === 3 && lang === 0x409 ? 3 : plat === 1 ? 1 : 2;
         if (v && (!got[id] || got[id].rank < rank)) got[id] = { v: v.trim(), rank };
       }
-      return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular' } : null;
+      return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular', bits } : null;
     };
     if (read(4, 0).readUInt32BE(0) !== 0x74746366) { const f = face(0); return f ? [{ ...f, at: file }] : []; }
     const n = Math.min(read(4, 8).readUInt32BE(0), 64), offs = read(4 * n, 12), out = [];
@@ -232,6 +234,7 @@ async function fonts() {
       if (!slot) continue;
       if (!map.has(n.family)) map.set(n.family, {});
       map.get(n.family)[slot] ||= n.at;
+      if (slot === 'regular') map.get(n.family).bits ||= n.bits;
     }
   }
   const list = [...map.entries()].filter(([, v]) => v.regular).map(([family, v]) => ({ family, bold: !!v.bold, italic: !!v.italic })).sort((a, b) => a.family.localeCompare(b.family));
@@ -239,13 +242,18 @@ async function fonts() {
   return list;
 }
 
-function wrapLines(str, width, widthOf) {
+async function covering(bit) {
+  await fonts();
+  for (const f of installed.map.values()) if (f.regular && f.bits && (f.bits[bit >> 5] >>> (bit & 31)) & 1) return `file:${f.regular}`;
+  return null;
+}
+async function wrapLines(str, width, widthOf) {
   const out = [];
   for (const para of String(str).split(/\r?\n/)) {
     let cur = '';
     for (const w of para.split(/ +/)) {
       const next = cur ? `${cur} ${w}` : w;
-      if (cur && widthOf(next) > width + 0.5) { out.push(cur); cur = w; } else cur = next;
+      if (cur && await widthOf(next) > width + 0.5) { out.push(cur); cur = w; } else cur = next;
     }
     out.push(cur);
   }
@@ -381,12 +389,13 @@ async function apply(id, edits) {
           const str = String(e.text ?? '');
           if (!str.trim()) break;
           if (String(e.font).startsWith('sys:')) await fonts();
-          const font = await fonts_(fontKey(e), str);
           const size = Number(e.size) || 12;
           const lh = size * (Number(e.lineHeight) || 1.2), sp = Number(e.spacing) || 0;
-          const widthOf = (ln) => font.widthOfTextAtSize(ln, size) + sp * Math.max(0, [...ln].length - 1);
-          const lines = e.wrap ? wrapLines(str, Number(e.wrap), widthOf) : str.split(/\r?\n/);
-          const boxW = e.wrap ? Number(e.wrap) : Math.max(...lines.map(widthOf)), shift = { center: 0.5, right: 1 }[e.align] || 0;
+          const o = { chosen: await fonts_(fontKey(e), str), size, spacing: sp, fontFor: (k) => fonts_(k, str), covering, color, opacity };
+          const widthOf = (ln) => shape.width(doc, ln, o);
+          const lines = e.wrap ? await wrapLines(str, Number(e.wrap), widthOf) : str.split(/\r?\n/);
+          const widths = await Promise.all(lines.map(widthOf));
+          const boxW = e.wrap ? Number(e.wrap) : Math.max(...widths), shift = { center: 0.5, right: 1 }[e.align] || 0;
           const turn = turner(Number(e.rotate) || 0, e.x + boxW / 2, (e.y - size * 0.86 + e.y + (lines.length - 1) * lh + size * 0.28) / 2);
           const at = (u, v) => map(...turn(u, v)), trot = degrees(angle - (Number(e.rotate) || 0));
           const bg = e.bg && e.bg !== 'none' ? P.hex(e.bg) : undefined, border = e.border && e.border !== 'none' ? P.hex(e.border) : undefined;
@@ -400,14 +409,14 @@ async function apply(id, edits) {
             page.drawRectangle({ x: bx, y: by, width: boxW + pad * 2, height: boxH, color: bg, opacity, rotate: trot });
           }
           if (sp) page.pushOperators(setCharacterSpacing(sp));
-          lines.forEach((ln, i) => {
-            const w = widthOf(ln), x0 = e.x + (boxW - w) * shift, base = e.y + i * lh;
+          for (const [i, ln] of lines.entries()) {
+            const w = widths[i], x0 = e.x + (boxW - w) * shift, base = e.y + i * lh;
             const [x, y] = at(x0, base);
-            page.drawText(ln, { x, y, size, font, color, opacity, rotate: trot });
+            await shape.draw(page, ln, { ...o, x, y, rotate: angle - (Number(e.rotate) || 0) });
             const rule = (dy) => { const [x1, y1] = at(x0, base + dy), [x2, y2] = at(x0 + w, base + dy); page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: size / 16, color, opacity }); };
             if (e.underline) rule(size * 0.12);
             if (e.strike) rule(-size * 0.3);
-          });
+          }
           if (sp) page.pushOperators(setCharacterSpacing(0));
           break;
         }
@@ -490,6 +499,7 @@ async function apply(id, edits) {
       }
     }
   }
+  await shape.finish(doc);
   const next = await doc.save({ useObjectStreams: true });
   pushUndo(s);
   await loadState(s, next);
