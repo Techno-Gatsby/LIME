@@ -152,8 +152,6 @@ async function apps() {
     fs.rmSync(tmp, { recursive: true, force: true });
     let app;
     if (WIN) {
-      // The whole portable folder, less the CLI (Lime ships its own copy) and portable.txt, so the app keeps its
-      // settings in its usual per-user folders rather than inside Lime's. PdfCraft's OCR models come along.
       const skip = new RegExp(`/(${id}-cli\\.exe|portable\\.txt)$`);
       const zip = unzipSync(fs.readFileSync(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`)), { filter: (f) => !f.name.endsWith('/') && !skip.test(f.name) });
       app = mk(path.join(tmp, id));
@@ -188,8 +186,6 @@ async function natives() {
   }
 }
 
-// LibreOffice and Pandoc, laid out as they are after installing and packed like the apps, so Lime ships them and
-// has them ready a moment after its first launch (Linux packs Pandoc only; LibreOffice comes from the distribution).
 async function helpers() {
   const H = createRequire(import.meta.url)('../src/main/helpers.js');
   mk(HELPERS);
@@ -215,7 +211,6 @@ async function helpers() {
   }
 }
 
-// A third argument runs one step alone: engines, crafts, apps or helpers.
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();

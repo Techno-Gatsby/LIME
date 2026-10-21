@@ -31,7 +31,6 @@ fs.mkdirSync(stage, { recursive: true });
 fs.cpSync(app, path.join(stage, `${pkg.productName}.app`), { recursive: true, verbatimSymlinks: true });
 if (MAC) {
   fs.symlinkSync('/Applications', path.join(stage, 'Applications'));
-  // hdiutil sometimes fails with "Resource busy" while macOS is still scanning the new files; a retry works.
   for (let i = 1; ; i++) {
     try { sh('hdiutil', ['create', '-volname', pkg.productName, '-srcfolder', stage, '-ov', '-format', 'ULMO', dmg]); break; } catch (e) {
       if (i === 4) throw e;

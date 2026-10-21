@@ -18,8 +18,6 @@ const squircle = (s, inset, n = 5) => {
   return `M${pts.join('L')}Z`;
 };
 
-// The lime is the photo in build/lime-source.(png|jpg|webp), used as it is: cropped to the fruit at its own
-// resolution and scaled down once, with Lanczos, for every size. A photo on white has its background removed.
 const SRC = ['png', 'jpg', 'jpeg', 'webp'].map((e) => path.join(out, `lime-source.${e}`)).find((f) => fs.existsSync(f));
 if (!SRC) throw new Error('Put the lime photo at build/lime-source.png (or .jpg/.webp).');
 async function fruit(file) {
@@ -49,11 +47,8 @@ async function fruit(file) {
   return sharp(padded).extract({ left: Math.round((x0 + x1 - side) / 2) + pad, top: Math.round((y0 + y1 - side) / 2) + pad, width: side, height: side }).png().toBuffer();
 }
 const lime = await fruit(SRC);
-// Scaling down softens fine detail, so small sizes get a light sharpen (too light to leave halos).
 const at = (px) => { const r = sharp(lime).resize(px, px, { kernel: 'lanczos3' }); return (px <= 384 ? r.sharpen({ sigma: 0.5, m1: 0.6, m2: 2 }) : r).png().toBuffer(); };
-// A soft neutral shadow from the fruit's outline; it is blurry anyway, so SVG rendering is fine for it.
 const shadow = (size, x, y, d, blur, dy, opacity) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><defs><filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="${blur}"/><feOffset dy="${dy}"/><feComponentTransfer><feFuncA type="linear" slope="${opacity}"/></feComponentTransfer></filter></defs><image href="data:image/png;base64,${lime.toString('base64')}" x="${x}" y="${y}" width="${d}" height="${d}" filter="url(#s)"/></svg>`)).png().toBuffer();
-// macOS draws icons on its rounded square, so the Mac icon keeps one; Windows and the app itself use the bare slice.
 const plate = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
   <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4e4"/></linearGradient>
   <filter id="ish" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity=".22"/></filter></defs>
@@ -65,8 +60,6 @@ const tray = (s, color = '#000') => {
 
 const png = (svg, file, size) => sharp(Buffer.from(svg), { density: 300 }).resize(size, size).png().toFile(path.join(out, file));
 
-// An app icon at any size, drawn from the photo directly so no size is scaled twice: the Mac one on its
-// plate (vector, so sharp at every size), the Windows one bare.
 async function icon(s, mac) {
   const k = s / 1024, [d, x, y, blur, dy, opacity] = mac ? [704, 160, 160, 9, 8, 0.26] : [944, 40, 30, 10, 10, 0.28];
   const D = Math.round(d * k), X = Math.round(x * k), Y = Math.round(y * k);
@@ -78,7 +71,6 @@ fs.writeFileSync(path.join(out, 'icon-win.png'), await icon(1024, false));
 for (const [file, px] of [['logo.png', 512], ['tray.png', 32], ['drag.png', 64], ['drag@2x.png', 128]]) fs.writeFileSync(path.join(out, file), await at(px));
 await png(tray(18), 'trayTemplate.png', 18);
 await png(tray(36), 'trayTemplate@2x.png', 36);
-// In-app logos at their exact sizes for 1x to 4x (a 3x screen with the large wheel needs more than 3x).
 for (const size of [52, 96]) for (const k of [1, 2, 3, 4]) fs.writeFileSync(path.join(assets, `lime-${size}${k > 1 ? `@${k}x` : ''}.png`), await at(size * k));
 
 const icns = async () => {

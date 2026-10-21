@@ -1,6 +1,4 @@
 'use strict';
-// The optional helpers, fetched from their makers' own download servers and unpacked into Lime's folder: no
-// installer, no administrator rights, and nothing else on the computer changes.
 const fs = require('fs'), fsp = require('fs/promises'), path = require('path');
 const { spawn } = require('child_process');
 const { Readable, Transform } = require('stream');
@@ -8,15 +6,15 @@ const { pipeline } = require('stream/promises');
 const isMac = process.platform === 'darwin', isWin = process.platform === 'win32', arm = process.arch === 'arm64';
 const sys32 = (exe) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', exe);
 
-const run = (cmd, args) => new Promise((ok, no) => {
-  const p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+const run = (cmd, args, input) => new Promise((ok, no) => {
+  const p = spawn(cmd, args, { stdio: [input ? 'pipe' : 'ignore', 'ignore', 'pipe'], windowsHide: true });
+  if (input) p.stdin.end(input);
   let err = '';
   p.stderr.on('data', (d) => { err += d; });
   p.on('error', no);
   p.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `${path.basename(cmd)} exited with ${c}`))));
 });
 const cmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
-// The first file of that name anywhere under a folder.
 async function find(dir, name, depth = 6) {
   let ents = [];
   try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch (_) { return null; }
@@ -28,6 +26,24 @@ async function text(url, signal) {
   const r = await fetch(url, { signal, redirect: 'follow' });
   if (!r.ok) throw new Error(`${r.status} from ${new URL(url).host}`);
   return r.text();
+}
+async function ghLatest(repo, signal) {
+  const r = await fetch(`https://github.com/${repo}/releases/latest`, { signal, redirect: 'manual' });
+  const tag = /\/tag\/v?([\d.]+)$/.exec(r.headers.get('location') || '')?.[1];
+  if (tag) return tag;
+  const v = String(JSON.parse(await text(`https://api.github.com/repos/${repo}/releases/latest`, signal)).tag_name || '').replace(/^v/, '');
+  if (!v) throw new Error(`the latest ${repo.split('/')[1]} release could not be found`);
+  return v;
+}
+async function dmg(file, dir, want) {
+  const mnt = path.join(dir, 'mnt');
+  await run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-noverify', '-noautoopen', '-mountpoint', mnt, file], 'Y\n');
+  try {
+    const name = want || (await fsp.readdir(mnt)).find((n) => n.endsWith('.app'));
+    if (!name) throw new Error('no app in the disk image');
+    await run('/usr/bin/ditto', [path.join(mnt, name), path.join(dir, name)]);
+    return path.join(dir, name);
+  } finally { await run('/usr/bin/hdiutil', ['detach', mnt, '-force']).catch(() => {}); }
 }
 
 const HELPERS = {
@@ -42,27 +58,15 @@ const HELPERS = {
     url: (v) => `https://download.documentfoundation.org/libreoffice/stable/${v}/${isWin ? `win/x86_64/LibreOffice_${v}_Win_x86-64.msi` : `mac/${arm ? 'aarch64' : 'x86_64'}/LibreOffice_${v}_MacOS_${arm ? 'aarch64' : 'x86-64'}.dmg`}`,
     async unpack(file, dir) {
       if (isWin) {
-        // An administrative install only lays the files out: it needs no rights and installs nothing.
         await run(sys32('msiexec.exe'), ['/a', file, '/qn', `TARGETDIR=${dir}`]);
         return find(dir, 'soffice.exe');
       }
-      const mnt = path.join(dir, 'mnt');
-      await run('/usr/bin/hdiutil', ['attach', '-nobrowse', '-readonly', '-noverify', '-mountpoint', mnt, file]);
-      try { await run('/usr/bin/ditto', [path.join(mnt, 'LibreOffice.app'), path.join(dir, 'LibreOffice.app')]); } finally { await run('/usr/bin/hdiutil', ['detach', mnt, '-force']).catch(() => {}); }
-      return find(path.join(dir, 'LibreOffice.app', 'Contents', 'MacOS'), 'soffice', 0);
+      return find(path.join(await dmg(file, dir, 'LibreOffice.app'), 'Contents', 'MacOS'), 'soffice', 0);
     },
   },
   pandoc: {
     name: 'Pandoc', size: 40,
-    async latest(signal) {
-      // The latest release's page points at its tag; GitHub's API is the fallback.
-      const r = await fetch('https://github.com/jgm/pandoc/releases/latest', { signal, redirect: 'manual' });
-      const tag = /\/tag\/v?([\d.]+)$/.exec(r.headers.get('location') || '')?.[1];
-      if (tag) return tag;
-      const v = String(JSON.parse(await text('https://api.github.com/repos/jgm/pandoc/releases/latest', signal)).tag_name || '').replace(/^v/, '');
-      if (!v) throw new Error('the latest Pandoc release could not be found');
-      return v;
-    },
+    latest: (signal) => ghLatest('jgm/pandoc', signal),
     url: (v) => `https://github.com/jgm/pandoc/releases/download/${v}/pandoc-${v}-${isWin ? 'windows-x86_64.zip' : isMac ? `${arm ? 'arm64' : 'x86_64'}-macOS.zip` : `linux-${arm ? 'arm64' : 'amd64'}.tar.gz`}`,
     async unpack(file, dir) {
       await run(isWin ? sys32('tar.exe') : '/usr/bin/tar', ['-xf', file, '-C', dir]);
@@ -70,16 +74,24 @@ const HELPERS = {
     },
   },
 };
+for (const id of ['photocraft', 'lightcraft', 'vectorcraft', 'designcraft', 'effectcraft', 'filmcraft', 'pdfcraft']) HELPERS[id] = {
+  name: `${id[0].toUpperCase()}${id.slice(1, -5)}Craft`, size: 90,
+  latest: (signal) => ghLatest(`storytold/${id}`, signal),
+  url: (v) => `https://github.com/storytold/${id}/releases/download/v${v}/${id}-${v}-${isWin ? `windows-${process.arch}-portable.zip` : isMac ? 'macos-universal.dmg' : `linux-${arm ? 'aarch64' : 'x86_64'}.tar.gz`}`,
+  async unpack(file, dir) {
+    if (isMac) return dmg(file, dir);
+    await run(isWin ? sys32('tar.exe') : '/usr/bin/tar', ['-xf', file, '-C', dir]);
+    const exe = await find(dir, isWin ? `${id}.exe` : id);
+    if (exe) await fsp.rm(path.join(path.dirname(exe), 'portable.txt'), { force: true });
+    return exe;
+  },
+};
 
-// Helpers that came with Lime, packed by scripts/engines.mjs like the apps; they unpack into the same place a
-// download would go, so everything else treats the two alike.
 const tarExe = isWin ? sys32('tar.exe') : '/usr/bin/tar';
 const manifestOf = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 const bundled = (id, vendor) => { const m = manifestOf(vendor)[id]; return m && fs.existsSync(path.join(vendor, `${id}.tar.br`)) ? m : null; };
-// The unpacked program of a bundled helper, if it is there already.
 function unpacked(id, vendor, root) { const m = bundled(id, vendor); const exe = m && path.join(root, id, m.file); return exe && fs.existsSync(exe) ? exe : null; }
 const settle = async (fn) => { for (let i = 0; ; i++) { try { return await fn(); } catch (e) { if (i >= 12 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise((r) => setTimeout(r, 250 * (i + 1))); } } };
-// Unpacks a bundled helper (once; a second caller finds it done) and gives back its program's path.
 async function ensure(id, vendor, root, progress = () => {}) {
   const m = bundled(id, vendor);
   if (!m) return null;
@@ -104,10 +116,8 @@ async function ensure(id, vendor, root, progress = () => {}) {
     return exe;
   } catch (e) { await fsp.rm(part, { recursive: true, force: true }).catch(() => {}); throw e; }
 }
-// A version can be pinned from outside (the build does, when a release list cannot be read).
 const latest = (id, signal) => process.env[`LIME_${id.toUpperCase()}_VERSION`] || HELPERS[id].latest(signal);
 const jobs = new Map();
-// Fetches a helper into <root>/<id>, telling `progress` how it is going, and gives back the program's path.
 async function get(id, root, progress = () => {}, { version } = {}) {
   const H = HELPERS[id];
   if (!H) throw new Error('Unknown helper.');

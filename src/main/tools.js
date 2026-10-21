@@ -6,7 +6,6 @@ const lazy = (name) => () => require(`./engines/${name}`);
 const word = lazy('word'), excel = lazy('excel'), slides = lazy('slides'), kit = lazy('officekit');
 const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email');
 
-// Groups util doesn't know, or reads differently: plain .xml is data (Convert document still takes it) and EPUB/FB2 are e-books.
 const MORE_GROUPS = { subtitle: ['smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc'], data: ['jsonl', 'ndjson', 'jsonc', 'toml'], contacts: ['vcf', 'vcard'],
   font: ['ttf', 'otf', 'woff', 'woff2', 'eot', 'ttc'], mail: ['eml', 'msg'], webarchive: ['mht', 'mhtml'], comic: ['cbz', 'cbr', 'cb7', 'cbt', 'cbc'], ebook: ['epub', 'kepub', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'fb2', 'htmlz', 'txtz'] };
 const MORE_EXT = Object.fromEntries(Object.entries(MORE_GROUPS).flatMap(([g, list]) => list.map((e) => [e, g])));
@@ -72,7 +71,6 @@ const SUB_IN = ['srt', 'vtt', 'ass', 'ssa', 'smi', 'sami', 'lrc', 'ttml', 'dfxp'
 const SINGLE_IN = ['gz', 'bz2', 'xz', 'lzma', 'z', 'zst', 'tgz', 'tbz', 'tbz2', 'txz', 'tzst'];
 const ARCHIVE_OUT = [['zip', 'ZIP'], ['7z', '7Z'], ['tar.gz', 'TAR.GZ'], ['tar.xz', 'TAR.XZ'], ['tar.bz2', 'TAR.BZ2'], ['tar', 'TAR'], ['gz', 'GZ (one file)'], ['bz2', 'BZ2 (one file)'], ['xz', 'XZ (one file)']];
 
-// Excel's print choices for spreadsheets saved as PDF.
 const PRINT_OPTS = [
   choice('print', 'Print', [['workbook', 'Workbook'], ['active', 'Active sheet'], ['selection', 'Selection']], 'workbook'),
   cells('cells', 'Cells', { required: true, when: { print: ['selection'] } }),
@@ -103,12 +101,10 @@ const SLIDE_PRINT = [
   choice('orientation', 'Orientation', [['portrait', 'Portrait'], ['landscape', 'Landscape']], 'portrait', { when: { layout: HANDOUTS } }),
   toggle('frame', 'Frame slides', true, { when: { layout: HANDOUTS } }),
 ];
-// Word, Excel and PowerPoint files changed in place, the way the Office apps do it, without LibreOffice.
 const WORD_IN = ['docx', 'docm', 'dotx', 'dotm'], XLSX_IN = ['xlsx', 'xlsm', 'xltx', 'xltm'], PPTX_IN = ['pptx', 'pptm', 'ppsx', 'ppsm', 'potx', 'potm'];
 const OFFICE_IN = [...WORD_IN, 'odt', ...XLSX_IN, 'ods', ...PPTX_IN, 'odp'];
 const sameExt = (suffix) => (files, o) => `${U.base(files[0])}${typeof suffix === 'function' ? suffix(o) : suffix}.${U.ext(files[0])}`;
 const SHEETS = { name: 'Spreadsheets', extensions: ['csv', 'tsv', 'xlsx', 'xls', 'xlsm', 'ods'] };
-// For the ArtCraft actions below (see the end of TOOLS).
 const PHOTO_EXT = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'psd', 'psb', 'pcraft'];
 const LAYERED_EXT = ['psd', 'psb', 'pcraft', 'tif', 'tiff'];
 const LIGHT_EXT = ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'heic', 'heif', 'webp', 'avif', 'jxl'];
@@ -121,7 +117,6 @@ const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
   { id: 'sign-pdf', cat: 'pdf', name: 'Sign PDF', desc: 'Draw, type or place a signature.', accepts: ['pdf'], max: 1, editor: 'sign' },
   { id: 'organize-pdf', cat: 'pdf', name: 'Organize pages', desc: 'Reorder, rotate, delete and insert pages.', accepts: ['pdf'], max: 1, editor: 'pages' },
-  // Editors in a window of their own, like Edit PDF, each with the matching ArtCraft apps' tools.
   { id: 'edit-image', cat: 'image', name: 'Edit image', desc: 'Crop, straighten, adjust, retouch and add text, with PhotoCraft and LightCraft tools.', accepts: ['image', 'raw'], max: 1, editor: 'image' },
   { id: 'edit-video', cat: 'media', name: 'Edit video', desc: 'Trim, cut, crop, add titles and music, with FilmCraft tools.', accepts: ['video'], max: 1, editor: 'media' },
   { id: 'edit-audio', cat: 'media', name: 'Edit audio', desc: 'Trim, cut, fade, level and clean up a recording.', accepts: ['audio'], max: 1, editor: 'media' },
@@ -547,8 +542,6 @@ const TOOLS = [
       }
       return [{ path: out[0], paths: out, note: `Renamed ${out.length} file${out.length === 1 ? '' : 's'}`, inPlace: true }];
     } },
-  // One-click actions from the seven ArtCraft apps: each sits on its app's ring in the wheel (Apps), lowest `prio`
-  // first, and in All tools. They run the app's own engine headless.
   { id: 'auto-tone', cat: 'image', name: 'Auto tone', desc: 'PhotoCraft fixes dull, flat or colour-cast photos.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 10, petal: ['Auto tone', 'Fix colour'], ext: photoExt, suffix: '-autotone', run: each((f, o, c) => craft().autoTone(f, o, c)) },
   { id: 'sharpen-photo', cat: 'image', name: 'Sharpen', desc: 'PhotoCraft Smart Sharpen brings back crisp detail.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 12, petal: ['Sharpen', 'Detail'], ext: photoExt, suffix: '-sharpened',
     options: [range('amount', 'Amount', 120, 50, 300, { unit: '%', advanced: true }), range('radius', 'Radius', 1.5, 0.5, 3, { step: 0.1, unit: 'px', advanced: true })], run: each((f, o, c) => craft().sharpenPhoto(f, o, c)) },
@@ -741,7 +734,6 @@ const WHEELS = {
   folder: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' }), W('create-archive', 'TAR.GZ', 'Archive', { format: 'tar.gz' }), W('create-archive', 'TAR.XZ', 'Archive', { format: 'tar.xz' })], tools: [] },
   any: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' })], tools: [HASH] },
 };
-// The image ring offers the nine likeliest targets for what was dropped; the rest are in Convert image's format list.
 const IMAGE_TARGETS = { jpg: ['JPG', 'Photo'], png: ['PNG', 'Lossless'], webp: ['WebP', 'Web'], heic: ['HEIC', 'iPhone'], avif: ['AVIF', 'Smallest'], pdf: ['PDF', 'Document'], tiff: ['TIFF', 'Print'], psd: ['PSD', 'Layers'], gif: ['GIF', 'Classic'], apng: ['APNG', 'Animated'], ico: ['ICO', 'Icon'], icns: ['ICNS', 'Mac icon'], cur: ['CUR', 'Cursor'] };
 const IMAGE_RINGS = {
   photo: ['jpg', 'png', 'webp', 'heic', 'avif', 'pdf', 'tiff', 'psd', 'gif', 'ico'],
@@ -771,7 +763,6 @@ const MULTI = {
 const SINGLE_OUTPUT = new Set(['compare-docs', 'merge-slides', 'hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama', 'merge-models']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
-// An editor is offered once its module ships with the app; until then its tool and slices are left out.
 const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js' };
 const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
 if (unshipped.size) {
@@ -789,7 +780,6 @@ function accepts(t, files) {
   return groupsOf(files).every((g) => t.accepts.includes(g));
 }
 const toolsFor = (files) => TOOLS.filter((t) => accepts(t, files)).map((t) => t.id);
-// The extensions a tool takes, for the file chooser it opens when picked with no files.
 const extsFor = (t) => (t.accepts.includes('any') ? [] : [...new Set([...t.accepts.flatMap((g) => [...(U.GROUPS[g] || []), ...(MORE_GROUPS[g] || [])]), ...(t.extAccept || [])])]);
 const dedupe = (list) => list.filter((w, i) => list.findIndex((x) => x.tool === w.tool && x.label === w.label) === i);
 function wheelsFor(files) {

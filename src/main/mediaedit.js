@@ -1,7 +1,4 @@
 'use strict';
-// The audio and video editor's worker side. The renderer keeps the edit list and shows it live; this reads the clip
-// for it (thumbnails, waveform, a preview copy when Chromium can't play the file), runs FilmCraft for its looks, scene
-// detection and voice clean-up, and saves the whole edit list with one FFmpeg run.
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const U = require('./engines/util');
@@ -10,8 +7,8 @@ const { fs, fsp, path } = U;
 
 const sessions = new Map();
 let seq = 0;
-const TICKS = 254016000000; // FilmCraft's ticks per second
-const LUT = 64; // colour cube size: a level-8 HALD picture, 512 × 512
+const TICKS = 254016000000;
+const LUT = 64;
 const even = (x) => Math.max(2, Math.round(x / 2) * 2);
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const f6 = (x) => Number(x).toFixed(6);
@@ -19,14 +16,10 @@ const get = (id) => { const s = sessions.get(id); if (!s) throw new Error('This 
 let filterSet;
 const hasFilter = (f) => { if (filterSet === undefined) filterSet = M.filters(); return !filterSet || filterSet.has(f); };
 
-// Chromium plays these as they are; anything else is watched through a small H.264 (or FLAC) copy.
 const PLAY_EXT = new Set(['mp4', 'm4v', 'mov', 'webm', 'ogv', 'ogg', 'oga', 'mp3', 'm4a', 'aac', 'wav', 'flac', 'opus', 'weba']);
 const PLAY_V = new Set(['h264', 'vp8', 'vp9', 'av1', 'theora', 'hevc']);
 const PLAY_A = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_u8', 'pcm_f32le']);
 const squareOf = (v) => !!v && Math.abs(v.sar - 1) > 0.01;
-// The colour matrix the picture is decoded with. Untagged clips are read as Chromium reads them (BT.709 when HD,
-// BT.601 when smaller), and every converted or saved picture is converted and tagged the same way, so colours keep
-// matching the preview after a crop, a look or a resize changes what a player would guess.
 function colourOf(v) {
   const c = v.color || {}, sd = !(v.width >= 1280 || v.height > 576);
   const mx = { bt709: 'bt709', smpte170m: 'smpte170m', bt470bg: 'bt470bg', bt2020nc: 'bt2020', bt2020c: 'bt2020' }[c.matrix] || (sd ? 'smpte170m' : 'bt709');
@@ -59,7 +52,6 @@ function grab(args, signal) {
   });
 }
 
-// Long jobs (saving, the preview copy, clean-up) report how far they are; the renderer asks with progress().
 function begin(s, kind, label) {
   s.tasks.get(kind)?.ac.abort();
   const t = { ac: new AbortController(), f: 0, label };
@@ -87,7 +79,6 @@ async function ff(t, args, { cwd, duration = 0, from = 0, share = 1, label } = {
   }
 }
 
-// FilmCraft runs a script of its commands on a project holding just this clip.
 const openSteps = (p) => [{ id: 'file.import', params: { paths: [p] } }, { id: 'project.selectAll', params: {} }, { id: 'file.newSequenceFromClip', params: {} }, { id: 'edit.selectAll', params: {} }];
 async function film(steps, signal, args = []) {
   const bin = await require('./engines/crafts').cli('filmcraft');
@@ -173,7 +164,6 @@ async function thumbs(id, times, height = 54) {
   return out;
 }
 
-// The loudest sample in each slice of time (linear, 0–255), from the original sound or a cleaned-up copy.
 async function waveform(id, key) {
   const s = get(id), src = key ? s.made.get(key) : s.file;
   if (!s.info.audio || !src) return null;
@@ -188,7 +178,6 @@ async function waveform(id, key) {
   return { per, peaks };
 }
 
-// ── FilmCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
 let lookList = null;
 async function looks() {
   if (!lookList) {
@@ -201,8 +190,6 @@ async function looks() {
   }
   return lookList;
 }
-// A look is baked into a colour cube: FilmCraft grades a picture holding every colour of a 64-step cube (a HALD
-// image) and the graded picture is the cube. It is used as it is for the preview and for FFmpeg's haldclut.
 const identity = () => {
   const b = Buffer.alloc(LUT * LUT * LUT * 3);
   for (let i = 0, o = 0; i < LUT ** 3; i++) { b[o++] = Math.round(((i % LUT) * 255) / (LUT - 1)); b[o++] = Math.round(((Math.floor(i / LUT) % LUT) * 255) / (LUT - 1)); b[o++] = Math.round(((Math.floor(i / LUT / LUT)) * 255) / (LUT - 1)); }
@@ -233,7 +220,6 @@ function lut(lookId) {
   }
   return lutCache.get(lookId);
 }
-// Scene Edit Detection: the times where one shot cuts to the next.
 async function scenes(id, sensitivity = 50) {
   const s = get(id), t = begin(s, 'scenes', 'Finding scenes');
   try {
@@ -242,7 +228,6 @@ async function scenes(id, sensitivity = 50) {
     return [...new Set(cuts.map((x) => Math.round(x * 1000) / 1000))].sort((a, b) => a - b);
   } finally { end(s, 'scenes', t); }
 }
-// Remix: FilmCraft re-cuts a piece of music on its beats so it lasts the given time.
 async function remix(id, file, seconds) {
   const s = get(id), key = `remix|${file}|${seconds.toFixed(2)}`;
   if (s.made.has(key)) return s.made.get(key);
@@ -255,7 +240,6 @@ async function remix(id, file, seconds) {
   } finally { end(s, 'remix', t); }
 }
 
-// Clean-up that keeps the timing (noise, hum, pitch) is rendered once into a WAV the preview plays and saving uses.
 async function prepare(id, o = {}) {
   const s = get(id), a = s.info.audio;
   if (!a) return null;
@@ -291,7 +275,6 @@ async function prepare(id, o = {}) {
   } finally { end(s, 'prepare', t); }
 }
 
-// The quiet stretches, for Remove silence.
 async function silences(id, o = {}) {
   const s = get(id), src = (o.key && s.made.get(o.key)) || s.file;
   if (!s.info.audio) return [];
@@ -313,10 +296,6 @@ async function subs(id, file) {
   return doc.cues.map((c) => ({ start: c.start / 1000, end: c.end / 1000, text: S.plainText(c.text) }));
 }
 
-// ── The edit list ─────────────────────────────────────────────────────────────────────────────────────────────────
-// What the renderer sends: kept source ranges in order, repeated `loop` times; the picture's geometry in pixels; one
-// colour cube for every colour change and look; titles as finished pictures at the output size with their times in
-// the saved clip; and the sound settings.
 function ranges(e, dur) {
   const keep = (Array.isArray(e.keep) ? e.keep : [[0, dur]]).map(([a, b]) => [U.clamp(num(a), 0, dur), U.clamp(num(b, dur), 0, dur)]).filter(([a, b]) => b - a >= 0.02);
   if (!keep.length) throw new Error('Nothing is left to save: every part of the clip is cut.');
@@ -350,7 +329,6 @@ const atempo = (k) => {
   if (Math.abs(r - 1) > 1e-4) chain.push(`atempo=${r.toFixed(5)}`);
   return chain;
 };
-// Sound shaping that the preview does with the same filters in Web Audio (shelves with a slope of 1, a peaking band).
 function tone(q, chIn) {
   const f = [];
   if (num(q.lowcut) > 0) f.push(`highpass=f=${U.clamp(num(q.lowcut), 20, 400)}:t=q:w=0.7071`);
@@ -363,8 +341,6 @@ function tone(q, chIn) {
   return f;
 }
 const outChannels = (q, chIn) => (q.mono ? 1 : Math.abs(num(q.balance)) > 0.005 ? 2 : chIn);
-// Inputs and the join: each kept range is read straight from the file (FFmpeg seeks to it), and the pieces are joined
-// with the concat filter; a few milliseconds of fade at each join keep the sound from clicking.
 function joined(s, e, wantV, wantA) {
   const info = s.info, keep = ranges(e, info.duration), loop = U.clamp(Math.round(num(e.loop, 1)), 1, 20);
   const prep = wantA && e.audio?.prep ? s.made.get(e.audio.prep) : null;
@@ -388,7 +364,6 @@ function joined(s, e, wantV, wantA) {
   return { args, fc, n, L, loop, prep };
 }
 
-// Output formats: the original container where Lime can write it, else MP4 or MP3.
 const FORMATS = {
   mp4: { kind: 'video', target: 'mp4', ext: 'mp4' }, hevc: { kind: 'video', target: 'mp4', ext: 'mp4', codec: 'hevc' }, webm: { kind: 'video', target: 'webm', ext: 'webm' },
   mov: { kind: 'video', target: 'mov', ext: 'mov' }, mkv: { kind: 'video', target: 'mkv', ext: 'mkv' }, gif: { kind: 'gif', ext: 'gif' },
@@ -517,8 +492,6 @@ async function plan(s, e, tmp, fmt, quality) {
     const duck = U.clamp(num(music.duck), 0, 30);
     if (al) {
       if (duck > 0) {
-        // A hard compressor keyed by the clip's own sound, mixed with the dry music: while anyone speaks the music
-        // drops by about `duck` dB and comes back after, as the preview does.
         const mix = 1 - 10 ** (-duck / 20);
         fc.push(`[${al}]asplit[am][key]`, `[mus][key]sidechaincompress=threshold=0.01:ratio=20:attack=20:release=450:mix=${mix.toFixed(4)}[md]`, `[am][md]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mx]`);
       } else fc.push(`[${al}][mus]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mx]`);
@@ -570,8 +543,6 @@ async function save(id, e, out, o = {}) {
   }
 }
 
-// Loudness of the edit as it stands (before the gain), for Normalise: the gain to reach the target is then a plain
-// volume change, the same in the preview and the saved file.
 async function loudness(id, e) {
   const s = get(id);
   if (!s.info.audio) return null;
@@ -585,7 +556,6 @@ async function loudness(id, e) {
   } finally { end(s, 'loudness', t); }
 }
 
-// The frame under the playhead as the edit shows it, saved as PNG or JPEG.
 async function frame(id, e, at, out) {
   const s = get(id), v = s.info.video;
   if (!v) throw new Error('This file has no picture.');
@@ -624,7 +594,6 @@ async function frame(id, e, at, out) {
   } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
 }
 
-// Split scenes with FilmCraft, as the tool on the wheel does, from the edit's own clip (the original file).
 async function saveScenes(id, sensitivity) {
   const s = get(id), t = begin(s, 'scenes', 'Saving each scene');
   try {

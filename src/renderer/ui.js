@@ -57,7 +57,6 @@ export function form(tool, opts, onChange, ctx = {}) {
     }
     requestAnimationFrame(fit);
   };
-  // A segmented control whose labels don't fit the card becomes a menu.
   const fit = () => $$('.seg.wide', box).forEach((s) => { if (s.fallback && s.clientWidth && s.scrollWidth > s.clientWidth + 1) s.replaceWith(s.fallback()); });
   const set = (o, v) => {
     opts[o.key] = v;
@@ -101,7 +100,6 @@ export function form(tool, opts, onChange, ctx = {}) {
         $('input', el).addEventListener('input', (e) => { $('span', el).textContent = e.target.value; set(o, e.target.value); });
         break;
       case 'file':
-        // The button carries the option's id and the chosen path, so "Fill in … first" can focus it.
         el = h(`<div class="row"><button class="btn" type="button" id="${id}" value="${esc(val)}">Choose…</button><span class="muted ell">${val ? esc(nameOf(val)) : 'No file chosen'}</span></div>`);
         $('button', el).addEventListener('click', async (e) => { const b = e.currentTarget, [f] = await api.invoke('dialog:open', { multi: false, filters: o.filters }); if (f) { set(o, f); b.value = f; $('span', el).textContent = nameOf(f); } });
         break;

@@ -65,7 +65,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), soffice: settings.soffice || '', pandoc: settings.pandoc || '' });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -620,7 +620,7 @@ async function setSettings(patch) {
   if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
-  if (('soffice' in patch && patch.soffice !== before.soffice) || ('pandoc' in patch && patch.pandoc !== before.pandoc)) { require('./engines/util').configure(engineCfg()); [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() })); }
+  if (['soffice', 'pandoc', ...Object.keys(crafts.APPS)].some((k) => k in patch && patch[k] !== before[k])) { require('./engines/util').configure(engineCfg()); [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() })); }
   buildTray();
   broadcast('settings', publicSettings());
   return publicSettings();
@@ -733,7 +733,7 @@ function registerIpc() {
   // Settings can fetch LibreOffice and Pandoc from their makers into Lime's own folder; progress goes back to the page.
   hE('helpers:get', async (e, id) => {
     const helpers = require('./helpers'), tell = (p) => { if (!e.sender.isDestroyed()) e.sender.send('helpers:progress', p); };
-    const exe = helpers.bundled(id, HELPERS) ? await helpers.ensure(id, HELPERS, helperRoot(), tell) : await helpers.get(id, helperRoot(), tell);
+    const exe = crafts.APPS[id] ? await crafts.getApp(id, tell) : helpers.bundled(id, HELPERS) ? await helpers.ensure(id, HELPERS, helperRoot(), tell) : await helpers.get(id, helperRoot(), tell);
     await setSettings({ [id]: exe });
     return exe;
   });

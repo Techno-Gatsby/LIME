@@ -14,13 +14,16 @@ function seg(key, choices) {
 }
 const sw = (key, on = s[key]) => `<label class="switch"><input type="checkbox" data-k="${key}" ${on ? 'checked' : ''}></label>`;
 const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf' };
+const fail = (t, why) => { const n = t.querySelector('.why') || t.appendChild(Object.assign(document.createElement('small'), { className: 'why' })); n.textContent = why; n.style.color = 'var(--danger)'; };
+const reason = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').replace('class="ic', 'class="ic lead') : ''}<div class="t"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</div>${ctl || ''}</div>`;
 
 async function render() {
   const eng = await api.invoke('engines:status').catch(() => ({ crafts: [] }));
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
   const SIZE = { soffice: 350, pandoc: 40 };
-  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : `<button class="btn primary" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key]} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
+  const dl = (key, what, cls = '') => `<button class="btn ${cls}" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key] || 90} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`;
+  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : dl(key, what, 'primary')}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
   <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">
@@ -40,7 +43,7 @@ async function render() {
     ${row('fit', 'Reset position', '', '<button class="btn" data-a="reset">Reset</button>')}
   </div></section>
   <section><h2>ArtCraft apps</h2><div class="group apps">
-    ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : '<span class="tag">Not in this build</span>')).join('')}
+    ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : dl(c.id, c.name))).join('')}
   </div></section>
   <section><h2>Built-in engines</h2>
   <div class="group">
@@ -69,25 +72,21 @@ app.addEventListener('click', async (e) => {
     b.disabled = true;
     b.textContent = 'Opening…';
     try { await api.invoke('apps:open', b.dataset.id); b.textContent = 'Open'; } catch (err) {
-      // The reason shows under the app, not only on hover.
-      const why = String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-      b.textContent = 'Try again'; b.title = why;
-      const t = b.closest('.row').querySelector('.t'), note = t.querySelector('.why') || t.appendChild(Object.assign(document.createElement('small'), { className: 'why' }));
-      note.textContent = why;
-      note.style.color = 'var(--danger)';
+      b.textContent = 'Try again'; b.title = reason(err);
+      fail(b.closest('.row').querySelector('.t'), reason(err));
     } finally { b.disabled = false; }
   }
   if (a === 'get' || a === 'stop') {
     const b = e.target.closest('[data-a]'), k = b.dataset.k, t = b.closest('.row').querySelector('.t');
     if (a === 'stop') { b.disabled = true; api.invoke('helpers:cancel', k); return; }
+    const primary = b.classList.contains('primary');
     b.dataset.a = 'stop'; b.textContent = 'Stop'; b.classList.remove('primary');
     t.querySelector('.why')?.remove();
     const sub = t.querySelector('small'), was = sub.textContent;
     try { await api.invoke('helpers:get', k); render(); } catch (err) {
-      const why = String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-      b.dataset.a = 'get'; b.textContent = 'Download…'; b.classList.add('primary'); b.disabled = false;
+      b.dataset.a = 'get'; b.textContent = 'Download…'; b.classList.toggle('primary', primary); b.disabled = false;
       sub.textContent = was;
-      if (why !== 'Stopped.') { const note = t.appendChild(Object.assign(document.createElement('small'), { className: 'why' })); note.textContent = `Couldn’t download ${b.dataset.what}: ${why}`; note.style.color = 'var(--danger)'; }
+      if (reason(err) !== 'Stopped.') fail(t, `Couldn’t download ${b.dataset.what}: ${reason(err)}`);
     }
   }
   if (a === 'locate') {

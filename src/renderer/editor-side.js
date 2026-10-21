@@ -1,7 +1,5 @@
 import { $, $$, esc, h } from './ui.js';
 
-// The PDF editor's left panel beyond the pages: bookmarks, comments and form fields. Each change goes to the working
-// copy straight away (one undo step), and the lists follow the file.
 const KIND = { Text: 'Note', FreeText: 'Text box', Highlight: 'Highlight', Underline: 'Underline', StrikeOut: 'Strike-out', Squiggly: 'Squiggle', Square: 'Box', Circle: 'Oval', Line: 'Line', Ink: 'Drawing',
   Polygon: 'Polygon', PolyLine: 'Lines', Stamp: 'Stamp', Caret: 'Insert', FileAttachment: 'Attachment', Sound: 'Sound' };
 export const kindOf = (a) => (a.intent === 'LineDimension' ? 'Distance' : a.intent === 'PolygonDimension' ? 'Area' : a.intent === 'PolyLineDimension' ? 'Perimeter' : KIND[a.type] || a.type);
@@ -19,7 +17,6 @@ export function sidePanels(ed) {
     tab = name;
     $$('[data-side]', side).forEach((b) => b.setAttribute('aria-pressed', b.dataset.side === name));
     Object.entries(panes).forEach(([k, p]) => { p.hidden = k !== name; });
-    // Comments, bookmarks and fields need more room than page thumbnails.
     $('.ed-body', root).classList.toggle('side-wide', name !== 'pages');
     if ($('.ed-body', root).classList.contains('no-thumbs')) { $('.ed-body', root).classList.remove('no-thumbs'); $('[data-a=thumbs]', root)?.setAttribute('aria-pressed', 'true'); }
     draw();
@@ -35,7 +32,6 @@ export function sidePanels(ed) {
     if (tab === 'fields') drawFields();
   }
 
-  // ── Bookmarks ──
   const at = (path, tree = st.outline) => path.reduce((list, i, k) => (k === path.length - 1 ? list : list[i].kids), tree);
   const nodeAt = (path) => at(path)[path[path.length - 1]];
   async function saveOutline(sel) {
@@ -100,7 +96,6 @@ export function sidePanels(ed) {
   function bmAction(a) {
     const page = ed.visiblePage();
     if (a === 'add') {
-      // Named after the page's first line of text, as a reader would look for it, else its number.
       ed.linesOf(page).then((lines) => {
         const title = (lines || []).map((l) => l.text.trim()).find((t) => t.length > 1)?.slice(0, 80) || `Page ${page + 1}`;
         const item = { title, page, kids: [] };
@@ -125,7 +120,6 @@ export function sidePanels(ed) {
     if (a === 'out' && path.length > 1) { list.splice(i, 1); const parentPath = path.slice(0, -1), outer = at(parentPath); outer.splice(parentPath[parentPath.length - 1] + 1, 0, b); saveOutline([...parentPath.slice(0, -1), parentPath[parentPath.length - 1] + 1].join('.')); }
   }
 
-  // ── Comments ──
   async function annotOp(op, label = 'Saving…') {
     const r = await ed.busy(label, async () => call('annotOp', st.sess.id, { author: ed.author(), ...op }));
     if (!r) return null;
@@ -183,7 +177,6 @@ export function sidePanels(ed) {
     if (st.annSel === a.id) st.annSel = null;
     await annotOp({ type: 'delete', page: a.page, num: a.num }, 'Deleting…');
   }
-  // Selecting a comment, from the list or the page, opens it here and shows where it is.
   function select(id, scroll) {
     st.annSel = id;
     if (id && tab !== 'comments') show('comments'); else draw();
@@ -197,7 +190,6 @@ export function sidePanels(ed) {
     setTimeout(() => $(`.cm[data-id="${CSS.escape(id)}"] textarea`, panes.comments)?.focus(), 30);
   }
 
-  // ── Fields ──
   function drawFields() {
     const p = panes.fields;
     p.innerHTML = '';

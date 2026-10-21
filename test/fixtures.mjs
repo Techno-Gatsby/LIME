@@ -181,8 +181,6 @@ fs.writeFileSync(P('voina.fb2'), cp1251(`<?xml version="1.0" encoding="windows-1
 </FictionBook>
 `));
 
-// Fonts: Noto Sans (hinted TrueType with composites) with an overlap flag set, a TTC holding it, and a small
-// name-keyed CFF OpenType font built here (subroutines, hint masks, flex, seac accents, two contours, VORG).
 const fonts = require(path.resolve('src/main/engines/fonts.js'));
 if (fs.existsSync(NOTO)) {
   const noto = fonts.load(fs.readFileSync(NOTO));
@@ -258,8 +256,6 @@ if (fs.existsSync(NOTO)) {
   fs.writeFileSync(P('font.otf'), fonts.writeSfnt({ flavor: 0x4f54544f, tables: new Map(Object.entries({ 'CFF ': cff, head, hhea, maxp, 'OS/2': os2, name: nameTable, cmap, post, hmtx, VORG: vorg, vhea, vmtx })) }));
 }
 
-// E-mail: a Korean multipart EML (EUC-KR words and bodies, inline picture, RFC 2231 name), an ISO-2022-KR EML, an
-// Outlook .msg written with cfb after MS-OXMSG (recipients, inline picture, attachment, attached message) and an MHTML page.
 const euc = (() => { const d = new TextDecoder('euc-kr'), m = new Map(); for (let a = 0x81; a <= 0xfe; a++) for (let b = 0x41; b <= 0xfe; b++) { const c = d.decode(Uint8Array.of(a, b)); if (c.length === 1 && c !== '\ufffd' && !m.has(c)) m.set(c, [a, b]); } return (s) => Buffer.from([...s].flatMap((c) => (c.charCodeAt(0) < 128 ? [c.charCodeAt(0)] : m.get(c) || [63]))); })();
 const iso2022kr = (s) => { const out = [0x1b, 0x24, 0x29, 0x43]; for (const line of s.split(/(\r\n)/)) { let so = false; for (const c of line) { if (c.charCodeAt(0) < 128) { if (so) { out.push(0x0f); so = false; } out.push(c.charCodeAt(0)); } else { if (!so) { out.push(0x0e); so = true; } out.push(...euc(c).map((x) => x & 0x7f)); } } if (so) out.push(0x0f); } return Buffer.from(out); };
 const b64 = (b) => Buffer.from(b).toString('base64').replace(/.{76}(?!$)/g, '$&\r\n');
@@ -336,9 +332,6 @@ fs.writeFileSync(P('page.mhtml'), ['From: <Saved by Blink>', 'Snapshot-Content-L
   '------MultipartBoundary--x', 'Content-Type: image/png', 'Content-Transfer-Encoding: base64', 'Content-ID: <inline@mhtml.blink>', '', b64(platePng),
   '------MultipartBoundary--x--', ''].join('\r\n'));
 
-// Kindle books written here after the MobileRead description: MOBI 6 (PalmDOC, HUFF/CDIC or none, EXTH, trailing
-// entries, picture records), a DRM-flagged copy, a PalmDOC text book, a Print Replica and a KF8 (AZW3) book with
-// FDST flows, SKEL/FRAG indexes, CNCX selectors and kindle:pos/embed/flow references.
 const be32 = (v) => { const b = Buffer.alloc(4); b.writeUInt32BE(v >>> 0); return b; };
 const palmDb = (name, type, records) => {
   const head = Buffer.alloc(78 + records.length * 8 + 2);
@@ -437,8 +430,6 @@ fs.writeFileSync(P('locked.azw'), mobiBook(mobiSource, [], { compression: 2, enc
   recs[0] = record0({ compression: 2, textLength: text.length, textRecords, firstImage, title: 'Kindle Format Eight', author: 'Lime Writer', cover: 1, version: 8, kf8: { fdst, skel: skelAt, frag: fragAt } });
   fs.writeFileSync(P('kf8.azw3'), palmDb('Kindle Format Eight', 'BOOKMOBI', recs));
 }
-// Comics: page names that only a natural sort orders, Mac junk, a CB7 and a CBT of the same pages, a locked CBZ, and
-// an EPUB with a nav page for KEPUB; TXTZ that points outside its archive.
 {
   const comic = P('comic-src');
   fs.rmSync(comic, { recursive: true, force: true });
@@ -464,8 +455,6 @@ const wb = XLSX.utils.book_new();
 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Fruit', 'Count', 'Price'], ['Lime', 12, 0.4], ['Lemon', 7, 0.5], ['Orange', 3, 0.9]]), 'Fruit');
 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Month', 'Sales'], ['Jan', 100], ['Feb', 140]]), 'Sales');
 XLSX.writeFile(wb, P('sheet.xlsx'));
-// A styled workbook for printing: merged title, fills, borders, number formats, a hidden row and column, repeated
-// header row, a picture and a footer on "Budget"; a landscape fit-to-page print area on "Summary"; a hidden sheet.
 {
   const { zipSync, strToU8: u } = require('fflate');
   const cell = (r, c) => `${String.fromCharCode(65 + c)}${r}`;
@@ -576,7 +565,6 @@ fs.writeFileSync(P('unicode.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVE
   fs.writeFileSync(P('images.pdf'), await d.save());
 }
 {
-  // PDF → Word layout cases (after Filee's PdfReaderTests / PdfTableTests): y is points from the page's top, text y its baseline.
   const L = require('pdf-lib'), { PDFDocument, StandardFonts, rgb, PDFString, degrees } = L;
   const gradient = (w, h) => sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><defs><linearGradient id="g"><stop offset="0" stop-color="#f80"/><stop offset="1" stop-color="#04a"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/></svg>`));
   const photo = await gradient(200, 120).jpeg({ quality: 80 }).toBuffer(), chart = await gradient(100, 100).png().toBuffer(), logo = await gradient(60, 30).png().toBuffer();
@@ -707,7 +695,6 @@ fs.writeFileSync(P('unicode.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVE
   });
   const mu = await import('mupdf');
   {
-    // Korean keeps its spaces when lines join, Chinese has none; Droid Sans Fallback (built into MuPDF) sets every character 1 em wide.
     const d = new mu.PDFDocument(), hex = (t) => [...t].map((c) => c.codePointAt(0).toString(16).padStart(4, '0')).join('');
     const wrap = (t, n) => t.includes(' ') ? t.split(' ').reduce((ls, w) => { const last = ls[ls.length - 1]; if (last && `${last} ${w}`.length <= n) ls[ls.length - 1] = `${last} ${w}`; else ls.push(w); return ls; }, []) : t.match(new RegExp(`.{1,${n}}`, 'gu'));
     const text = (font, t, y) => wrap(t, 18).map((l, k) => `BT /${font} 11 Tf 50 ${842 - y - k * 16} Td <${hex(l)}> Tj ET`).join('\n');
@@ -801,17 +788,14 @@ fs.writeFileSync(P('lines.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$LTSCALE'
 const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
 fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));
-// A 20 mm cube with a 10 mm hollow (its faces turned inwards), for solids with voids.
 const shifted = (k, d, inward) => ({ pos: cube.pos.map((v) => v * k + d), idx: inward ? cube.idx.map((_, i) => cube.idx[i - (i % 3) + [0, 2, 1][i % 3]]) : cube.idx });
 { const a = shifted(2, 0), b = shifted(1, 5, true); fs.writeFileSync(P('hollow.stl'), cad.writeStl({ pos: Float32Array.from([...a.pos, ...b.pos]), idx: Uint32Array.from([...a.idx, ...b.idx.map((i) => i + 8)]) })); }
-// A stepped block, an L of 40 × 20 mm drawn along Y for 20 mm: from the left its lower step hides behind the tall part.
 {
   const L = [[0, 0], [40, 0], [40, 10], [20, 10], [20, 20], [0, 20]], pos = [...L.flatMap(([x, z]) => [x, 0, z]), ...L.flatMap(([x, z]) => [x, 20, z])], idx = [];
   cad.triangulate(pos, [0, 1, 2, 3, 4, 5], idx); cad.triangulate(pos, [11, 10, 9, 8, 7, 6], idx);
   for (let i = 0; i < 6; i++) { const j = (i + 1) % 6; idx.push(i, i + 6, j + 6, i, j + 6, j); }
   fs.writeFileSync(P('step.stl'), cad.writeStl({ pos: Float32Array.from(pos), idx: Uint32Array.from(idx) }));
 }
-// The 10 mm cube with one triangle turned the wrong way, one doubled and one with two corners in the same place.
 { const t = Array.from(cube.idx); [t[3], t[4]] = [t[4], t[3]]; fs.writeFileSync(P('broken.stl'), cad.writeStl({ pos: cube.pos, idx: Uint32Array.from([...t, t[15], t[16], t[17], 0, 0, 6]) })); }
 fs.writeFileSync(P('box-inch.3mf'), require('fflate').zipSync({ '_rels/.rels': Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="r" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'), '3D/3dmodel.model': Buffer.from(`<?xml version="1.0"?><model unit="inch" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${Array.from({ length: 8 }, (_, i) => `<vertex x="${box.pos[i * 3] / 10}" y="${box.pos[i * 3 + 1] / 10}" z="${box.pos[i * 3 + 2] / 10}"/>`).join('')}</vertices><triangles>${Array.from({ length: 12 }, (_, i) => `<triangle v1="${cube.idx[i * 3]}" v2="${cube.idx[i * 3 + 1]}" v3="${cube.idx[i * 3 + 2]}"/>`).join('')}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`) }));
 fs.writeFileSync(P('mesh.obj'), `v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n`);
@@ -879,7 +863,6 @@ try { sh(cli('designcraft'), ['run', '--sample', '--export', P('layout.idml')]);
 try { sh(cli('effectcraft'), ['--demo', 'exec', 'file.exportLottie', '--params', JSON.stringify({ path: P('anim.json') })]); } catch (e) { console.log('lottie', e.message); }
 try { sh(cli('filmcraft'), ['--demo', 'exec', 'file.exportOtio', `path=${P('timeline.otio')}`]); } catch (e) { console.log('otio', e.message); }
 fs.rmSync(unpacked, { recursive: true, force: true });
-// Short copies for the option sweep: half a second of the animation, and the timeline's first clip at 320×180.
 if (fs.existsSync(P('anim.json'))) { const a = JSON.parse(fs.readFileSync(P('anim.json'), 'utf8')); a.op = a.ip + 12; fs.writeFileSync(P('brief.json'), JSON.stringify(a)); }
 if (fs.existsSync(P('timeline.otio'))) {
   const t = JSON.parse(fs.readFileSync(P('timeline.otio'), 'utf8')), video = t.tracks.children.find((x) => x.kind === 'Video'), clip = video.children.find((c) => /^Clip/.test(c.OTIO_SCHEMA));
@@ -893,8 +876,6 @@ const stereo = 'aevalsrc=sin(440*2*PI*t)|sin(660*2*PI*t):s=48000';
 sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=960x540:rate=24', '-f', 'lavfi', '-i', stereo, '-t', '1', '-c:v', 'libx264', '-crf', '4', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-shortest', P('sweep.mp4')]);
 sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', stereo, '-t', '1', '-c:a', 'aac', '-b:a', '256k', P('sweep.m4a')]);
 
-// Data, contacts, subtitles and archives, all built here (CP949 through iconv-lite, archives through fflate, zlib or a
-// tiny TAR writer, so no symlink has to exist on disk).
 const iconv = require('iconv-lite');
 const cp949 = (s) => iconv.encode(s, 'cp949');
 const SAMPLE = '{\n  "name": "Filee 변환기",\n  "version": 3,\n  "ratio": 3.0,\n  "big": 12345678901234567890,\n  "enabled": true,\n  "missing": null,\n  "notes": "first line\\nsecond line",\n  "looksLikeABoolean": "true",\n  "looksLikeANumber": "007",\n  "empty": "",\n  "tags": ["a", "b"],\n  "nothing": [],\n  "owner": { "id": 1, "email": "me@example.com" },\n  "rows": [ { "x": 1 }, { "x": 2 } ]\n}\n';
@@ -962,7 +943,6 @@ fs.writeFileSync(P('notes.txt.gz'), zlib.gzipSync('hello from a gzip file\n'));
 for (const [d, t] of [['dupA', 'from A'], ['dupB', 'from B']]) { fs.mkdirSync(P(d), { recursive: true }); fs.writeFileSync(P(`${d}/report.txt`), t); }
 fs.rmSync(P('secret.zip'), { force: true });
 sh(sevenZ, ['a', '-tzip', '-plime', P('secret.zip'), 'a.txt'], { cwd: P('folder') });
-// Bookmarks, comments and scene cuts for the PdfCraft and FilmCraft actions that need them.
 {
   const mu = await import('mupdf');
   const d = mu.Document.openDocument(fs.readFileSync(P('doc.pdf')), 'application/pdf'), it = d.outlineIterator();
@@ -971,7 +951,6 @@ sh(sevenZ, ['a', '-tzip', '-plime', P('secret.zip'), 'a.txt'], { cwd: P('folder'
   const c = mu.Document.openDocument(fs.readFileSync(P('doc.pdf')), 'application/pdf');
   [[0, 'Check the total'], [2, 'Sign here please']].forEach(([i, text]) => { const a = c.loadPage(i).createAnnotation('Text'); a.setRect([72, 72, 92, 92]); a.setContents(text); a.setAuthor('Ada'); a.update(); });
   fs.writeFileSync(P('comments.pdf'), c.saveToBuffer('').asUint8Array());
-  // A form with fields to fill in and export: text, a date, a tick box and a drop-down.
   const { PDFDocument } = require('pdf-lib');
   const fd = await PDFDocument.load(fs.readFileSync(P('form.pdf'))), form = fd.getForm(), pg = fd.getPage(0);
   form.createTextField('Full name').addToPage(pg, { x: 140, y: 686, width: 360, height: 18 });
@@ -984,9 +963,6 @@ sh(sevenZ, ['a', '-tzip', '-plime', P('secret.zip'), 'a.txt'], { cwd: P('folder'
 }
 sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24:d=1', '-f', 'lavfi', '-i', 'smptebars=size=320x180:rate=24:d=1', '-f', 'lavfi', '-i', 'color=c=0x2a6f3a:size=320x180:rate=24:d=1',
   '-filter_complex', '[0][1][2]concat=n=3:v=1:a=0', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', P('scenes.mp4')]);
-// Office files for the Word, Excel and PowerPoint tools: tracked changes, comments and personal details, two
-// versions to compare, a mail-merge letter, chapters, a workbook with formulas, duplicates and hidden parts, and decks
-// with speaker notes and a hidden slide.
 {
   const { zipSync, strToU8: u } = require('fflate');
   const D = require('docx');
@@ -1018,7 +994,6 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
     { settings: '<w:trackRevisions/>', 'word/comments.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments ${WNS}><w:comment w:id="0" w:author="Ana Author" w:date="2026-01-05T10:00:00Z" w:initials="AA"><w:p>${r('Please check.')}</w:p></w:comment></w:comments>`,
       'docProps/custom.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Owner"><vt:lpwstr>jay@example.com</vt:lpwstr></property></Properties>' },
     [rel('rId2', 'comments', 'comments.xml')], { 'word/comments.xml': `${WML}comments+xml`, 'docProps/custom.xml': 'application/vnd.openxmlformats-officedocument.custom-properties+xml' }));
-  // A merge letter: a simple and a complex MERGEFIELD, and «City» and {{Last Name}} placeholders split across runs.
   const fld = (name) => `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD ${name} \\* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>${r(`«${name}»`, '<w:b/>')}<w:r><w:fldChar w:fldCharType="end"/></w:r>`;
   fs.writeFileSync(P('letter.docx'), word(
     `<w:p>${r('Dear ')}<w:fldSimple w:instr=" MERGEFIELD FirstName "><w:r><w:t>«FirstName»</w:t></w:r></w:fldSimple>${r(' {{Last ')}${r('Name}},')}</w:p>`
@@ -1026,14 +1001,11 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
     { settings: '<w:mailMerge><w:mainDocumentType w:val="formLetters"/><w:dataType w:val="textFile"/><w:query w:val="SELECT * FROM merge.csv"/></w:mailMerge>' }));
   fs.writeFileSync(P('dupes.csv'), 'Name,Qty\nLime,1\n\n Lime ,1\nKiwi,2\nKiwi,2\n');
   fs.writeFileSync(P('merge.csv'), 'FirstName,Last Name,Amount,City,Address\nAda,Lovelace,4.20,London,"12 St James Square\nLondon"\nAlan,Turing,7,Manchester,Bletchley Park\n민지,김,"1,200",서울,Jongno-gu\n');
-  // Two versions of a report to compare: changed words, a changed number, a case change, a removed and an added
-  // paragraph, and a changed table cell.
   const para = (t) => new D.Paragraph({ children: [new D.TextRun(t)] });
   const table = (price) => new D.Table({ rows: [['Item', 'Price'], ['Limes', price]].map((row) => new D.TableRow({ children: row.map((t) => new D.TableCell({ children: [para(t)] })) })) });
   const version = (paras, price, header) => new D.Document({ creator: 'Ben Example', lastModifiedBy: 'Ben Example', sections: [{ ...(header ? { headers: { default: new D.Header({ children: [para('Lime header')] }) } } : {}), children: [new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun('Quarterly report')] }), ...paras.map(para), table(price)] }] });
   fs.writeFileSync(P('v1.docx'), await D.Packer.toBuffer(version(['The quick brown fox jumps over the lazy dog.', 'Total: 100 dollars.', 'This paragraph will be removed entirely.', 'Closing words stay.'], '4.20')));
   fs.writeFileSync(P('v2.docx'), await D.Packer.toBuffer(version(['The quick red fox jumps over the lazy dog.', 'Total: 120 dollars.', 'Closing Words stay.', 'A brand new paragraph appears here.'], '4.80', true)));
-  // Chapters to split, with a picture in the first one.
   fs.writeFileSync(P('chapters.docx'), await D.Packer.toBuffer(new D.Document({ sections: [{ children: [
     para('Preface text before any heading.'),
     new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun('Chapter One')] }), para('Text of chapter one.'),
@@ -1041,12 +1013,10 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
     new D.Paragraph({ heading: D.HeadingLevel.HEADING_2, children: [new D.TextRun('Section 1.1')] }), para('Text of section one point one.'),
     new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun('Chapter Two')] }), para('Text of chapter two.'),
   ] }] })));
-  // Big pictures to compress: a 1600 px photo and a 2400 px PNG.
   const bigPng = await sharp({ create: { width: 2400, height: 1500, channels: 3, background: '#88aa44' } }).composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1500"><defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#246"/></linearGradient></defs><rect width="2400" height="1500" fill="url(#g)"/><circle cx="1200" cy="750" r="500" fill="#c33"/></svg>') }]).png().toBuffer();
   fs.writeFileSync(P('big.docx'), await D.Packer.toBuffer(new D.Document({ sections: [{ children: [para('Pictures to compress.'),
     new D.Paragraph({ children: [new D.ImageRun({ data: fs.readFileSync(P('photo.jpg')), type: 'jpg', transformation: { width: 480, height: 320 } })] }),
     new D.Paragraph({ children: [new D.ImageRun({ data: bigPng, type: 'png', transformation: { width: 480, height: 300 } })] })] }] })));
-  // OpenDocument text with an insertion, a deletion, a comment and personal details.
   const odf = (mime, content) => zipSync({ mimetype: [u(mime), { level: 0 }],
     'META-INF/manifest.xml': u(`<?xml version="1.0"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"><manifest:file-entry manifest:full-path="/" manifest:media-type="${mime}"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>`),
     'content.xml': u(content), 'meta.xml': u('<?xml version="1.0"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><office:meta><meta:initial-creator>Jay Example</meta:initial-creator><dc:creator>Ben Example</dc:creator><meta:editing-cycles>9</meta:editing-cycles></office:meta></office:document-meta>') });
@@ -1054,13 +1024,9 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
   const info = (who) => `<office:change-info><dc:creator>${who}</dc:creator><dc:date>2026-01-02T10:00:00</dc:date></office:change-info>`;
   fs.writeFileSync(P('tracked.odt'), odf('application/vnd.oasis.opendocument.text', `<?xml version="1.0"?><office:document-content ${ODF_NS}><office:body><office:text><text:tracked-changes><text:changed-region text:id="ct1"><text:insertion>${info('Ana')}</text:insertion></text:changed-region><text:changed-region text:id="ct2"><text:deletion>${info('Ben')}<text:p> jumps</text:p></text:deletion></text:changed-region></text:tracked-changes>`
     + '<text:p>The <text:change-start text:change-id="ct1"/>quick <text:change-end text:change-id="ct1"/>brown fox<text:change text:change-id="ct2"/>.</text:p><text:p>Second <office:annotation><dc:creator>Ana Author</dc:creator><text:p>A comment</text:p></office:annotation>paragraph.</text:p></office:text></office:body></office:document-content>'));
-  // A spreadsheet in OpenDocument form: a formula, a hidden row and a protected sheet without a password.
   fs.writeFileSync(P('book.ods'), odf('application/vnd.oasis.opendocument.spreadsheet', `<?xml version="1.0"?><office:document-content ${ODF_NS}><office:body><office:spreadsheet><table:table table:name="Data" table:protected="true"><table:table-column table:number-columns-repeated="2"/>`
     + '<table:table-row><table:table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:table-cell><table:table-cell table:formula="of:=[.A1]*3" office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell></table:table-row>'
     + '<table:table-row table:visibility="collapse"><table:table-cell office:value-type="string"><text:p>hidden row</text:p></table:table-cell></table:table-row></table:table><table:table table:name="Other"><table:table-row><table:table-cell table:formula="of:=[$Data.B1]+1" office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>'));
-  // A workbook to tidy and inspect. Data: a header, a duplicate row, an empty row, a cell with extra spaces, formulas
-  // (one dividing by zero), a hidden row and column and protection without a password. Summary points at Data and is
-  // protected with a password. A third sheet is hidden.
   const ss = ['Name', 'Qty', 'Price', 'Total', 'Lime', 'Lemon', '  Kiwi  ', 'Ratio', 'hidden row', 'Note', 'Grand total', 'Kiwi row', 'secret', 'off to the side'];
   const s = (t) => ss.indexOf(t), sc = (ref, t) => `<c r="${ref}" t="s"><v>${s(t)}</v></c>`, nc = (ref, v) => `<c r="${ref}"><v>${v}</v></c>`, fc = (ref, f, v, t = '') => `<c r="${ref}"${t}><f>${f}</f><v>${v}</v></c>`;
   const row = (n, cells, extra = '') => `<row r="${n}"${extra}>${cells.join('')}</row>`;
@@ -1088,7 +1054,6 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
     'xl/calcChain.xml': u('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="D2" i="1"/><c r="B1" i="2"/></calcChain>'),
     'xl/worksheets/sheet1.xml': u(dataSheet), 'xl/worksheets/sheet2.xml': u(summarySheet), 'xl/worksheets/sheet3.xml': u(sheet(row(1, [sc('A1', 'secret')]))),
   }));
-  // Decks with speaker notes and a hidden slide, and a second deck with its own design to merge.
   const Pptx = require('pptxgenjs');
   const titled = (bg) => { const d = new Pptx(); d.defineSlideMaster({ title: 'LIME', background: { color: bg }, objects: [{ placeholder: { options: { name: 'title', type: 'title', x: 0.5, y: 0.3, w: 9, h: 1 }, text: '' } }] }); return d; };
   const add = (d, title, bullets, notes, hidden) => { const sl = d.addSlide({ masterName: 'LIME' }); sl.addText(title, { placeholder: 'title' }); if (bullets.length) sl.addText(bullets.map((t) => ({ text: t, options: { bullet: true } })), { x: 0.5, y: 1.6, w: 8, h: 3 }); if (notes) sl.addNotes(notes); if (hidden) sl.hidden = true; return sl; };

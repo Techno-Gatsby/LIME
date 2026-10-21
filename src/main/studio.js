@@ -1,16 +1,12 @@
 'use strict';
-// The app editors: VectorCraft, DesignCraft, EffectCraft and FilmCraft files opened in Lime. The working copy is kept in
-// the app's own format, one file per step, so undo and redo move between files and nothing touches the original until
-// it is saved. Every edit, preview and export is made by the app's own engine.
 const U = require('./engines/util');
 const crafts = require('./engines/crafts');
 const { fs, fsp, path } = U;
 
 const sessions = new Map();
 let seq = 0;
-const TICKS = 254016000000; // FilmCraft time units per second
+const TICKS = 254016000000;
 
-// "vectorcraft-cli: select.set: invalid parameters for `select.set`: no such object id 9" → "No such object id 9."
 function clean(msg) {
   const s = String(msg || '').split(' — ').pop().replace(/^\w+-cli( [a-z-]+)?: /, '').replace(/^[a-zA-Z]+(\.[a-zA-Z0-9]+)+: /, '')
     .replace(/^invalid parameters for `[^`]+`: /, '').replace(/^command `[^`]+` is not available right now: /, '').replace(/^edit failed: /, '').trim();
@@ -28,7 +24,6 @@ const rgbHex = (c) => `#${hex2(c[0])}${hex2(c[1])}${hex2(c[2])}`;
 const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
 const exists = (p) => fs.existsSync(p);
 
-// ── VectorCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const vargs = (cmds) => cmds.flatMap(([id, params]) => ['--cmd', id, ...(params ? ['--params', JSON.stringify(params)] : [])]);
 async function vrun(input, cmds, exports = []) {
   const r = await exec('vectorcraft', ['run', ...(input ? ['--in', input] : []), ...vargs(cmds), ...exports.flatMap((e) => ['--export', e])]);
@@ -41,7 +36,6 @@ const families = async () => (fontFamilies ||= (await vrun(null, [['text.fontLis
 const sel = (p) => (p.ids?.length ? [['select.set', { ids: p.ids }]] : [['select.all']]);
 const ARRANGE = { front: 'bringToFront', forward: 'bringForward', backward: 'sendBackward', back: 'sendToBack' };
 const PATHFINDER = ['unite', 'minusFront', 'intersect', 'exclude', 'divide'];
-// Live effects with the app's own defaults.
 const VECTOR_EFFECTS = { glow: 'stylize.outerGlow', round: 'stylize.roundCorners', feather: 'stylize.feather', roughen: 'distort.roughen', blur: 'blur.gaussian', arc: 'warp.arc' };
 const VECTOR_OPS = {
   recolor: (p) => [['select.all'], ['recolor.apply', { map: p.map }]],
@@ -123,7 +117,6 @@ const vector = {
       if (/^Nothing selected/.test(e.message)) throw new Error(op === 'outlineText' ? 'There’s no text to outline.' : 'There’s nothing to change: the artboards are empty.');
       throw e;
     });
-    // What an edit made is selected afterwards, as in the app.
     const made = Object.entries(r).filter(([k]) => /^(text\.create|shape\.|object\.group|object\.pathfinder\.|imageTrace\.makeAndExpand|file\.place)/.test(k)).map(([, v]) => v?.ids || (v?.id != null ? [v.id] : [])).pop();
     if (made?.length && op !== 'trace' && op !== 'place') return { select: made };
     if (op === 'findReplace') return { note: r['edit.findReplace']?.count ? `Replaced ${plural(r['edit.findReplace'].count, 'time')}` : `“${p.find}” wasn’t found`, unchanged: !r['edit.findReplace']?.count };
@@ -147,7 +140,6 @@ const vector = {
   },
 };
 
-// ── DesignCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const dargs = (cmds) => cmds.flatMap(([id, params]) => ['--cmd', `${id}=${JSON.stringify(params || {})}`]);
 async function drun(input, cmds, more = []) {
   const r = await exec('designcraft', ['run', '--in', input, ...dargs(cmds), ...more]);
@@ -178,7 +170,6 @@ const DESIGN_OPS = {
   deleteItems: (p) => [['edit.clear', { ids: p.ids }]],
   itemFill: (p) => [['object.fill', { ids: p.ids, swatch: p.swatch }]],
   itemOpacity: (p) => [['object.opacity', { ids: p.ids, opacity: Math.max(0, Math.min(1, Number(p.value) / 100)) }]],
-  // Overset text: the frame grows down until the story fits.
   fitFrame: (p) => [['object.textFrameOptions', { ids: p.ids, autoSize: 'heightOnly' }]],
   fit: (p) => [['object.fit', { ids: p.ids, mode: ['fillProportionally', 'fitProportionally', 'centerContent', 'fitFrameToContent', 'fitContentToFrame'].includes(p.mode) ? p.mode : 'fitProportionally' }]],
   replaceImage: (p) => [['file.place', { path: p.file, frame: p.frame }], ['object.fit', { ids: [p.frame], mode: 'fillProportionally' }]],
@@ -215,7 +206,6 @@ const design = {
   async apply(s, cur, next, op, p) {
     const fn = DESIGN_OPS[op];
     if (!fn) throw new Error(`Unknown edit ${op}`);
-    // A CMYK swatch stays CMYK, so a print document doesn't gain RGB colours.
     if (op === 'swatch' && /^#[0-9a-f]{6}$/i.test(p.color) && (p.cmyk || (docJson(cur).swatches || []).find((w) => w.name === p.name)?.value?.color?.model === 'cmyk')) {
       const [r, g, b] = hexRgb(p.color), k = 1 - Math.max(r, g, b), pc = (x) => Math.round((k >= 1 ? 0 : (1 - x - k) / (1 - k)) * 1000) / 10;
       p = { ...p, color: { c: pc(r), m: pc(g), y: pc(b), k: Math.round(k * 1000) / 10 } };
@@ -247,7 +237,6 @@ const design = {
     if (ext === 'epub') { await drun(file, [[opts.fixed ? 'file.exportFixedEpub' : 'file.exportEpub', { path: target }]]); return target; }
     if (ext === 'html') { await drun(file, [['file.exportHtml', { path: target }]]); return target; }
     if (ext === 'txt') {
-      // Every story, in the order they appear, rather than only the one being edited.
       const got = await drun(file, (s.model?.stories || []).map((st) => ['story.get', { story: st.id }]));
       await fsp.writeFile(target, `${got.map((g) => g?.text).filter(Boolean).join('\n\n')}\n`);
       return target;
@@ -257,9 +246,6 @@ const design = {
   },
 };
 
-// ── EffectCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
-// Reading and recolouring go through EffectCraft's scripting (the After Effects object model), the rest through its
-// commands. Colours are compared to within 1/255.
 const JSX_MODEL = `
 var c = app.project.activeItem, L = [], T = [], C = [];
 function near(a, b) { return Math.abs(a[0] - b[0]) < 0.004 && Math.abs(a[1] - b[1]) < 0.004 && Math.abs(a[2] - b[2]) < 0.004; }
@@ -311,7 +297,6 @@ for (var i = 1; i <= c.numLayers; i++) { var l = c.layer(i), st = l.startTime; l
 var ws = c.workAreaStart, wd = c.workAreaDuration;
 c.duration = c.duration / f; c.workAreaStart = ws / f; c.workAreaDuration = wd / f;
 c.duration`;
-// Text layers are found by id in every composition, so text inside nested compositions can be changed too.
 const jsxText = (p) => `
 var id = ${Number(p.layer)}, done = 0;
 for (var k = 1; k <= app.project.numItems && !done; k++) {
@@ -354,7 +339,6 @@ const motion = {
   async model(s, file) {
     const m = await ecScript(file, JSX_MODEL);
     if (!m?.comp) throw new Error('EffectCraft couldn’t read this animation.');
-    // Colours used anywhere, the most used first, each with the layers that have it.
     const groups = new Map();
     for (const c of m.colors) { const hx = rgbHex(c.value); const g = groups.get(hx) || { hex: hx, uses: [] }; g.uses.push(`${c.name} (${String(c.kind).replace(/^Color$/, 'colour').toLowerCase()})`); groups.set(hx, g); }
     return { comp: { ...m.comp, background: rgbHex(m.comp.background || [0, 0, 0]) }, layers: m.layers, texts: m.texts.map((t) => ({ ...t, fill: rgbHex(t.fill || [1, 1, 1]) })), colors: [...groups.values()].sort((a, b) => b.uses.length - a.uses.length) };
@@ -376,7 +360,6 @@ const motion = {
       reverse: () => [['layer.timeReverse', { layers: all }]],
       effect: () => [['effect.apply', { effect: String(p.effect), layers: [p.layer] }]],
       preset: () => [['anim.applyBuiltinPreset', { preset: String(p.preset), layers: [p.layer] }]],
-      // A transparent background: the solid layers behind everything are hidden (or shown again).
       transparent: () => [['layer.setSwitch', { layers: (m?.layers || []).filter((l) => l.kind === 'Solid').map((l) => l.id), switch: 'video', value: !p.on }]],
     }[op];
     if (!cmds) throw new Error(`Unknown edit ${op}`);
@@ -412,7 +395,6 @@ const motion = {
   },
 };
 
-// ── FilmCraft ───────────────────────────────────────────────────────────────────────────────────────────────────────
 async function frun(project, steps, saveAs) {
   const dir = await U.tmpDir('film');
   try {
@@ -457,7 +439,6 @@ const film = {
   async apply(s, cur, next, op, p) {
     const m = s.model, at = (f) => Math.round((f / m.fps) * TICKS);
     const tracks = [...m.video, ...m.audio];
-    // Sync locks would refuse ripples that the other tracks are in the way of, so ripples are made with them off.
     const unsync = (steps) => [...tracks.map((t) => ({ id: 'timeline.setTrack', params: { track: t.id, syncLock: false } })), ...steps, ...tracks.map((t) => ({ id: 'timeline.setTrack', params: { track: t.id, syncLock: t.syncLock } }))];
     const clipOf = (id) => { for (const t of tracks) { const i = t.clips.findIndex((c) => c.id === id); if (i >= 0) return { t, i, c: t.clips[i] }; } return null; };
     let steps;
@@ -477,7 +458,6 @@ const film = {
     else if (op === 'marker') steps = [{ id: 'markers.add', params: { target: 'program', time: at(p.frame || 0), name: String(p.name || 'Marker') } }];
     else if (op === 'sequence') steps =[{ id: 'sequence.settings', params: { ...(p.width ? { width: Math.round(p.width) } : {}), ...(p.height ? { height: Math.round(p.height) } : {}), ...(p.fps ? { fps: Number(p.fps) } : {}), ...(p.name ? { name: String(p.name) } : {}), scaleMotion: true } }];
     else if (op === 'move') {
-      // Swap the clip with its neighbour on the track: linked sound goes with it.
       const a = clipOf(p.clip);
       if (!a) throw new Error('That clip isn’t on the timeline any more.');
       const j = p.dir === 'earlier' ? a.i - 1 : a.i + 1, b = a.t.clips[j];
@@ -501,7 +481,6 @@ const film = {
     if (!exists(out)) throw new Error('FilmCraft couldn’t draw this frame.');
     return out;
   },
-  // A picture of each clip's own media from the middle of the part that is used, all in one run.
   async thumbs(s, file, list, dir) {
     const todo = list.filter((c) => !exists(path.join(dir, `t-${c.item}-${c.at}.jpg`)));
     if (todo.length) {
@@ -559,12 +538,10 @@ async function open(file, app) {
     fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
     throw e;
   }
-  // Save keeps the original format where the app can write it, else the app's own.
   s.saveExt = A.writes.includes(s.ext) ? s.ext : A.native;
   sessions.set(s.id, s);
   return state(s, { formats: A.formats, families: app === 'effectcraft' ? await motionFamilies() : app === 'filmcraft' ? [] : await families() });
 }
-// One change at a time for each file: the next starts from what the last one made.
 function queue(s, fn) {
   const run = (s.queue || Promise.resolve()).catch(() => {}).then(fn);
   s.queue = run;
@@ -598,7 +575,6 @@ const undo = (id) => { const s = get(id); return queue(s, () => move(s, s.at - 1
 const redo = (id) => { const s = get(id); return queue(s, () => move(s, s.at + 1)); };
 const goto = (id, at) => { const s = get(id); return queue(s, () => move(s, Number(at))); };
 
-// Previews are cached for each step: an artboard or page at a scale, a frame of the animation or of the timeline.
 async function render(id, what, scale, opts = {}) {
   const s = get(id), f = cur(s), A = APPS[s.app];
   const key = `${path.basename(f)}-${what}-${Number(scale).toFixed(3)}-${opts.transparent ? 't' : ''}`;
@@ -609,7 +585,6 @@ async function render(id, what, scale, opts = {}) {
   }
   return s.cache.get(key);
 }
-// A small video of the whole thing, for playing back: made once for each step.
 const previews = new Map();
 async function preview(id) {
   const s = get(id), f = cur(s), A = APPS[s.app];
@@ -629,7 +604,6 @@ async function query(id, what, params = {}) {
   if (!A.query) throw new Error('Nothing to look up here.');
   return A.query(s, cur(s), what, params);
 }
-// Save: "<name> (edited).<ext>" beside the original unless a path is given. The original is never written over.
 async function save(id, target, opts = {}) {
   const s = get(id), A = APPS[s.app];
   const out = target || path.join(path.dirname(s.file), `${U.base(s.file)} (edited).${s.saveExt}`);
@@ -641,9 +615,6 @@ async function save(id, target, opts = {}) {
   return { path: wrote, ...state(s) };
 }
 
-// The app's one-click actions from the wheel, run on the working copy as it is now. What they make goes beside the
-// original file, as it would from the wheel.
-// The working copy is handed over in the format Save writes, so the actions are the ones the wheel offers for that file.
 const probeFile = (s) => (s.saveExt === s.ext ? s.file : path.join(s.dir, `probe.${s.saveExt}`));
 function toolList(id) {
   const s = get(id), tools = require('./tools');

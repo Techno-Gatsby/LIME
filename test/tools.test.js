@@ -72,8 +72,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const X = F;
   const xmlDoc = (s, what) => { const errs = []; const d = new (require('@xmldom/xmldom').DOMParser)({ errorHandler: { warning: () => {}, error: (e) => errs.push(e), fatalError: (e) => errs.push(e) } }).parseFromString(s, 'text/xml'); ok(!errs.length && d.documentElement, `${what} is not well-formed: ${errs[0]}`); return d; };
   const tags = (d, n) => { const all = d.getElementsByTagName('*'), out = []; for (let i = 0; i < all.length; i++) if (String(all[i].localName || all[i].tagName).replace(/^.*:/, '') === n) out.push(all[i]); return out; };
-  // EPUB structure: mimetype first and stored, OPF 3.0 with one identifier and modified date, every manifest item and
-  // relative link present, unique ids, nav with entries, NCX with nav points, and well-formed XHTML.
   const epub = (p) => {
     const b = read(p);
     ok(b.readUInt32LE(0) === 0x04034b50 && b.readUInt16LE(8) === 0 && b.readUInt16LE(28) === 0 && b.subarray(30, 58).toString() === 'mimetypeapplication/epub+zip', 'mimetype is not the first stored entry');
@@ -370,7 +368,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('page numbers', 'page-numbers', ['doc.pdf'], { position: 'bottom-center', format: 'Page {n} of {total}', start: 1, size: 11, pages: 'all', color: '#333333' }, async ([o]) => ok((await pdfText(o)).includes('Page 2 of 3'), 'numbers missing'));
   T('watermark pdf', 'watermark-pdf', ['doc.pdf'], { kind: 'text', text: 'CONFIDENTIAL', layout: 'single', opacity: 30, rotation: 45, color: '#d13438', pages: 'all' }, async ([o]) => pages(o, 3));
   T('crop pdf', 'crop-pdf', ['doc.pdf'], { top: 10, bottom: 10, left: 10, right: 10, pages: 'all' }, async ([o]) => { const d = await require('pdf-lib').PDFDocument.load(read(o)); const b = d.getPage(0).getCropBox?.() || d.getPage(0).getMediaBox(); ok(b.width < 595, `width ${b.width}`); });
-  // PDF24-style page tools.
   const sheets = async (o) => { const d = await require('pdf-lib').PDFDocument.load(read(o)); return d.getPages().map((p) => p.getSize()); };
   const pageText = async (o, i = 0) => (await E('pdf').readPdf(o)).doc.loadPage(i).toStructuredText().asText();
   T('pages per sheet: 2 up turns the sheet', 'pages-per-sheet', ['doc.pdf'], { n: '2', paper: 'auto', orientation: 'auto', order: 'across', margin: 10, border: false, pages: 'all' }, async ([o]) => {
@@ -451,7 +448,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   T('redact pdf', 'redact-pdf', ['doc.pdf'], { terms: 'Invoice', patterns: ['email'], boxes: true }, async ([o]) => { const t = await pdfText(o); ok(!t.includes('hello@example.com') && !t.includes('Invoice'), 'not redacted'); ok(t.includes('quick brown'), 'too much removed'); });
   T('audit pdf', 'audit-pdf', ['doc.pdf'], {}, (o, r) => ok(/No hidden text|fake redaction/.test(r[0].note), r[0].note));
-  // The ArtCraft apps' one-click actions, through Lime.
   const grey = async (p) => { const st = await sharp(p).stats(); const [r, g, b] = st.channels; return Math.max(Math.abs(r.mean - g.mean), Math.abs(g.mean - b.mean)); };
   T('photocraft auto tone', 'auto-tone', ['photo.jpg'], {}, async ([o]) => { const m = await fmt(o, 'jpeg'), src = await sharp(fx('photo.jpg')).metadata(); ok(m.width === src.width && m.height === src.height, `size ${m.width}×${m.height}`); });
   const crisp = async (p) => { const { data } = await sharp(p).greyscale().convolve({ width: 3, height: 3, kernel: [0, -1, 0, -1, 4, -1, 0, -1, 0] }).raw().toBuffer({ resolveWithObject: true }); return data.reduce((a, v) => a + v, 0) / data.length; };
@@ -507,7 +503,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(Math.abs(t[2] - t[0] - 595) < 0.5 && Math.abs(t[3] - t[1] - 842) < 0.5, `trim ${t}`);
     ok(Math.abs(t[0] - b[0] - 8.5) < 0.3, `bleed ${b} for trim ${t}`);
     ok(m[2] - m[0] > 595 + 40, `sheet ${m}`);
-    // A crop mark sits in the top-left margin, outside the bleed.
     const mu = await E('pdf').mupdf();
     const { data, info } = await sharp(Buffer.from(page.toPixmap(mu.Matrix.scale(2, 2), mu.ColorSpace.DeviceRGB, false, true).asPNG())).raw().toBuffer({ resolveWithObject: true });
     let dark = 0;
@@ -761,7 +756,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   let google = null;
   try { google = require('wawoff2'); } catch (_) {}
   const headMask = (h) => { const c = Buffer.from(h); c.fill(0, 8, 12); c.writeUInt16BE(c.readUInt16BE(16) & ~0x800, 16); return c; };
-  // Tables that differ between two fonts (head compared without checkSumAdjustment and the WOFF2 flag; DSIG ignored).
   const tableDiff = (a, b, skip = []) => [...new Set([...a.tables.keys(), ...b.tables.keys()])].filter((t) => !skip.includes(t) && t !== 'DSIG' && (!a.tables.has(t) || !b.tables.has(t) || Buffer.compare(t === 'head' ? headMask(a.tables.get(t)) : a.tables.get(t), t === 'head' ? headMask(b.tables.get(t)) : b.tables.get(t)) !== 0));
   const glyphDiff = (a, b) => { const x = FONTS.readGlyphs(a), y = FONTS.readGlyphs(b); return x.filter((g, i) => !!g !== !!y[i] || (g && Buffer.compare(FONTS.serializeGlyph(g), FONTS.serializeGlyph(y[i])) !== 0)).length + Math.abs(x.length - y.length); };
   const ttfSrc = () => FONTS.load(read(fx('font.ttf')));
@@ -838,8 +832,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('mail rtf-only msg→html', 'convert-email', ['rtf.msg'], { to: 'html' }, ([o]) => ok(txt(o).includes('<p>Encapsulated café text</p>'), 'de-encapsulated HTML'));
   X('mail broken msg refused', 'convert-email', ['broken.msg'], { to: 'html' }, /Not an Outlook message/);
   T('mail eml→pdf', 'convert-email', ['mail.eml'], { to: 'pdf' }, async ([o]) => { const t = await pdfText(o); ok(t.includes('Attachments') && t.includes('good link'), 'pdf text'); });
-  // E-mail → PDF renders offline: remote pictures, style sheets and imports are never fetched (a local server counts
-  // requests) while the message's own data: picture still shows.
   const hits = [];
   const server = require('http').createServer((req, res) => { hits.push(req.url); res.writeHead(200, { 'content-type': 'image/png' }); res.end(read(fx('photo2.jpg'))); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -865,7 +857,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const [to, chk] of [['json', (o) => ok(JSON.parse(txt(o).replace(/^\ufeff/, '')).length >= 1 || true, 'json')], ['html', (o) => ok(txt(o).includes('Lime'), 'html')], ['pdf', async (o) => ok((await pdfText(o)).includes('Lime'), 'pdf')], ['ods', (o) => zipHas(o, 'content.xml')], ['md', (o) => ok(txt(o).includes('| Fruit |'), 'md')], ['xls', (o) => ok(require('xlsx').readFile(o).SheetNames.length === 2, 'xls')], ['docx', async (o) => ok((await docxText(o)).includes('Lime'), 'docx')]]) {
     T(`sheet→${to}`, 'convert-sheet', ['sheet.xlsx'], { to, allSheets: false }, async ([o]) => chk(o));
   }
-  // Printing a workbook: Budget is 1021 px wide and 1232 px tall on A4 portrait, so 2 column bands × 2 row bands.
   const printed = async (p) => {
     const { doc } = await E('pdf').readPdf(p);
     return Array.from({ length: doc.countPages() }, (_, i) => {
@@ -926,8 +917,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('slides→html', 'convert-slides', ['deck.pptx'], { to: 'html' }, ([o]) => ok(txt(o).includes('class="slide"'), 'html'));
   T('merge docs', 'merge-documents', ['doc.docx', 'doc.pdf', 'photo2.jpg', 'deck.pptx'], {}, async ([o]) => ok((await pages(o)) >= 7, 'pages'));
   T('merge sheets', 'merge-sheets', ['sheet.csv', 'sheet2.csv'], { mode: 'stack', skipHeaders: true }, ([o]) => ok(require('xlsx').utils.sheet_to_json(require('xlsx').readFile(o).Sheets.Combined).length === 3, 'rows'));
-  // Word, Excel and PowerPoint tools: each result opened and its content checked; a package check that every
-  // relationship leads to a part that exists and every part has a content type.
   const zipOf = (p) => require('fflate').unzipSync(new Uint8Array(read(p)));
   const partOf = (p, f) => { const z = zipOf(p); return z[f] ? Buffer.from(z[f]).toString() : ''; };
   const opcCheck = (p) => {
@@ -1309,8 +1298,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   T('stl→ply without colours', 'convert-model', ['box.stl'], { to: 'ply' }, ([o]) => { const { h, V, F } = plyOut(o); ok(!/red/.test(h) && F.length === 12 && Math.abs(vol(V, F) - 6000) < 1e-3, `${F.length} faces, volume ${vol(V, F)}`); });
   T('measure model', 'cad-info', ['cube.stl'], { save: false }, (o, r) => ok(/Volume: 1(\.0+)? cm³|Volume: 1 cm/.test(r[0].text), r[0].text));
-  // Saving the way FreeCAD does: STEP, IGES and BREP (exact through Open CASCADE, faceted solids from meshes), more mesh
-  // formats, units, repair, simplify, merge and drawings. Every result is read back (by Open CASCADE, Lime or an XML parser) and measured.
   const cadInfo = (o) => E('cad').info(o);
   const ents = (t, e) => (t.match(new RegExp(`=${e}\\(`, 'g')) || []).length;
   T('stl→step: a flat face per side, one closed solid', 'convert-model', ['box.stl'], { to: 'step' }, async ([o]) => {
@@ -1406,12 +1393,10 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('merge models→step: two solids', 'merge-models', ['box.stl', 'cube.stl'], { to: 'step', arrange: true }, async ([o]) => { ok(ents(txt(o), 'MANIFOLD_SOLID_BREP') === 2, `${ents(txt(o), 'MANIFOLD_SOLID_BREP')} solids`); nearly([(await cadInfo(o)).volume], [7000], 'volume'); });
   const sheetLines = (o, cls) => [...txt(o).matchAll(new RegExp(`<path d="M([^"]+)"[^>]*class="${cls}"`, 'g'))].map((m) => m[1].split('L').map((p) => p.split(',').map(Number)));
   const length = (ls) => ls.reduce((s, l) => s + l.slice(1).reduce((t, p, i) => t + Math.hypot(p[0] - l[i][0], p[1] - l[i][1]), 0), 0);
-  // The top-left view: an L (three heights of corner) in first angle, where the front view is; a plain rectangle (two) in third.
   const cornerHeights = (o) => { const pts = sheetLines(o, 'Visible').flat(), x0 = Math.min(...pts.map((p) => p[0])), y0 = Math.min(...pts.map((p) => p[1])); return new Set(pts.filter((p) => p[0] <= x0 + 200.01 && p[1] <= y0 + 100.01).map((p) => Math.round(p[1] * 100))).size; };
   T('drawing: three views at 5:1, the hidden step dashed', 'model-drawing', ['step.stl'], { to: 'svg', views: 'three' }, ([o]) => {
     const t = txt(o), vis = sheetLines(o, 'Visible'), hid = sheetLines(o, 'Hidden');
     ok(/width="420mm" height="297mm"/.test(t) && />5:1</.test(t) && />step</.test(t) && cornerHeights(o) === 3, 'sheet, scale, title or the front view’s place');
-    // Front: the L (120 mm round); top: 40 × 20 and the step's edge; left: 20 × 20; all five times over.
     nearly([length(vis)], [(120 + 140 + 80) * 5], 'visible lines');
     ok(hid.length === 1 && hid[0].length === 2 && Math.abs(hid[0][0][1] - hid[0][1][1]) < 1e-3, `hidden ${JSON.stringify(hid)}`);
     nearly([length(hid)], [100], 'the hidden step across the side view');
@@ -1433,8 +1418,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(items.some((i) => i.layer === 'Hidden' && i.dash?.join() === '3,-1.5'), 'hidden line not dashed when read back');
   });
   F('drawing refuses a scale that doesn’t fit', 'model-drawing', ['box.stl'], { scale: '50' }, /don’t fit on A3/);
-  // AutoCAD 2000 DXF from drawings: read back, the same geometry, layers, colours and weights as the source (a filled
-  // SOLID or wide polyline band comes back as a solid HATCH); R12 still there.
   const dxfSig = (items) => { const e = E('cad').extents(items), k = {}; for (const it of items) k[it.k + (it.fill ? 'F' : '')] = (k[it.k + (it.fill ? 'F' : '')] || 0) + 1; return JSON.stringify({ e: [e.x0, e.y0, e.x1, e.y1].map((v) => +v.toFixed(3)), k, c: [...new Set(items.map((i) => `${i.layer}:${i.rgb}:${i.fill ? 'fill' : i.lw ?? null}`))].sort(), t: items.filter((i) => i.k === 'text').map((i) => i.text) }); };
   for (const f of ['layers.dxf', 'test.dxf', 'unicode.dxf', 'widths.dxf', 'ocs.dxf', 'lines.dxf', 'sample_2018.dwg']) {
     T(`${f}→dxf 2000 reads back the same`, 'convert-cad', [f], { to: 'dxf' }, async ([o]) => {
@@ -1458,7 +1441,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('test archive', 'test-archive', ['archive.zip'], {}, (o, r) => ok(/intact/.test(r[0].note), r[0].note));
   T('checksum', 'file-hash', ['doc.txt'], { algos: ['sha256'], expected: '' }, (o, r) => ok(r[0].text.includes(require('crypto').createHash('sha256').update(read(fx('doc.txt'))).digest('hex')), 'hash'));
 
-  // Data formats (JSON, JSONC, JSON Lines, YAML, TOML, XML, CSV) through one tree; vectors from Filee's tests.
   T('data json→yaml', 'convert-data', ['sample.json'], { to: 'yaml' }, ([o]) => { ok(!bom(o), 'BOM'); same(txt(o), 'name: Filee 변환기\nversion: 3\nratio: 3.0\nbig: 12345678901234567890\nenabled: true\nmissing: null\nnotes: |-\n  first line\n  second line\nlooksLikeABoolean: "true"\nlooksLikeANumber: "007"\nempty: ""\ntags:\n  - a\n  - b\nnothing: []\nowner:\n  id: 1\n  email: me@example.com\nrows:\n  - x: 1\n  - x: 2\n'); });
   T('data json→toml', 'convert-data', ['sample.json'], { to: 'toml' }, ([o]) => {
     const t = txt(o);
@@ -1489,7 +1471,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('data json with BOM→xlsx', 'json-to-sheet', ['bom.json'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'A2'), cell(ws, 'B2'), cell(ws, 'C2'), cell(ws, 'D2'), cell(ws, 'D3')].join('|'), 's:name|s:Lime|n:12|s:12345678901234567890|s:01234|s:00501'); });
   T('data jsonl→xlsx', 'convert-data', ['events.jsonl'], { to: 'xlsx' }, ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'B1'), cell(ws, 'A3'), cell(ws, 'B3')].join('|'), 's:a|s:b|n:2|s:한'); });
 
-  // CSV / TSV: encoding and delimiter detected, text stays text.
   const korean = ([o]) => { const ws = sheet0(o); same([cell(ws, 'A1'), cell(ws, 'A2'), cell(ws, 'B2'), cell(ws, 'C2')].join('|'), 's:이름|s:홍길동|n:42|s:안녕, 세상'); };
   T('csv utf-8 without BOM→xlsx', 'convert-sheet', ['korean.csv'], { to: 'xlsx' }, korean);
   T('csv cp949→xlsx', 'convert-sheet', ['korean-cp949.csv'], { to: 'xlsx' }, korean);
@@ -1505,7 +1486,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('tsv→csv', 'convert-sheet', ['people.tsv'], { to: 'csv' }, ([o]) => ok(utf(o).startsWith('이름,금액,메모\r\n김민지,"1,200","줄\n바꿈"\r\n"Lee, J",3.5'), utf(o).slice(0, 60)));
   T('csv→yaml', 'convert-sheet', ['people.csv'], { to: 'yaml' }, ([o]) => same(txt(o), '- name: 홍길동\n  zip: "01234"\n  age: 42\n  member: true\n  score: 3.5\n- name: Kim, Ada\n  zip: ""\n  age: 7\n  member: false\n  score: ""\n'));
 
-  // Contacts
   T('vcard→csv', 'convert-contacts', ['contacts.vcf'], { to: 'csv' }, ([o]) => { ok(bom(o), 'CSV needs a BOM'); same(utf(o), ['Full name,Given name,Family name,Organization,Title,Email,Phone,Address,Birthday,Note', '홍길동,길동,홍,,,hong@example.com,010-1234-5678 (mobile); 02-123-4567 (work),"서울특별시 종로구 세종대로 209 정부서울청사 별관 3층, 03171 (home)",1980-01-02,전화 주세요', 'Ada Lovelace,Ada,Lovelace,"Analytical Engines, Ltd., Research",Engineer,ada@example.com (work); ada@home.example (home),+44 20 7946 0000 (mobile),,,"First line\nSecond line; folded over two lines here"', '王小明,小明,王,,,,+86-10-1234-5678 (mobile),,--0412,', ''].join('\r\n')); });
   T('vcard utf-16→json', 'convert-contacts', ['phone-utf16.vcf'], { to: 'json' }, ([o]) => has(txt(o), '"Full name": "김철수"', '"Phone": "010-0000-0000"'));
   T('csv→vcard', 'convert-contacts', ['주소록.csv'], { to: 'vcf' }, ([o]) => {
@@ -1519,7 +1499,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   F('csv without contact columns', 'convert-contacts', ['numbers.csv'], { to: 'vcf' }, /No contact columns found/);
 
-  // Subtitles: built-in readers and writers, any encoding in, UTF-8 out.
   T('subtitles cp949 sami→srt', 'convert-subtitles', ['영화.smi'], { to: 'srt' }, ([o]) => { ok(bom(o), 'SRT needs a BOM'); same(utf(o), '1\r\n00:00:01,000 --> 00:00:02,500\r\n안녕하세요,\r\n<font color="#FFFF00">반가워요</font>\r\n\r\n2\r\n00:00:03,000 --> 00:00:04,200\r\n<i>두 번째 줄입니다</i>\r\n\r\n3\r\n00:00:05,000 --> 00:00:09,000\r\n세 번째 & 마지막\r\n\r\n'); });
   T('subtitles cp949 srt→vtt', 'convert-subtitles', ['cp949.srt'], { to: 'vtt' }, ([o]) => same(txt(o), 'WEBVTT\n\n00:00:01.000 --> 00:00:02.500\n안녕하세요, 똠방각하\n\n00:00:03.000 --> 00:00:04.000\n두 번째 줄\n\n'));
   T('subtitles lrc→srt last line', 'convert-subtitles', ['song.lrc'], { to: 'srt' }, ([o]) => same(JSON.stringify(srtCues(txt(o))), JSON.stringify([[9500, 11800, 'First line'], [11800, 14500, 'Chorus'], [19500, 25000, 'Chorus'], [25000, 29000, 'Last']])));
@@ -1544,7 +1523,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(diff / a.length > 2, `no caption burned in (mean difference ${(diff / a.length).toFixed(2)})`);
   });
 
-  // Archives: links, zip slip, flattening, duplicate names, single-file streams.
   T('extract tar with escaping link', 'extract-archive', ['links.tar'], {}, ([o]) => { same(walk(o).join(','), 'a.txt,b.txt'); ok(!walk(o).some((f) => isLink(path.join(o, f))), 'a link was unpacked'); ok(txt(path.join(o, 'a.txt')) === 'alpha', 'content'); });
   F('extract refuses zip slip', 'extract-archive', ['slip.zip'], {}, /slip\.zip was not unpacked: the entry "\.\.[\\/]\.\.[\\/]evil\.txt" points outside the target folder/);
   T('extract flattens one top folder', 'extract-archive', ['사진.zip'], {}, ([o]) => { ok(path.basename(o) === '사진', path.basename(o)); same(walk(o).join(','), 'a.txt,sub,sub/b.txt'); });
@@ -1565,9 +1543,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   for (const fmt of ['bz2', 'xz']) T(`compress one file→${fmt}`, 'create-archive', ['doc.txt'], { format: fmt, level: 5 }, ([o]) => { ok(path.basename(o) === `doc.txt.${fmt}`, path.basename(o)); magic(o, fmt === 'xz' ? '7zXZ' : 'BZh'); ok(sevenZip(['x', '-so', o]).equals(read(fx('doc.txt'))), `${fmt} content`); });
   T('convert gz→xz', 'convert-archive', ['notes.txt.gz'], { format: 'xz', level: 5 }, ([o]) => { ok(path.basename(o) === 'notes.txt.xz', path.basename(o)); same(sevenZip(['x', '-so', o]).toString(), 'hello from a gzip file\n'); });
 
-  // Option sweep: every tool in the catalogue runs with its defaults, then once per value of each choice, select, toggle and multi
-  // option and at both ends of each range, one option at a time with its `when` controller set so it shows. Each job saves where
-  // the Save dialog would point, every result is checked by type, and options whose result matches the default run are listed.
   const SWEEP_IN = { pdf: 'doc.pdf', image: 'photo2.jpg', raw: 'raw.dng', video: 'sweep.mp4', audio: 'sweep.m4a', doc: 'doc.docx', sheet: 'sheet.xlsx', slides: 'deck.pptx', vector: 'logo.ai',
     cad2d: 'layers.dxf', cad3d: 'box.stl', layout: 'layout.idml', motion: 'brief.json', timeline: 'brief.otio', archive: 'archive.zip', subtitle: 'sub.srt', data: 'data.json', contacts: 'contacts.vcf',
     font: 'font.otf', mail: 'mail.eml', webarchive: 'page.mhtml', comic: 'comic.cbz', ebook: 'novel.epub', any: 'doc.txt' };
@@ -1587,12 +1562,9 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'split-sheets': [['book.xlsx']], 'tidy-sheet': [['book.xlsx']], 'sheet-formulas': [['book.xlsx']], 'slide-notes': [['notes.pptx']], 'merge-slides': [['deck.pptx', 'deck2.pptx']], 'pick-slides': [['notes.pptx'], { slides: '3, 1-2' }],
     'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
   };
-  // Choices that refuse this input on purpose: the same format again, several files into a one-file compressor, or ODT where
-  // neither LibreOffice nor macOS's text converter is there to write it.
   const SWEEP_REFUSE = { 'replace-text matchCase=true': /found no “lime”/, 'convert-document to=docx': /already DOCX/, 'model-drawing scale=5': /don’t fit on A3/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
-  // Tools that take files by extension rather than by kind (the ArtCraft actions) get the first sample their extensions match.
   const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg' };
   const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])] || SWEEP_EXT[(t.extAccept || []).find((e) => SWEEP_EXT[e])]];
   const defaults = (t) => ({ ...Object.fromEntries((t.options || []).map((o) => [o.key, Array.isArray(o.default) ? [...o.default] : o.default])), ...SWEEP[t.id]?.[1] });
@@ -1686,7 +1658,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     else ok(outs.length || results.some((r) => r.note || r.text), 'no result');
     const stray = files(dir).filter((f) => f !== 'in' && !outs.some((o) => path.relative(dir, o).split(path.sep)[0] === f));
     ok(!stray.length, `also left ${stray.join(', ')}`);
-    // Attachments are saved byte for byte, whatever they hold.
     for (const o of outs) if (id === 'email-attachments') ok(deep(o).length && deep(o).every((f) => fs.statSync(f).size > 0), `${path.basename(o)} holds empty files`); else await valid(o, opts);
     sweepSig.set(`${id} ${label}`, await sigOf(outs, results, opts));
   };
@@ -1724,7 +1695,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     fs.mkdirSync(dir, { recursive: true });
     let inputs = c.inputs;
     if (c.copy) { fs.mkdirSync(path.join(dir, 'in')); inputs = inputs.map((f) => { const to = path.join(dir, 'in', path.basename(f)); fs.copyFileSync(f, to); return to; }); }
-    // Sweep cases save where the Save dialog would point for these options; the others save into their own folder.
     const s = c.save ? tools.suggest(c.tool, inputs, c.opts) : null;
     const dest = s && (s.kind === 'file' || s.kind === 'folder') ? { kind: s.kind, path: path.join(dir, s.name) } : { kind: 'dir', path: dir };
     const t0 = Date.now();
@@ -1858,7 +1828,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
         for (const v of [].concat(w)) if (c.type === 'toggle' ? typeof v !== 'boolean' : !has1(c, v)) bad.push(`${t.id}.${o.key} shows when ${k}=${v}, not a choice`);
       }
     }
-    // Convert spreadsheet is being reworked separately; its TSV condition is harmless (TSV is not offered there).
     const known = bad.filter((b) => b === 'convert-sheet.allSheets shows when to=tsv, not a choice');
     ok(bad.length === known.length, bad.filter((b) => !known.includes(b)).join('; '));
     return `${tools.catalog().reduce((s, t) => s + (t.options || []).length, 0)} options in ${tools.catalog().length} tools${known.length ? `; known: ${known.join('; ')}` : ''}`;
@@ -1899,7 +1868,6 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(!bad.length, bad.join('; '));
     return `${seen.size} tools reachable from ${mixes.length} drops`;
   });
-  // Option values that leave these inputs unchanged by design; anything else that matches its default run is listed as suspect.
   const QUIET = [
     [/^jpg-to-pdf orientation=landscape$/, 'both photos are landscape, which Auto picks too'], [/^redact-pdf patterns=(card|iban)$/, 'the PDF has no card numbers or IBANs'],
     [/^(ocr-pdf|scan-to-pdf|image-to-text) lang=(spa|fra|deu|ita|por|nld)$/, 'Latin-script models read the English sentence alike'], [/^ocr-pdf skipText=false$/, 'the scan has no text layer to skip'],

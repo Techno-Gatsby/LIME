@@ -1,7 +1,4 @@
 'use strict';
-// Reads the selection of the Explorer window (or desktop) a drag started from, so the wheel can show
-// choices before the drop. Logic follows og-converter's ShellSelectionService (GPL-3.0); the COM work
-// runs in a long-lived PowerShell so a shell hiccup can never take Lime down.
 const { spawn } = require('child_process');
 
 const SCRIPT = String.raw`
@@ -63,8 +60,6 @@ function stop() {
 function query(targets, timeout = 4000) {
   const p = warm();
   if (!p) return Promise.resolve([]);
-  // Refreshed now and then, but started again straight away: a cold PowerShell takes seconds to start, which made the
-  // first Shift-drag after a quiet spell slow to show its choices.
   clearTimeout(idleT);
   idleT = setTimeout(() => { stop(); setTimeout(warm, 1000); }, 15 * 60000);
   return new Promise((resolve) => {
@@ -77,8 +72,6 @@ function query(targets, timeout = 4000) {
       try { v = JSON.parse(line || '[]'); } catch (_) {}
       resolve((Array.isArray(v) ? v : [v]).filter((x) => typeof x === 'string' && x));
     };
-    // A reply that comes after the time is up still arrives later; its place in the queue is kept by a no-op, so it
-    // can't be taken as the answer for the next drag.
     const t = setTimeout(() => { const i = waiting.indexOf(finish); if (i >= 0) waiting[i] = () => {}; finish('[]'); }, timeout);
     waiting.push(finish);
     p.stdin.write(`${JSON.stringify({ targets })}\n`);

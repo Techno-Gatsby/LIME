@@ -2,7 +2,6 @@
 const assert = require('assert');
 const { detector } = require('../src/main/dragwatch');
 
-// `busy` lists the polls at which the wheel can't open yet (still folding): onShift says so by returning false.
 function run(frames, { busy = [], threshold } = {}) {
   const log = [];
   let i = 0;
@@ -24,7 +23,6 @@ const cases = {
   'win: drag in a non-file-manager app is ignored': [[win(true, true, 100, 100, 'notepad.exe'), win(true, true, 140, 140, 'notepad.exe'), win(false, false, 140, 140, 'notepad.exe')], []],
   'win: shell drag image counts even outside Explorer': [[win(true, false, 100, 100, 'chrome.exe', true), win(true, false, 130, 100, 'chrome.exe', true), win(true, true, 140, 100, 'chrome.exe', true), win(false, false, 0, 0)], ['drag', 'shift', 'end']],
 };
-// Shift pressed while the wheel was still folding used to be lost for the rest of the drag.
 cases['mac: Shift while the wheel is still folding opens it once it can'] = [[mac(false, false, 1), mac(true, false, 2), mac(true, true, 2), mac(true, true, 2), mac(true, true, 2), mac(false, false, 2)], ['drag', 'shift-wait', 'shift-wait', 'shift', 'end'], { busy: [2, 3] }];
 cases['mac: Shift let go and pressed again in one drag is offered again'] = [[mac(false, false, 1), mac(true, true, 2), mac(true, false, 2), mac(true, true, 2), mac(false, false, 2)], ['drag+shift', 'shift', 'shift', 'end']];
 let failed = 0;

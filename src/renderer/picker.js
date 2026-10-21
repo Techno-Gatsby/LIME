@@ -13,7 +13,6 @@ const colName = (c) => { let s = ''; for (let n = c + 1; n; n = Math.floor((n - 
 const colNum = (s) => [...s.toUpperCase()].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
 const S = { sheet: data.active, areas: [], drag: null };
 
-// Pixel geometry of the visible rows and columns, read from the heading cells.
 let geo = { rows: new Map(), cols: new Map(), rowList: [], colList: [] };
 function measure() {
   const base = sheetEl.getBoundingClientRect(), rows = new Map(), cols = new Map();
@@ -49,7 +48,6 @@ function show(i) {
   requestAnimationFrame(() => { measure(); paint(); });
 }
 
-// Typing a range selects it; a sheet name in it switches to that sheet.
 function parse(value) {
   const out = [];
   let sheetIndex = S.sheet;
@@ -117,7 +115,6 @@ document.addEventListener('click', (e) => {
   if (a === 'use' && !useBtn.disabled) done(field.value.trim());
   if (a === 'used') { const p = sheet().used && parse(sheet().used); S.areas = p ? p.areas : []; paint(); }
 });
-// Ctrl or ⌘ with the wheel, a trackpad pinch, or Ctrl + − 0 zoom the sheet, keeping the cell under the pointer in place.
 let zoom = 1;
 function setZoom(z, at) {
   const nz = Math.min(3, Math.max(0.4, z));

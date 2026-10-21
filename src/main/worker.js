@@ -56,11 +56,9 @@ const CALLS = {
   archiveList: (p, pw) => require('./engines/archive').list(p, pw),
   probe: (p) => require('./engines/media').probe(p),
   enginesStatus: () => ({ ...require('./engines/office').status(), crafts: require('./engines/crafts').status() }),
-  // Everything the PDF editor's worker module exports: 'editor.open' is pdfedit.js's open, and so on.
   ...Object.fromEntries(Object.entries(editor).filter(([, f]) => typeof f === 'function').map(([k, f]) => [`editor.${k}`, f])),
 };
 
-// The image, audio/video and app editors each live in their own module: 'image.open' calls imgedit.js's open, and so on.
 const EDITORS = { image: './imgedit', media: './mediaedit', studio: './studio' };
 function editorCall(method) {
   const [ns, name] = String(method).split('.');
