@@ -54,7 +54,15 @@ module.exports = async ({ submit, jobs, dir }) => {
     return d[a.length][b.length] / a.length;
   };
   const pct = (x) => `${(x * 100).toFixed(1)}%`;
-  const snr = (x, y) => { let s = 0, e = 0; for (let i = 0; i < x.length; i++) { s += x[i] * x[i]; e += (x[i] - y[i]) ** 2; } return 10 * Math.log10(s / e); };
+  // SNR of y against the reference x, after lining y up (an AAC round trip can shift it a few hundred samples).
+  const snr = (x, y) => {
+    const L = 2400, W = Math.min(48000, x.length - 2 * L);
+    let lag = 0, best = -Infinity;
+    for (let l = -L; l <= L; l++) { let c = 0; for (let i = L; i < L + W; i++) c += (y[i + l] || 0) * x[i]; if (c > best) { best = c; lag = l; } }
+    let s = 0, e = 0;
+    for (let i = 0; i < x.length - 2 * L; i++) { s += x[i] * x[i]; e += (x[i] - (y[i + lag] || 0)) ** 2; }
+    return 10 * Math.log10(s / e);
+  };
   const corr = (a, b, stride = 1) => { let ab = 0, aa = 0, bb = 0; for (let i = 0; i < b.length; i++) { const x = a[i * stride], y = b[i]; ab += x * y; aa += x * x; bb += y * y; } return ab / Math.sqrt(aa * bb); };
   let seed = 1;
   const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 - 0.5; };
@@ -126,15 +134,15 @@ module.exports = async ({ submit, jobs, dir }) => {
     const g = Math.sqrt(p / pn / 10 ** 0.5);
     for (let i = 0; i < n; i++) noisy[i] = clean[i] + noise[i] * g;
     const before = snr(clean, noisy);
-    const [out] = await run('clean-voice', [wav(path.join(OUT, 'noisy.wav'), noisy, 48000)], { strength: 'full' }, 'clean');
-    const y = pcm(out, 48000), after = snr(clean, y.length >= n ? y : Float32Array.from({ length: n }, (_, i) => y[i] || 0));
+    const [out] = await run('denoise-voice', [wav(path.join(OUT, 'noisy.wav'), noisy, 48000)], { strength: 'full' }, 'clean');
+    const after = snr(clean, pcm(out, 48000));
     ok(after > before + 5, `SNR ${before.toFixed(1)} → ${after.toFixed(1)} dB`);
     const video = path.join(OUT, 'noisy.mp4');
     execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=160x120:r=10', '-i', path.join(OUT, 'noisy.wav'), '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video]);
-    const [vid] = await run('clean-voice', [video], { strength: 'gentle' }, 'clean-video');
+    const [vid] = await run('denoise-voice', [video], { strength: 'gentle' }, 'clean-video');
     const vs = probe(vid).streams;
     ok(vs.some((s) => s.codec_type === 'video') && vs.some((s) => s.codec_type === 'audio'), 'cleaned video lost a stream');
-    const vafter = snr(clean, pcm(vid, 48000).subarray(0, n));
+    const vafter = snr(clean, pcm(vid, 48000));
     ok(vafter > before + 3, `video SNR ${before.toFixed(1)} → ${vafter.toFixed(1)} dB`);
     return `SNR ${before.toFixed(1)} → ${after.toFixed(1)} dB (video, gentle: ${vafter.toFixed(1)} dB)`;
   }, 'denoise');
