@@ -1,8 +1,4 @@
 'use strict';
-// Text subtitles without FFmpeg: SRT, WebVTT, ASS/SSA, SAMI, LRC, TTML/DFXP, MicroDVD and SCC (CEA-608) are read into
-// one cue model and written as SRT, WebVTT, ASS, SAMI, LRC, TTML or MicroDVD, always UTF-8. Korean CP949 files are
-// recognised. Cue text uses SRT's own markup: <i> <b> <u> <font color="#RRGGBB">. Logic adapted from Filee by
-// KnifeLemon (MIT).
 
 const U = require('./util');
 const { fsp, path } = U;
@@ -12,7 +8,6 @@ const DEFAULT_MS = 4000;
 const READS = { srt: 'srt', vtt: 'vtt', ass: 'ass', ssa: 'ass', smi: 'smi', sami: 'smi', lrc: 'lrc', ttml: 'ttml', dfxp: 'ttml', sub: 'sub', scc: 'scc' };
 const WRITES = ['srt', 'vtt', 'ass', 'smi', 'lrc', 'ttml', 'sub'];
 
-// ───────── Markup ─────────
 const CANON = /<(\/?)(i|b|u)>|<font color="#([0-9A-Fa-f]{6})">|<\/font>/g;
 function tokens(t) {
   const out = [];
@@ -31,8 +26,6 @@ function tokens(t) {
 const isColor = (v) => v.startsWith('#');
 const render = (toks) => toks.map((t) => (t.k === 'text' ? t.v : t.k === 'br' ? '\n' : t.k === 'open' ? (isColor(t.v) ? `<font color="${t.v}">` : `<${t.v}>`) : `</${t.v}>`)).join('');
 const plainText = (t) => tokens(t).map((x) => (x.k === 'text' ? x.v : x.k === 'br' ? '\n' : '')).join('');
-// Tags nested properly (overlaps closed and reopened), unclosed ones closed, stray closes and empty styles dropped,
-// spaces collapsed, empty lines removed.
 function normalize(t) {
   const toks = tokens(String(t).replace(/\r\n?/g, '\n').replace(/[\u00a0\t]/g, ' '));
   const out = [], open = [];
@@ -75,8 +68,6 @@ const decodeEntities = (t) => t.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) 
   if (e[0] === '#') { const cp = e[1].toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m; }
   return ENTITIES[e] ?? ENTITIES[e.toLowerCase()] ?? m;
 });
-// HTML-like cue text (SRT, WebVTT, SAMI) to markup: i/b/u, colours and WebVTT colour classes kept, br breaks the
-// line, other tags dropped with their text kept.
 function fromHtml(t, entities) {
   let out = '', pos = 0, colors = 0;
   const classes = [];
@@ -106,7 +97,6 @@ function fromHtml(t, entities) {
   return out;
 }
 
-// ───────── Model ─────────
 const newDoc = () => ({ cues: [], title: null, language: null });
 function add(doc, start, end, t) {
   start = Math.max(0, start);
@@ -137,7 +127,6 @@ const msTime = (ms, sep) => { ms = Math.round(Math.max(0, ms)); return `${pad(Ma
 const csTime = (ms) => { const cs = Math.round(Math.max(0, ms) / 10); return `${Math.floor(cs / 360000)}:${pad(Math.floor(cs / 6000) % 60)}:${pad(Math.floor(cs / 100) % 60)}.${pad(cs % 100)}`; };
 const lrcTime = (ms) => { const cs = Math.round(Math.max(0, ms) / 10); return `${pad(Math.floor(cs / 6000))}:${pad(Math.floor(cs / 100) % 60)}.${pad(cs % 100)}`; };
 
-// ───────── Readers ─────────
 const ASS_BLOCK = /\{[^}]*\}/g;
 function readSrt(src) {
   const doc = newDoc();
@@ -340,7 +329,8 @@ function readTtml(src) {
   for (const d of descendants(root)) if (d.local === 'style' && attr(d, 'id') != null && !styles.has(attr(d, 'id'))) styles.set(attr(d, 'id'), d);
   const title = descendants(root).find((d) => d.local === 'title' && textOf(d).trim());
   if (title) doc.title = textOf(title).trim();
-  const tm = (v) => {
+  const tm = (v) => { const t = clock(v); return t == null ? null : Math.round(t); };
+  const clock = (v) => {
     if (!v || !v.trim()) return null;
     let m = /^(\d+):(\d{2}):(\d{2}(?:\.\d+)?)(?::(\d+(?:\.\d+)?))?$/.exec(v);
     if (m) return (Number(m[1]) * 3600 + Number(m[2]) * 60 + parseFloat(m[3]) + (m[4] && frameRate > 0 ? parseFloat(m[4]) / frameRate : 0)) * 1000;
@@ -379,7 +369,6 @@ function readTtml(src) {
   return doc;
 }
 
-// SCC: CEA-608 caption channel 1, one byte pair per frame at 29.97 fps; doubled control codes count once.
 const FRAME_MS = 1001 / 30;
 const SPECIAL = '®°½¿™¢£♪à èâêîôû', EXT1 = 'ÁÉÓÚÜü‘¡*’—©℠•“”ÀÂÇÈÊËëÎÏïÔÙùÛ«»', EXT2 = 'ÃãÍÌìÒòÕõ{}\\^_|~ÄäÖöß¥¤│ÅåØø┌┐└┘';
 const BASIC = { 0x2a: 'á', 0x5c: 'é', 0x5e: 'í', 0x5f: 'ó', 0x60: 'ú', 0x7b: 'ç', 0x7c: '÷', 0x7d: 'Ñ', 0x7e: 'ñ', 0x7f: '█' };
@@ -475,7 +464,6 @@ function read(fmt, bytes) {
   return doc;
 }
 
-// ───────── Writers ─────────
 const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const writeSrt = (doc) => doc.cues.map((c, i) => `${i + 1}\r\n${msTime(c.start, ',')} --> ${msTime(c.end, ',')}\r\n${c.text.replace(/\n/g, '\r\n')}\r\n\r\n`).join('');
 function writeVtt(doc) {
@@ -581,7 +569,6 @@ async function convert(input, opts, ctx) {
   await fsp.writeFile(out, data);
   return out;
 }
-// A UTF-8 copy FFmpeg's subtitles filter can read: SRT/VTT/ASS re-encoded as they are, other formats as SRT.
 async function forFfmpeg(file, dir) {
   const e = U.ext(file), bytes = await fsp.readFile(file);
   const keep = ['srt', 'vtt', 'ass', 'ssa'].includes(e);

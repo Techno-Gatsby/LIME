@@ -200,7 +200,6 @@ function videoCodecArgs(target, enc, q, v, pal) {
     case 'libx264': return ['-c:v', 'libx264', '-preset', 'medium', '-crf', String(choose(q, 18, 23, 28)), '-pix_fmt', 'yuv420p'];
     case 'libx265': return ['-c:v', 'libx265', '-preset', 'medium', '-crf', String(choose(q, 22, 26, 30)), ...highBitDepth(v), '-x265-params', 'log-level=error', ...(APPLE.has(target) ? ['-tag:v', 'hvc1'] : [])];
     case 'libsvtav1': return ['-c:v', 'libsvtav1', '-preset', '8', '-crf', String(choose(q, 26, 32, 40)), ...highBitDepth(v)];
-    // Builds without SVT-AV1 (Windows): libaom's realtime mode encodes about as fast as x264 at a similar size to SVT preset 8.
     case 'libaom-av1': return ['-c:v', 'libaom-av1', '-b:v', '0', '-crf', String(choose(q, 26, 32, 40)), '-usage', 'realtime', '-cpu-used', '8', '-row-mt', '1', '-tiles', '2x2', ...highBitDepth(v)];
     case 'libvpx-vp9': return ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', String(choose(q, 24, 32, 38)), '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-pix_fmt', 'yuv420p'];
     case 'mpeg4': return ['-c:v', 'mpeg4', '-tag:v', 'XVID', '-q:v', qv, '-g', '250', '-bf', '2', '-pix_fmt', 'yuv420p', ...nearestRate(v.fps)];
@@ -567,8 +566,13 @@ async function burnSubtitles(p, opts, ctx) {
   return simpleFilter(p, ctx, 'subtitled', `subtitles='${subPath(opts.subtitles)}':force_style='${style}'`, null, 'Adding subtitles');
 }
 async function normalize(p, opts, ctx) {
-  const rate = (await probe(p)).audio?.rate || 48000;
-  return simpleFilter(p, ctx, 'normalized', null, `loudnorm=I=-16:TP=-1.5:LRA=11,aformat=sample_rates=${rate}`, 'Leveling loudness');
+  const rate = (await probe(p)).audio?.rate || 48000, target = 'I=-16:TP=-1.5:LRA=11';
+  ctx?.progress?.(0, 'Measuring loudness');
+  const { stderr } = await U.run(U.binPath('ffmpeg'), ['-hide_banner', '-nostats', '-i', p, '-vn', '-af', 'ebur128=peak=true', '-f', 'null', '-'], { signal: ctx?.signal, errorMessage: 'Couldn’t measure the loudness' });
+  const sum = stderr.slice(stderr.lastIndexOf('Summary:')), num = (re) => Number(re.exec(sum)?.[1]);
+  const m = { I: num(/I:\s+(-?[\d.]+) LUFS/), thresh: num(/Threshold:\s+(-?[\d.]+) LUFS/), LRA: num(/LRA:\s+(-?[\d.]+) LU/), TP: num(/Peak:\s+(-?[\d.]+) dBFS/) };
+  const measured = Object.values(m).every(Number.isFinite) && m.I > -70 ? `:measured_I=${m.I}:measured_TP=${m.TP}:measured_LRA=${m.LRA}:measured_thresh=${m.thresh}:offset=0:linear=true` : '';
+  return simpleFilter(p, ctx, 'normalized', null, `loudnorm=${target}${measured},aformat=sample_rates=${rate}`, 'Leveling loudness');
 }
 const evenDown = (x) => Math.max(2, Math.floor(x / 2) * 2);
 async function videoOnly(p) {
@@ -708,5 +712,4 @@ module.exports = {
   toGif, frames, extractSubtitles, snapshot, burnSubtitles, normalize, cropVideo, addAudio, loop, volume, reverse, fade, pitch, blurArea,
   imagesToVideo, imagesToGif, convertSubtitles, thumbnail, VIDEO_TARGETS, AUDIO_TARGETS,
 };
-// For the audio and video editor, which saves with the same encoder settings as the tools.
 Object.assign(module.exports, { videoCodecArgs, audioCodecArgs, containerArgs, sameKind, has, filters: () => list('filters') });

@@ -10,6 +10,7 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
   const E = (n) => require(path.join(__dirname, '..', 'src', 'main', 'engines', n));
   const sharp = require('sharp');
   const ok = (c, m) => { if (!c) throw new Error(m); };
+  const same = (a, b, m) => ok(JSON.stringify(a) === JSON.stringify(b), `${m}: ${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`);
   const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what}: ${a} is not within ${tol} of ${b}`);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const results = [];
@@ -316,6 +317,37 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
     const a = await modelBox(file, 'meshopt'), b = await modelBox(plainGlb, 'plain-glb-2');
     ok(a.triangles === 12 && far(a.size, b.size) < 1e-4, `${a.triangles} triangles, size ${fmt(a.size)} against ${fmt(b.size)}`);
     return `${fs.statSync(file).size} bytes: 12 triangles, ${a.size.join(' × ')} mm, the same as uncompressed`;
+  });
+
+  const U = E('util'), ff = (args) => U.run(U.binPath('ffmpeg'), ['-hide_banner', '-nostats', ...args]);
+  const lufs = async (f) => { const { stderr } = await ff(['-i', f, '-af', 'ebur128=peak=true', '-f', 'null', '-']), sum = stderr.slice(stderr.lastIndexOf('Summary:')); return { I: Number(/I:\s+(-?[\d.]+) LUFS/.exec(sum)[1]), peak: Number(/Peak:\s+(-?[\d.]+) dBFS/.exec(sum)?.[1]) }; };
+  const level = async (f, ss) => Number(/mean_volume: (-?[\d.]+) dB/.exec((await ff(['-ss', String(ss), '-t', '1.5', '-i', f, '-af', 'volumedetect', '-f', 'null', '-'])).stderr)[1]);
+  await check('loudness levelling is two-pass and keeps the dynamics', async () => {
+    const src = path.join(OUT, 'quiet-loud.wav');
+    await ff(['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3:sample_rate=48000', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3:sample_rate=48000', '-filter_complex', '[0]volume=-32dB[a];[1]volume=-24dB[b];[a][b]concat=n=2:v=0:a=1', src]);
+    const [o] = await run('normalize-audio', [src], {}, 'loudness'), one = path.join(OUT, 'one-pass.wav');
+    await ff(['-y', '-i', src, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11,aformat=sample_rates=48000', one]);
+    const got = await lufs(o), gap = (await level(o, 4)) - (await level(o, 1)), srcGap = (await level(src, 4)) - (await level(src, 1)), oneGap = (await level(one, 4)) - (await level(one, 1)), oneI = (await lufs(one)).I;
+    near(got.I, -16, 0.5, 'integrated loudness');
+    ok(got.peak <= -1, `peak ${got.peak} dBFS`);
+    near(gap, srcGap, 0.3, 'quiet-to-loud step');
+    return `−16 LUFS target: got ${got.I} LUFS, peak ${got.peak} dBFS, quiet-to-loud step ${gap.toFixed(1)} dB (source ${srcGap.toFixed(1)}); one pass gave ${oneI} LUFS and a ${oneGap.toFixed(1)} dB step`;
+  });
+
+  await check('subtitle timings keep their milliseconds', async () => {
+    const want = [[1001, 2999], [63457, 65008], [3723004, 3724996]], ms = (t) => { const [h, m, x] = t.split(':'), [sec, f] = x.split(/[,.]/); return ((+h * 60 + +m) * 60 + +sec) * 1000 + +f; };
+    const times = (f) => [...fs.readFileSync(f, 'utf8').matchAll(/(\d+:\d\d:\d\d[,.]\d{3}) --> (\d+:\d\d:\d\d[,.]\d{3})/g)].map((m) => [ms(m[1]), ms(m[2])]);
+    const srt = path.join(OUT, 'timing.srt');
+    fs.writeFileSync(srt, want.map(([a, b], i) => `${i + 1}\n${new Date(a).toISOString().slice(11, 23).replace('.', ',')} --> ${new Date(b).toISOString().slice(11, 23).replace('.', ',')}\nLine ${i + 1}\n`).join('\n'));
+    for (const to of ['vtt', 'ttml', 'smi']) {
+      const [mid] = await run('convert-subtitles', [srt], { to }, `subs-${to}`), [back] = await run('convert-subtitles', [mid], { to: 'srt' }, `subs-${to}-srt`);
+      same(times(back), want, `SRT → ${to} → SRT`);
+    }
+    const ttml = path.join(OUT, 'frames.ttml');
+    fs.writeFileSync(ttml, '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" ttp:frameRate="25" ttp:tickRate="10000000"><body><div><p begin="00:00:01:05" end="00:00:02.040">a</p><p begin="34567890t" end="4.321s">b</p></div></body></tt>');
+    const [o] = await run('convert-subtitles', [ttml], { to: 'srt' }, 'subs-ttml-frames');
+    same(times(o), [[1200, 2040], [3457, 4321]], 'TTML frames and ticks');
+    return 'SRT through VTT, TTML and SAMI comes back to the millisecond; TTML frames (25 fps) and ticks become exact milliseconds';
   });
 
   return results;
