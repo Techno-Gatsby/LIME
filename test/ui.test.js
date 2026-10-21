@@ -1095,6 +1095,20 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     ed.win.destroy();
     return `turned, flipped, square crop and Neutral Mono shown and saved alike (${off.toFixed(1)} apart; ${path.relative(OUT, out)}, ${info.video.width}×${info.video.height} VP9 + Opus), frame ${sm.width}×${sm.height}`;
   });
+  await check('edit video · HEVC phone clip plays from a preview copy', async () => {
+    const src = path.join(OUT, 'phone.mov');
+    fs.copyFileSync(fx('phone.mov'), src);
+    const ed = await mediaEditor(src), { ejs } = ed;
+    const v = await ejs('(() => { const m = document.querySelector("video"); return { src: decodeURIComponent(m.currentSrc), w: m.videoWidth, h: m.videoHeight }; })()');
+    if (!/preview\.mp4$/.test(v.src) || !v.w) throw new Error(`playing ${v.src} (${v.w}×${v.h})`);
+    await ejs(`document.querySelector('[data-a="save"]').click()`);
+    const out = path.join(OUT, 'phone (edited).mov');
+    if (!(await ed.wait(`!window.__media.st.busy && ${JSON.stringify(out)} === window.__media.st.savePath`, 60000))) throw new Error('Save did not finish');
+    const info = await probeMedia(out), was = await probeMedia(src);
+    if (info.video.width !== was.video.width || info.video.height !== was.video.height || Math.abs(info.duration - was.duration) > 0.1) throw new Error(`saved ${info.video.width}×${info.video.height}, ${info.duration} s`);
+    ed.win.destroy();
+    return `preview ${v.w}×${v.h} H.264; saved ${path.basename(out)} ${info.video.width}×${info.video.height} ${info.video.codec}`;
+  });
   await check('edit audio · trim, gain, fade, save', async () => {
     const src = path.join(OUT, 'toneedit.wav');
     fs.copyFileSync(fx('tone.wav'), src);

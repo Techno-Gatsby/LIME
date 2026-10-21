@@ -387,13 +387,15 @@ export function openEditor(view, { file }, ctx) {
     n.low = bq('highpass', 10); n.low.Q.value = 0.7071;
     n.bass = bq('lowshelf', 150); n.mid = bq('peaking', 3000); n.treble = bq('highshelf', 5000);
     n.chan = ac.createGain();
+    n.up = ac.createGain();
+    Object.assign(n.up, { channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
     n.split = ac.createChannelSplitter(2); n.gl = ac.createGain(); n.gr = ac.createGain(); n.merge = ac.createChannelMerger(2);
     n.gain = ac.createGain(); n.fade = ac.createGain(); n.key = ac.createAnalyser(); n.key.fftSize = 1024;
     n.mus = ac.createGain(); n.duck = ac.createGain(); n.bus = ac.createGain();
     n.lim = ac.createDynamicsCompressor(); n.lim.knee.value = 0; n.lim.attack.value = 0.003; n.lim.release.value = 0.06;
     n.master = ac.createGain();
     n.src.connect(n.input); n.aux.connect(n.input);
-    n.input.connect(n.low).connect(n.bass).connect(n.mid).connect(n.treble).connect(n.chan).connect(n.split);
+    n.input.connect(n.low).connect(n.bass).connect(n.mid).connect(n.treble).connect(n.chan).connect(n.up).connect(n.split);
     n.split.connect(n.gl, 0); n.split.connect(n.gr, 1); n.gl.connect(n.merge, 0, 0); n.gr.connect(n.merge, 0, 1);
     n.merge.connect(n.gain).connect(n.fade);
     n.fade.connect(n.key);
@@ -404,7 +406,9 @@ export function openEditor(view, { file }, ctx) {
   }
   function totalGain() {
     const a = E().audio;
-    return a.gain + (a.normalise && st.loud && st.loudFor === loudKey() ? clamp(a.target - st.loud.lufs, -30, 30) : 0);
+    // Levelling sets the gain that brings the edit to the target loudness; otherwise it is the slider's.
+    if (a.normalise) return st.loud && st.loudFor === loudKey() && Number.isFinite(st.loud.lufs) ? clamp(a.target - st.loud.lufs, -30, 30) : 0;
+    return a.gain;
   }
   function applySound() {
     const e = E(), a = e.audio;
@@ -421,7 +425,8 @@ export function openEditor(view, { file }, ctx) {
     n.low.frequency.value = a.lowcut > 0 ? a.lowcut : 10;
     set(n.bass.gain, a.bass); set(n.treble.gain, a.treble);
     n.mid.frequency.value = a.midHz || 3000; set(n.mid.gain, a.mid || 0);
-    // Mono: down to one channel the way speakers mix it; otherwise two, so a mono clip can be moved left or right.
+    // Mono: down to one channel the way speakers mix it, then the same on both sides; a mono clip still gets two
+    // channels so it can be moved left or right.
     Object.assign(n.chan, { channelCount: a.mono ? 1 : 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
     const bal = a.mono ? 0 : a.balance;
     set(n.gl.gain, Math.min(1, 1 - bal)); set(n.gr.gain, Math.min(1, 1 + bal));
@@ -470,6 +475,7 @@ export function openEditor(view, { file }, ctx) {
     const g = over.getContext('2d');
     g.clearRect(0, 0, over.width, over.height);
     $$('.me-titlebox', frameEl).forEach((x) => x.remove());
+    subsEl.hidden = true;
     if (st.kind === 'video' && !cropping()) {
       for (const t of e.titles) {
         const op = st.selTitle === t.id && st.tool === 'titles' && !st.playing ? Math.max(titleOpacity(t, o), 0.35) : titleOpacity(t, o);
@@ -599,10 +605,11 @@ export function openEditor(view, { file }, ctx) {
   const rows = () => {
     const H = tlc.clientHeight, r = { ruler: [0, 22] };
     if (st.kind === 'video') {
-      const tt = E()?.titles.length ? 14 : 0, rest = Math.max(20, H - 80 - (tt ? tt + 4 : 2));
+      const extra = [E()?.titles.length && 'titles', E()?.music && 'music'].filter(Boolean), rest = Math.max(20, H - 82 - extra.length * 15);
       r.strip = [24, 54];
       r.wave = [80, st.s?.audio ? rest : 0];
-      if (tt) r.titles = [80 + r.wave[1] + 2, tt];
+      let y = 80 + r.wave[1] + 1;
+      for (const k of extra) { r[k] = [y, 14]; y += 15; }
     } else r.wave = [26, Math.max(40, H - 30)];
     return r;
   };
@@ -649,7 +656,7 @@ export function openEditor(view, { file }, ctx) {
       for (let k = 1; k < 4; k++) { const xx = Math.round(xOf(t + (stp * k) / 4)) + 0.5; if (t + (stp * k) / 4 <= d) g.fillRect(xx, R.ruler[1] - 3, 1, 3); }
       g.fillStyle = C['--ink-3']; g.fillText(fmtT(t, stp < 1 ? (stp < 0.1 ? 2 : 1) : 0), x + 4, 9);
     }
-    const x0 = xOf(0), x1 = xOf(d), top = R.strip ? R.strip[0] : R.wave[0], bottom = R.titles ? R.titles[0] + R.titles[1] : R.wave[0] + R.wave[1];
+    const x0 = xOf(0), x1 = xOf(d), top = R.strip ? R.strip[0] : R.wave[0], last = R.music || R.titles || R.wave, bottom = last[0] + last[1];
     // Pictures along the clip, fetched for the slots in view at this zoom.
     if (R.strip) {
       const [y, hh] = R.strip, v = st.s.video, tw = Math.max(24, (hh * v.width) / v.height), slot = tw / st.zoom;
@@ -684,18 +691,23 @@ export function openEditor(view, { file }, ctx) {
         }
       } else { g.fillStyle = C['--line']; g.fillRect(Math.max(0, x0), mid, Math.min(W, x1) - Math.max(0, x0), 1); }
     }
-    // Titles, where they fall in the clip.
-    if (R.titles && e.titles.length) {
-      const [y, hh] = R.titles, K = kept(), speed = e.speed;
-      for (const t of e.titles) {
-        let P = 0;
-        for (const [a, b] of K) {
-          const s0 = Math.max(a, a + t.start * speed - P), s1 = Math.min(b, a + t.end * speed - P);
-          if (s1 > s0) { g.fillStyle = st.selTitle === t.id ? C['--accent'] : 'rgba(120,160,255,.75)'; g.beginPath(); g.roundRect(xOf(s0), y + 1, Math.max(3, xOf(s1) - xOf(s0)), hh - 2, 3); g.fill(); }
-          P += b - a;
-        }
+    // Titles and music, where they fall in the clip (their times are in the saved clip, before any loop).
+    const pieces = (o0, o1) => {
+      const out = [], k = e.speed;
+      let P = 0;
+      for (const [a, b] of kept()) { const s0 = Math.max(a, a + o0 * k - P), s1 = Math.min(b, a + o1 * k - P); if (s1 > s0) out.push([s0, s1]); P += b - a; }
+      return out;
+    };
+    const bar = (row, list, colour, label) => {
+      const [y, hh] = row;
+      for (const [s0, s1] of list) {
+        const xa = xOf(s0), w = Math.max(3, xOf(s1) - xa);
+        g.fillStyle = colour; g.beginPath(); g.roundRect(xa, y + 1, w, hh - 2, 3); g.fill();
+        if (label && w > 40) { g.save(); g.beginPath(); g.rect(xa, y, w, hh); g.clip(); g.fillStyle = '#fff'; g.font = '600 9.5px system-ui, sans-serif'; g.fillText(label, xa + 5, y + hh / 2 + 0.5); g.restore(); }
       }
-    }
+    };
+    if (R.titles) for (const t of e.titles) bar(R.titles, pieces(t.start, t.end), st.selTitle === t.id ? C['--accent'] : '#5b7fd6', String(t.text).split('\n')[0]);
+    if (R.music && e.music) bar(R.music, pieces(0, e.music.loop || e.music.fit || !st.musicDur ? outLen() / e.loop : Math.min(st.musicDur, outLen() / e.loop)), '#9a6bd1', nameOf(e.music.file));
     // What is cut: hatched, darker; the part selected for Delete is outlined.
     const hatch = (a, b) => {
       const xa = Math.max(-2, xOf(a)), xb = Math.min(W + 2, xOf(b));
@@ -1070,7 +1082,7 @@ export function openEditor(view, { file }, ctx) {
     },
     speed() {
       const e = E(), toPos = (v) => Math.log2(v) * 50, fromPos = (p) => Math.round(2 ** (p / 50) * 100) / 100;
-      sec('Speed', slider('Speed', () => toPos(e.speed), (x, p) => { x.speed = clamp(fromPos(p), 0.25, 4); }, { min: -100, max: 100, step: 1, fmt: (p) => `${fromPos(p)}×`, key: 'speed' }),
+      sec('Speed', slider('Playback speed', () => toPos(e.speed), (x, p) => { x.speed = clamp(fromPos(p), 0.25, 4); }, { min: -100, max: 100, step: 1, fmt: (p) => `${fromPos(p)}×`, key: 'speed' }),
         seg([[0.5, '0.5×'], [1, '1×'], [1.5, '1.5×'], [2, '2×'], [4, '4×']], e.speed, (x, v) => { x.speed = Number(v); }),
         st.s.audio ? note('The sound keeps its pitch.') : null);
       sec('Backwards and loop', switcher('Reverse', e.reverse, (x, v) => { x.reverse = v; }), e.reverse ? h('<p class="me-note">The preview plays forwards; the saved clip runs backwards.</p>') : null,
@@ -1178,10 +1190,10 @@ export function openEditor(view, { file }, ctx) {
   };
   function volumePanel() {
     const e = E(), a = e.audio, norm = a.normalise && st.loud && st.loudFor === loudKey() ? clamp(a.target - st.loud.lufs, -30, 30) : null;
-    sec('Volume', slider('Gain', () => a.gain, (x, v) => { x.audio.gain = v; }, { min: -20, max: 20, step: 0.5, fmt: dbFmt, key: 'gain' }),
+    sec('Volume', a.normalise ? null : slider('Gain', () => a.gain, (x, v) => { x.audio.gain = v; }, { min: -20, max: 20, step: 0.5, fmt: dbFmt, key: 'gain' }),
       switcher('Level the loudness', a.normalise, (x, v) => { x.audio.normalise = v; }),
       a.normalise ? seg([[-14, 'Music −14'], [-16, 'Web −16'], [-23, 'TV −23']], a.target, (x, v) => { x.audio.target = Number(v); }) : null,
-      a.normalise ? note(norm == null ? 'Measuring…' : `Now ${st.loud.lufs.toFixed(1)} LUFS, so ${dbFmt(norm)} is added to reach ${a.target} LUFS.`) : null,
+      a.normalise ? note(norm == null ? 'Measuring the loudness…' : `It measures ${st.loud.lufs.toFixed(1)} LUFS, so the gain is set to ${dbFmt(norm)} to reach ${a.target} LUFS (EBU R128).`) : null,
       st.kind === 'video' ? switcher('Mute the clip’s sound', e.mute, (x, v) => { x.mute = v; }) : null);
   }
   function eqPanel() {
@@ -1478,6 +1490,8 @@ export function openEditor(view, { file }, ctx) {
   document.addEventListener('keydown', onKey);
   const ro = new ResizeObserver(() => { if (!st.s || !st.zoom) return; setZoom(st.atFit ? fitZoom() : st.zoom); layoutFrame(); redraw(); });
   ro.observe(stage); ro.observe(tl);
+  const themeWatch = new MutationObserver(() => drawTl());
+  themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   window.addEventListener('beforeunload', () => { if (st.s) call('close', st.s.id).catch(() => {}); });
 
   async function load() {
@@ -1528,6 +1542,7 @@ export function openEditor(view, { file }, ctx) {
     disposed = true;
     document.removeEventListener('keydown', onKey);
     ro.disconnect();
+    themeWatch.disconnect();
     cancelAnimationFrame(raf);
     if (st.s) call('close', st.s.id).catch(() => {});
     ac?.close().catch(() => {});

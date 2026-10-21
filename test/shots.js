@@ -235,10 +235,22 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         ['45-media-crop', 'document.querySelector(\'[data-tool="crop"]\').click(); document.querySelector(\'.props [data-v="9:16"]\').click()'],
         ['46-media-sound', 'document.querySelector(\'[data-tool="sound"]\').click()'],
         ['47-media-saveas', 'document.querySelector(\'[data-a="saveas"]\').click()'],
+        ['50-media-speed', 'document.querySelector(\'.scrim [data-a="no"]\').click(); document.querySelector(\'[data-tool="speed"]\').click()'],
+        ['51-media-resize', 'document.querySelector(\'[data-tool="resize"]\').click()'],
+        ['52-media-music', `window.__media.edit((x) => { x.music = { file: ${JSON.stringify(path.join(samples, 'song.mp3'))}, volume: -8, mode: 'mix', duck: 10, loop: true, fit: false, fadeOut: 2 }; x.subs = { file: ${JSON.stringify(path.join(samples, 'sub.srt'))}, size: 18 }; }); document.querySelector('[data-tool="music"]').click()`],
+        ['53-media-subs', 'document.querySelector(\'[data-tool="subs"]\').click(); window.__media.seek(1.2)'],
+        ['54-media-scenes', 'document.querySelector(\'[data-tool="scenes"]\').click()'],
+        ['55-media-stabilise', 'document.querySelector(\'[data-tool="stabilise"]\').click()'],
+        ['56-media-fade', 'document.querySelector(\'[data-tool="fade"]\').click()'],
+        ['57-media-dark', 'document.documentElement.dataset.theme = "dark"; document.querySelector(\'[data-tool="trim"]\').click()'],
       ]);
       await media(talk, [
         ['48-audio', 'window.__media.seek(5.2)'],
         ['49-audio-clean', 'document.querySelector(\'[data-tool="clean"]\').click(); window.__media.edit((x) => { x.audio.gain = 4; })'],
+        ['58-audio-volume', 'document.querySelector(\'[data-tool="volume"]\').click(); window.__media.edit((x) => { x.audio.normalise = true; })', 4000],
+        ['59-audio-eq', 'document.querySelector(\'[data-tool="eq"]\').click(); document.querySelector(\'.props [data-v="voice"]\').click()'],
+        ['60-audio-channels', 'document.querySelector(\'[data-tool="channels"]\').click()'],
+        ['61-audio-cuts', 'const M = window.__media; M.seek(3); M.act("split"); M.seek(6); M.act("split"); M.st.sel = 1; M.act("cut"); M.seek(4.5); document.querySelector(\'[data-tool="trim"]\').click()'],
       ]);
     }
   } catch (e) { console.error('shots failed', e); }
