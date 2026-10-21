@@ -81,3 +81,15 @@ MIT OR Apache-2.0):
   mesh repair follow FreeCAD's Mesh workbench; drawings follow the layout of TechDraw's projection groups and title blocks.
   The STEP and IGES 5.3 file structure and the AutoCAD 2000 DXF writer follow SolidCraft's step_out, iges_out and dxf_out:
   Copyright (c) 2026 SolidCraft contributors.
+
+Speech and music models, unpacked from the installer's ai folder on first use (ai/manifest.json names each version):
+  Whisper, OpenAI, MIT License (https://github.com/openai/whisper): the base and small models in the ONNX export of
+  sherpa-onnx, k2-fsa, Apache-2.0 (https://github.com/k2-fsa/sherpa-onnx), with the decoder's token table stored as int8 by
+  scripts/whisper-slim.mjs. The decoding loop in src/main/engines/ai/asr.js follows OpenAI's reference decoder.
+  DeepFilterNet3, Hendrik Schröter, MIT OR Apache-2.0 (https://github.com/Rikorose/DeepFilterNet): the ONNX export of the
+  model; src/main/engines/ai/denoise.js ports libDF's features, frame delays and overlap-add.
+  Spleeter, Deezer, MIT License (https://github.com/deezer/spleeter): the 2-stem model in sherpa-onnx's ONNX export.
+  Piper, Michael Hansen, MIT License (https://github.com/rhasspy/piper): the voices named in each voice's MODEL_CARD
+  (alba, lessac, kareem, rohan, siwis, thorsten, davefx), int8, from sherpa-onnx's releases; phoneme ids follow piper-phonemize.
+  eSpeak NG, GPL-3.0-or-later (https://github.com/espeak-ng/espeak-ng), as the WebAssembly build @echogarden/espeak-ng-emscripten
+  (https://github.com/echogarden-project/espeak-ng-emscripten), used unchanged to turn text into phonemes.

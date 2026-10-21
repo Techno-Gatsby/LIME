@@ -48,7 +48,8 @@ export function slim(buf) {
   if (ti < 0) throw new Error(`${E} is not a float table in this decoder`);
   const tf = [...fields(graph[ti].val)], dims = tf.filter((f) => f.num === 1).map((f) => f.val), type = tf.find((f) => f.num === 2)?.val, raw = tf.find((f) => f.num === 9)?.val;
   if (type !== 1 || dims.length !== 2 || !raw) throw new Error(`${E} is not a float32 [vocab, state] table`);
-  const [vocab, state] = dims, w = new Float32Array(raw.buffer, raw.byteOffset, vocab * state);
+  const [vocab, state] = dims, w = new Float32Array(vocab * state);
+  new Uint8Array(w.buffer).set(raw);
   const scale = new Float32Array(vocab), qt = new Int8Array(state * vocab);
   for (let v = 0; v < vocab; v++) {
     let mx = 0;
