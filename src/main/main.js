@@ -129,6 +129,7 @@ async function loadInto(win, { file, url }) {
   await sleep(url ? 1800 : 400);
 }
 async function runHost(method, p) {
+  if (method.startsWith('diagram:')) return require('./diagramhost').render(method.slice(8), p);
   const win = new BrowserWindow({ show: false, width: method === 'urlToImage' ? 1366 : 1100, height: method === 'urlToImage' ? 900 : 1400, useContentSize: true, webPreferences: { sandbox: true, javascript: !!p.url || !!p.js, ...(p.offline ? { partition: 'lime-offline' } : {}) } });
   if (p.offline) win.webContents.session.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data|blob|about|devtools):/i.test(d.url) }));
   try {
@@ -583,6 +584,7 @@ function buildTray() {
     { label: 'Show Lime at Screen Edge', type: 'checkbox', checked: !settings.hidden, click: (i) => setSettings({ hidden: !i.checked }) },
     { label: 'Choose Files…', click: pickFiles },
     appsMenu(),
+    { label: 'New Whiteboard', click: () => openEditor('', 'board') }, ...(require('./diagrams').hasDrawio() ? [{ label: 'New Diagram', click: () => openEditor('', 'drawio') }] : []),
     { label: 'Recent', enabled: recent.length > 0, submenu: recent.length ? recent.map((r) => ({ label: path.basename(r.path), click: () => shell.showItemInFolder(r.path) })) : [{ label: 'Nothing yet', enabled: false }] },
     { type: 'separator' },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
@@ -711,6 +713,7 @@ function registerIpc() {
   h('wheel:menu', () => Menu.buildFromTemplate([
     { label: 'Choose Files…', click: pickFiles },
     appsMenu(),
+    { label: 'New Whiteboard', click: () => openEditor('', 'board') }, ...(require('./diagrams').hasDrawio() ? [{ label: 'New Diagram', click: () => openEditor('', 'drawio') }] : []),
     { label: 'Settings…', click: () => openPrefs() },
     { label: 'How Lime Works', click: () => openWelcome() },
     { type: 'separator' },
@@ -796,7 +799,7 @@ function registerIpc() {
   hE('picker:data', async (e) => { const d = BrowserWindow.fromWebContents(e.sender)?.pickerData; return d ? { ...d, ...(await call('sheetPreview', d.file)) } : null; });
   hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });
   h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
-  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio', 'web'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
+  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio', 'web', 'diagram'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
   hE('dialog:open', async (e, o = {}) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });
     return r.canceled ? [] : r.filePaths;
@@ -842,6 +845,7 @@ function registerIpc() {
 function registerProtocols() {
   protocol.handle('app', (req) => {
     const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '') || 'wheel.html';
+    if (rel.startsWith('drawio/')) return require('./diagrams').serveDrawio(rel.slice(7), helperRoot());
     const file = path.normalize(path.join(RENDERER, rel));
     return file.startsWith(RENDERER) ? net.fetch(pathToFileURL(file).href) : new Response('Forbidden', { status: 403 });
   });

@@ -789,6 +789,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         e.destroy();
       }
     }
+    if (want('diagrams')) await require('./diagrams.test').shots({ openEditor, BrowserWindow, shot, dir, samples });
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();

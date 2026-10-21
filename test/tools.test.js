@@ -1570,6 +1570,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() && !E('office').status().bundled.soffice ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html' };
+  { const d = require('./diagrams.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }
   const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])] || SWEEP_EXT[(t.extAccept || []).find((e) => SWEEP_EXT[e])]];
   const defaults = (t) => ({ ...Object.fromEntries((t.options || []).map((o) => [o.key, Array.isArray(o.default) ? [...o.default] : o.default])), ...SWEEP[t.id]?.[1] });
   const VIDEO_EXT = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpg', 'ts', 'm2ts', 'vob', 'ogv', '3gp', '3g2', 'dv', 'mxf']);
@@ -1908,6 +1909,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./web.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./ai.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./codecs.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./diagrams.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));

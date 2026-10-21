@@ -10,6 +10,7 @@ const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy(
 const MORE_GROUPS = { subtitle: ['smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc'], data: ['jsonl', 'ndjson', 'jsonc', 'toml'], contacts: ['vcf', 'vcard'],
   font: ['ttf', 'otf', 'woff', 'woff2', 'eot', 'ttc'], mail: ['eml', 'msg'], webarchive: ['mht', 'mhtml'], comic: ['cbz', 'cbr', 'cb7', 'cbt', 'cbc'], ebook: ['epub', 'kepub', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'fb2', 'htmlz', 'txtz'] };
 const MORE_EXT = Object.fromEntries(Object.entries(MORE_GROUPS).flatMap(([g, list]) => list.map((e) => [e, g])));
+Object.assign(MORE_EXT, require('./diagramtools').EXT);
 function palmBook(p) {
   try { const fd = U.fs.openSync(p, 'r'), b = Buffer.alloc(8); U.fs.readSync(fd, b, 0, 8, 60); U.fs.closeSync(fd); return /^(BOOKMOBI|TEXtREAd)$/.test(b.toString('latin1')); } catch (_) { return false; }
 }
@@ -834,6 +835,7 @@ const SINGLE_OUTPUT = new Set(['mix-tracks', 'compare-docs', 'merge-slides', 'hd
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js', web: 'vendor/weblibs.js' };
+require('./diagramtools').register({ TOOLS, WHEELS, EDITOR_FILE, W, each });
 const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
 if (unshipped.size) {
   TOOLS.splice(0, TOOLS.length, ...TOOLS.filter((t) => !unshipped.has(t.id)));
