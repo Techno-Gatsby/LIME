@@ -108,7 +108,10 @@ function detector(probe, { onDrag, onShift, onEnd }, threshold = 8) {
       }
       if (dragging) onDrag?.(s.shift);
     }
-    if (dragging && s.shift && !shifted) { shifted = true; onShift?.(); }
+    // Shift counts once per press, and keeps being offered while held if the wheel couldn't open yet (it was still
+    // folding): onShift returns false then. Letting go and pressing again offers it again.
+    if (!s.shift) shifted = false;
+    else if (dragging && !shifted) shifted = onShift?.() !== false;
     if (!dragging && 'count' in s) last = s;
   };
 }

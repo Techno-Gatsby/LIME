@@ -81,6 +81,8 @@ function enginePath(...parts) { return path.join(cfg.user, 'engines', ...parts);
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd: opts.cwd, windowsHide: true, env: { ...process.env, ...(opts.env || {}) } });
+    // Engines yield to the wheel, so it keeps moving smoothly while a big conversion runs.
+    try { if (child.pid) os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch (_) {}
     let stdout = '';
     let stderr = '';
     let killedForCancel = false, timedOut = false;

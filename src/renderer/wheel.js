@@ -1,18 +1,20 @@
 import { icon, GROUP_ICON } from './icons.js';
 import { wedge, labelAt, arc, limeSvg, hitIndex } from './petal.js';
-import { api, $, $$, h, esc, nameOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
+import { api, $, $$, h, esc, nameOf, dirOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
 const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 450;
 const TAB = 76;
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
-const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['more', 'More']];
+const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
+// Each ArtCraft app's mark in the middle of the wheel: an icon and its colour.
+const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], pdfcraft: ['pdf', '#d93b3b'] };
 const isMac = api.platform === 'darwin';
 const stage = $('#stage'), wheelEl = $('.wheel'), svg = $('.dial'), petalsG = $('.petals'), center = $('.center'), pill = $('.pill'), card = $('.card');
 const capName = $('.caption .name'), capMeta = $('.caption .meta');
 
 let settings = await applyTheme();
 const catalog = Object.fromEntries((await api.invoke('catalog')).map((t) => [t.id, t]));
-const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, depth: 0, peek: null, baseMode: 'convert', modKey: null };
+const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, over: false, peek: null, baseMode: 'convert', modKey: null, app: null, home: null, homeOn: false };
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -38,9 +40,12 @@ async function layout() {
   S.pop = false;
   return r;
 }
+// Where the wheel grows from or folds toward, kept inside the window: the lime at the edge can be far outside it
+// (after a Shift-drag or a move), and an animation heading there was cut off half-way.
 function offsetTo(pt) {
-  if (!pt || !geo) return { x: 140, y: 0 };
-  return { x: (pt.x - geo.bounds.x) / k - 165, y: (pt.y - geo.bounds.y) / k - 194 };
+  if (!pt || !geo) return { x: 120, y: 0 };
+  const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+  return { x: cl((pt.x - geo.bounds.x) / k - 165, -125, 125), y: cl((pt.y - geo.bounds.y) / k - 194, -150, 180) };
 }
 function bloomFrom(pt) {
   const o = offsetTo(pt);
@@ -59,7 +64,10 @@ function popIn() {
   clearTimeout(popIn.t);
   popIn.t = setTimeout(() => stage.classList.remove('popping'), 500);
 }
-async function fold({ keepJob = false } = {}) {
+// One fold at a time: two at once (a timer and the end of a drag) used to race each other.
+let folding = null;
+const fold = (o) => folding || (folding = doFold(o).finally(() => { folding = null; }));
+async function doFold({ keepJob = false } = {}) {
   if (S.state === 'idle') return;
   if (S.state === 'busy' && !keepJob) return;
   clearTimeout(collapseT);
@@ -71,22 +79,33 @@ async function fold({ keepJob = false } = {}) {
   stage.classList.remove('blooming');
   stage.classList.add('folding');
   await sleep(330);
-  if (S.state === 'busy' && !keepJob) { stage.classList.remove('folding'); return; }
+  // A job that started, or files dragged back over it, keep the wheel open.
+  if ((S.state === 'busy' && !keepJob) || (S.over && !keepJob && S.state === 'ready')) { stage.classList.remove('folding'); return; }
+  toIdle(keepJob);
+  // The lime stays hidden until the window is back at the edge, so it never shows where the wheel was.
+  stage.classList.add('tucking');
+  try { await layout(); } finally {
+    requestAnimationFrame(() => { stage.classList.remove('tucking'); stage.classList.add('tuck-in'); setTimeout(() => stage.classList.remove('tuck-in'), 700); });
+  }
+  // Files dragged over it while it folded: open again for them.
+  if (S.over && S.state === 'idle') expand('edge');
+}
+function toIdle(keepJob) {
+  closeCard(true);
   if (!keepJob) { S.files = []; S.items = null; S.result = null; }
   S.hot = -1;
   S.dragSummon = false;
   S.peek = null;
+  S.app = null;
+  S.homeOn = false;
   peekSeq++;
   dwellOn(null);
   setState('idle');
-  stage.classList.remove('folding');
   drawRing([]);
   drawCenter();
-  await layout();
-  stage.classList.add('tuck-in');
-  setTimeout(() => stage.classList.remove('tuck-in'), 700);
 }
-const armFold = (ms) => { clearTimeout(foldT); foldT = setTimeout(() => { if (S.state === 'ready' && !S.depth && !stage.matches(':hover')) fold(); }, ms); };
+// After a drag leaves, the mouse's hover state is from before the drag and means nothing, so it doesn't hold the fold.
+const armFold = (ms, { drag = false } = {}) => { clearTimeout(foldT); foldT = setTimeout(() => { if (S.state === 'ready' && !S.over && card.hidden && (drag || !stage.matches(':hover'))) fold(); }, ms); };
 function expand(why, at, peek) {
   if (S.state !== 'idle') return;
   S.bloomAt = at || null;
@@ -94,13 +113,18 @@ function expand(why, at, peek) {
   S.dragSummon = ['shift', 'corner', 'edge'].includes(why);
   S.peek = null;
   S.items = null;
+  S.app = null;
+  // Opened by a click, the wheel shows the seven apps around the lime (and Recent); opened by a drag, it waits for
+  // the files to say what they can become.
+  S.homeOn = !S.dragSummon;
   setState('ready');
   S.hot = -1;
   drawPill();
-  drawRing([]);
+  drawRing(S.homeOn && S.home ? homeRing() : []);
   drawCenter();
   drawCaption();
   layout();
+  if (S.homeOn && !S.home) loadHome().then(() => { if (S.state === 'ready' && S.homeOn && !S.peek) redraw(); });
   if (!S.dragSummon) armFold(12000);
   if (peek?.length) setPeek(peek);
   else if (S.dragSummon) api.invoke('wheel:peek').then((p) => p?.length && setPeek(p)).catch(() => {});
@@ -113,6 +137,8 @@ async function setPeek(files) {
   if (seq !== peekSeq || S.state !== 'ready' || !items) return;
   S.peek = files;
   S.items = items;
+  S.app = null;
+  marks();
   S.baseMode = items.convert.length ? 'convert' : items.tools.length ? 'tools' : 'more';
   S.mode = S.baseMode;
   S.modKey = null;
@@ -133,9 +159,41 @@ function tabProgress(p) {
 function setState(state) {
   S.state = state;
   stage.className = state;
-  if (S.depth > 0) stage.classList.add('over');
+  if (S.over) stage.classList.add('over');
   if (state === 'ready' && S.peek) stage.classList.add('live');
   if (!card.hidden) stage.classList.add('card-open');
+  marks();
+}
+const atHome = () => S.state === 'ready' && S.homeOn && !S.peek;
+function marks() {
+  stage.classList.toggle('home', atHome());
+  stage.classList.toggle('drilled', atHome() && !!S.app);
+}
+// The seven apps, each with its ring of actions; fetched once.
+let homeP = null;
+const loadHome = () => (homeP ||= api.invoke('wheel:home').then((list) => { S.home = list; }).catch(() => { homeP = null; }));
+const appsList = () => (S.items ? S.items.apps || [] : S.home || []);
+const appName = (id) => appsList().find((a) => a.id === id)?.name || S.home?.find((a) => a.id === id)?.name || 'That app';
+const drillItem = (a) => ({ drill: a.id, label: a.name, hint: a.short, desc: `${a.role} · ${a.ring.length > 1 ? `${a.ring.length - 1} one-click action${a.ring.length === 2 ? '' : 's'}` : 'open the app'}` });
+function homeRing() {
+  const a = S.home?.find((x) => x.id === S.app);
+  return a ? a.ring : [...(S.home || []).map(drillItem), { recent: true, label: 'Recent', hint: 'Results', desc: 'What Lime made lately' }];
+}
+// The app whose ring is showing, if any: one picked from the list, or the only app the files have.
+function currentApp() {
+  if (atHome()) return S.home?.find((a) => a.id === S.app) || null;
+  if (S.mode !== 'apps' || !S.items || !['open', 'ready'].includes(S.state)) return null;
+  const list = S.items.apps || [];
+  return list.find((a) => a.id === S.app) || (list.length === 1 ? list[0] : null);
+}
+const canBack = () => !!S.app && (atHome() || (S.mode === 'apps' && appsList().length > 1));
+function back() { S.app = null; S.hot = -1; redraw(); }
+function redraw() {
+  marks();
+  drawPill();
+  drawRing(atHome() ? homeRing() : ringFor(S.mode));
+  drawCenter();
+  drawCaption();
 }
 
 function drawRing(list, { dim = false } = {}) {
@@ -150,7 +208,7 @@ function drawRing(list, { dim = false } = {}) {
     if (!it) return `<g class="petal" style="${style}">${body}</g>`;
     const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : R_LABEL);
     const hint = it.hint ? `<text class="h" x="${x.toFixed(1)}" y="${(y + 9).toFixed(1)}">${esc(String(it.hint).toUpperCase())}</text>` : '';
-    return `<g class="petal${it.danger ? ' danger' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 6 : 0)).toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
+    return `<g class="petal${it.danger ? ' danger' : ''}${it.off ? ' off' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 6 : 0)).toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
   }).join('');
   fitLabels(count);
   setHot(S.hot >= n ? -1 : S.hot, true);
@@ -184,31 +242,79 @@ async function fileVisual(p) {
   const url = await thumbUrl(p);
   return url ? `<img class="thumb" src="${url}" alt="">` : `<div class="glyph">${icon(GROUP_ICON[groupOfFile(p)] || 'doc', 'lg')}</div>`;
 }
-let centerSeq = 0;
-const capsule = (html, cls = '') => `<div class="cap ${cls}">${html}</div>`;
+// The middle is a few layers changed in place. Rebuilding it on every hover and progress tick restarted its animations
+// and decoded the thumbnail again each time, and it waited for the thumbnail before showing anything: that was the
+// stutter, and the freeze while a big file's picture was being made.
+center.innerHTML = '<div class="vis"></div><div class="badge" hidden></div><div class="tick" hidden></div><div class="cap" hidden></div>';
+const cVis = $('.vis', center), cBadge = $('.badge', center), cTick = $('.tick', center), cCap = $('.cap', center);
+cTick.innerHTML = icon('check', 'sm');
+let visKey = '';
+function setVis(key, html, thumbOf) {
+  if (key === visKey) return;
+  visKey = key;
+  cVis.innerHTML = html;
+  // The file's own picture replaces its icon once it's ready, holding nothing else up.
+  if (thumbOf) thumbUrl(thumbOf).then((url) => { if (url && visKey === key) cVis.innerHTML = `<img class="thumb" src="${url}" alt="">`; });
+}
+function setCap(html, cls = '') {
+  const key = `${cls}\n${html}`;
+  if (cCap.dataset.key === key) return;
+  // It pops in when it appears or changes kind; new words alone (hovering, progress) just change.
+  const pop = cCap.hidden || cCap.dataset.cls !== cls;
+  Object.assign(cCap.dataset, { key, cls });
+  cCap.className = `cap ${cls}`;
+  cCap.innerHTML = html;
+  cCap.hidden = !html;
+  if (pop && html) { cCap.style.animation = 'none'; void cCap.offsetWidth; cCap.style.animation = ''; }
+}
+const glyph = (name, cls = '') => `<div class="glyph ${cls}">${icon(name, 'lg')}</div>`;
+const appGlyph = (id) => `<div class="glyph app" style="--app:${APP_LOOK[id]?.[1] || 'var(--green)'}">${icon(APP_LOOK[id]?.[0] || 'grid', 'lg')}</div>`;
+const showFile = (p) => setVis(`f:${p}`, glyph(GROUP_ICON[groupOfFile(p)] || 'doc'), p);
+// Long names are shortened in the middle, so the extension always shows (after LightCraft's widgets.rs).
+function shortName(n, max = 40) {
+  if (n.length <= max) return n;
+  const dot = n.lastIndexOf('.'), ext = dot > 0 && n.length - dot <= 8 ? n.slice(dot) : '', stem = ext ? n.slice(0, dot) : n;
+  const room = max - ext.length - 1, head = Math.ceil(room * 0.62);
+  return `${stem.slice(0, head)}…${stem.slice(stem.length - (room - head))}${ext}`;
+}
 function sizeText(files) {
   if (files.length > 1) return `${files.length} files`;
   const i = S.info;
   if (!i) return extOf(files[0]).toUpperCase() || 'File';
   return i.isDir ? 'Folder' : fmtBytes(i.size);
 }
-async function drawCenter() {
-  const seq = ++centerSeq;
+function drawCenter() {
   const it = S.ring[S.hot];
   const files = S.files.length ? S.files : S.peek || [];
-  const hot = it ? capsule(esc(it.label), 'hot') : '';
-  let html;
+  const hot = it ? esc(it.label) : '';
+  const app = currentApp();
+  cBadge.hidden = !(files.length > 1 && ['open', 'ready', 'busy'].includes(S.state) && !app);
+  if (!cBadge.hidden) cBadge.textContent = files.length;
+  cTick.hidden = S.state !== 'done';
   if (S.state === 'busy') {
     const j = S.job || {};
-    html = `${files[0] ? await fileVisual(files[0]) : ''}${capsule(`<span class="p">${j.status === 'queued' ? 'Waiting' : `${Math.round((j.progress || 0) * 100)}%`}</span><span class="x">${icon('close', 'sm')}Cancel</span>`)}`;
+    if (files[0]) showFile(files[0]); else setVis('logo', limeSvg(96, 'logo', k));
+    setCap(`<span class="p">${j.status === 'queued' ? 'Waiting' : `${Math.floor((j.progress || 0) * 100)}%`}</span><span class="x">${icon('close', 'sm')}Cancel</span>`, 'busy');
   } else if (S.state === 'done') {
     const out = S.result?.outs?.[0];
-    html = `${out && !S.result.inPlace ? await fileVisual(out) : `<div class="glyph">${icon('check', 'lg')}</div>`}<div class="tick">${icon('check', 'sm')}</div>${hot}`;
-  } else if (S.state === 'failed') html = `<div class="glyph bad">${icon('warning', 'lg')}</div>${hot || capsule('Didn’t finish', 'bad')}`;
-  else if (files.length && (S.state === 'open' || S.state === 'ready')) html = `${await fileVisual(files[0])}${files.length > 1 ? `<div class="badge">${files.length}</div>` : ''}${hot || capsule(esc(sizeText(files)))}`;
-  else html = limeSvg(96, 'logo', k);
-  if (seq !== centerSeq) return;
-  center.innerHTML = html;
+    if (out && !S.result.inPlace) showFile(out); else setVis('check', glyph('check'));
+    setCap(hot, 'hot');
+  } else if (S.state === 'failed') {
+    setVis('bad', glyph('warning', 'bad'));
+    setCap(hot || 'Didn’t finish', hot ? 'hot' : 'bad');
+  } else if (app || it?.drill) {
+    // Inside an app, or hovering one on the list: its mark sits in the middle.
+    // Its name is in the caption below, so the mark shows whole until a slice is lit.
+    const id = it?.drill || app.id;
+    setVis(`app:${id}`, appGlyph(id));
+    setCap(hot, 'hot');
+  } else if (files.length && (S.state === 'open' || S.state === 'ready')) {
+    showFile(files[0]);
+    setCap(hot || esc(sizeText(files)), hot ? 'hot' : '');
+  } else {
+    setVis(it?.recent ? 'recent' : 'logo', it?.recent ? glyph('clock') : limeSvg(96, 'logo', k));
+    setCap(hot, 'hot');
+  }
   center.draggable = S.state === 'done' && !!S.result?.outs?.length;
 }
 function describe(info, p) {
@@ -228,27 +334,33 @@ const suggestCache = new Map();
 async function drawCaption() {
   const it = S.ring[S.hot];
   if (S.state === 'open') {
-    capName.textContent = S.files.length === 1 ? nameOf(S.files[0]) : `${S.files.length} files`;
+    capName.textContent = S.files.length === 1 ? shortName(nameOf(S.files[0])) : `${S.files.length} files`;
     if (it?.tool) {
       const key = `${it.tool}|${JSON.stringify(it.opts || {})}`;
       if (!suggestCache.has(key)) suggestCache.set(key, api.invoke('tools:suggest', it.tool, S.files, { ...defaultsFor(catalog[it.tool]), ...(it.opts || {}) }).catch(() => null));
       const s = await suggestCache.get(key);
       if (S.ring[S.hot] !== it) return;
       capMeta.textContent = catalog[it.tool]?.editor ? `Opens ${catalog[it.tool].name}` : s?.kind === 'file' ? `→ ${s.name}` : s?.kind === 'folder' ? `→ ${s.name}/` : s?.kind === 'dir' ? `→ ${S.files.length} new files` : catalog[it.tool]?.name || '';
-    } else capMeta.textContent = it ? it.hint || '' : S.files.length === 1 ? describe(S.info, S.files[0]) : `${new Set(S.files.map((f) => extOf(f).toUpperCase())).size > 1 ? 'Mixed' : extOf(S.files[0]).toUpperCase()} · ${fmtBytes(S.info?.total || 0)}`;
+    } else capMeta.textContent = it ? it.desc || it.hint || '' : S.files.length === 1 ? describe(S.info, S.files[0]) : `${new Set(S.files.map((f) => extOf(f).toUpperCase())).size > 1 ? 'Mixed' : extOf(S.files[0]).toUpperCase()} · ${fmtBytes(S.info?.total || 0)}`;
   } else if (S.state === 'busy') {
     capName.textContent = S.job?.name || 'Working';
     capMeta.textContent = S.job?.label || '';
   } else if (S.state === 'done') {
     const r = S.result;
-    capName.textContent = r.outs.length === 1 ? nameOf(r.outs[0]) : r.outs.length ? `${r.outs.length} files saved` : r.title;
+    capName.textContent = r.outs.length === 1 ? shortName(nameOf(r.outs[0])) : r.outs.length ? `${r.outs.length} files saved` : r.title;
     capMeta.textContent = it?.hint ? `${it.label} · ${it.hint}` : r.note || (r.outs.length ? 'Drag from the centre, or pick an action' : '');
   } else if (S.state === 'failed') {
     capName.textContent = `${S.result?.title || 'That'} didn’t finish`;
     capMeta.textContent = S.result?.error || '';
   } else if (S.state === 'ready' && S.peek && S.ring.length) {
-    capName.textContent = S.peek.length === 1 ? nameOf(S.peek[0]) : `${S.peek.length} files`;
+    capName.textContent = S.peek.length === 1 ? shortName(nameOf(S.peek[0])) : `${S.peek.length} files`;
     capMeta.textContent = it ? `Release to ${actionText(it)}` : `Drop on a choice${modHint()}`;
+  } else if (atHome()) {
+    const app = currentApp(), t = it?.tool && catalog[it.tool];
+    if (t) { capName.textContent = t.name; capMeta.textContent = t.desc || ''; }
+    else if (it) { capName.textContent = it.action === 'craft' ? `Open ${appName(it.app)}` : it.label; capMeta.textContent = it.desc || it.hint || ''; }
+    else if (app) { capName.textContent = app.name; capMeta.textContent = `${app.role} · pick an action, or drop files`; }
+    else { capName.textContent = 'Drop files here'; capMeta.textContent = 'or click the lime to choose'; }
   } else if (S.state === 'ready') {
     capName.textContent = 'Drop files here';
     capMeta.textContent = 'or click the lime to choose';
@@ -256,6 +368,8 @@ async function drawCaption() {
 }
 
 function actionText(it) {
+  if (it.action === 'craft') return `open in ${appName(it.app)}`;
+  if (it.drill) return `see ${it.label}’s actions`;
   const t = it.tool && catalog[it.tool];
   const v = t ? verbFor(t, { ...defaultsFor(t), ...(it.opts || {}) }) : it.label;
   return /^[A-Z][a-z]/.test(v) ? v[0].toLowerCase() + v.slice(1) : v;
@@ -266,15 +380,23 @@ function modHint() {
   return bits.length ? ` · hold ${bits.join(', ')}` : '';
 }
 function drawPill() {
-  const modes = S.state === 'open' ? MODES : S.state === 'ready' && S.peek ? MODES.filter(([m]) => ringFor(m).length) : [];
-  pill.innerHTML = `${modes.map(([id, l]) => `<button role="tab" data-m="${id}" aria-selected="${S.mode === id}">${l}</button>`).join('')}<button class="x" data-a="close" title="Close (Esc)">${icon('close', 'sm')}</button>`;
+  if (atHome()) { pill.innerHTML = S.app ? `<button data-a="home" title="All apps (Esc)">${icon('back', 'sm')}All apps</button>` : ''; return; }
+  const modes = S.state === 'open' ? MODES.filter(([m]) => m !== 'apps' || ringFor(m).length) : S.state === 'ready' && S.peek ? MODES.filter(([m]) => ringFor(m).length) : [];
+  // Inside one app of several, the Apps tab names it and leads back to the list.
+  const label = (id, l) => (id === 'apps' && S.mode === 'apps' && canBack() ? `${icon('back', 'sm')}${esc(appName(S.app))}` : l);
+  pill.innerHTML = modes.map(([id, l]) => `<button role="tab" data-m="${id}" aria-selected="${S.mode === id}">${label(id, l)}</button>`).join('');
 }
 function ringFor(mode) {
   if (!S.items) return [];
+  if (mode === 'apps') {
+    const list = S.items.apps || [], a = list.find((x) => x.id === S.app) || (list.length === 1 ? list[0] : null);
+    return a ? a.ring : list.map(drillItem);
+  }
   return mode === 'more' ? S.items.more : S.items[mode] || [];
 }
 function setMode(m) {
   S.mode = m;
+  marks();
   S.hot = -1;
   drawPill();
   drawRing(ringFor(m));
@@ -282,7 +404,7 @@ function setMode(m) {
   drawCaption();
 }
 
-async function openWith(files, { mode } = {}) {
+async function openWith(files, { mode, app } = {}) {
   if (!files?.length) return;
   clearTimeout(collapseT);
   closeCard(true);
@@ -290,6 +412,8 @@ async function openWith(files, { mode } = {}) {
   S.result = null;
   S.info = null;
   S.peek = null;
+  S.homeOn = false;
+  S.app = app || null;
   S.items = await api.invoke('wheel:items', files);
   if (mode && ringFor(mode).length) S.mode = mode;
   else if (!S.items.convert.length && S.items.tools.length) S.mode = 'tools'; else S.mode = S.items.convert.length ? 'convert' : 'more';
@@ -312,6 +436,11 @@ async function collapse() {
 async function pick(it, { options = false } = {}) {
   if (!it) return;
   if (S.state === 'done' || S.state === 'failed') return doneAction(it);
+  if (it.drill) { S.app = it.drill; S.hot = -1; redraw(); return; }
+  if (it.recent) return showRecent();
+  if (it.appAll) return showAll({ app: it.appAll });
+  if (it.off) { flash(it.desc || `${appName(it.app)} isn’t in this build of Lime`); return; }
+  if (it.tool && !S.files.length) return chooseFor(it);
   if (it.action) {
     if (it.action === 'all') return showAll();
     const msg = await api.invoke('wheel:action', it, S.files).catch((e) => clean(e));
@@ -329,6 +458,22 @@ async function pick(it, { options = false } = {}) {
   const opts = { ...defaultsFor(tool), ...smartDefaults(tool), ...(it.opts || {}) };
   if (options || it.ask || missingRequired(tool, opts) || needsCard(tool, opts, it)) return showOptions(tool, opts, it);
   return run(tool, opts);
+}
+// A tool picked inside an app with no files yet asks for files of the kinds it takes, then runs as if they'd been dropped.
+async function chooseFor(it) {
+  const t = catalog[it.tool];
+  if (!t) return;
+  S.asking = true;
+  const files = await api.invoke('dialog:open', { title: `Choose files for ${t.name}`, filters: it.exts?.length ? [{ name: t.name, extensions: it.exts }] : undefined }).catch(() => []).finally(() => { S.asking = false; });
+  if (!files.length) return;
+  const want = itemKey(it);
+  S.settle = true;
+  await openWith(files, { mode: 'apps', app: S.app }).finally(() => { S.settle = false; });
+  const ring = ringFor('apps'), match = ring.find((x) => itemKey(x) === want) || ring.find((x) => x.tool === it.tool);
+  if (match) { setHot(S.ring.indexOf(match)); pick(match); return; }
+  // Not among the slices (it was under More): run it all the same if it takes these files.
+  if (S.items?.all?.includes(it.tool)) { pick({ tool: it.tool, opts: it.opts }); return; }
+  flash(`${t.name} can’t use ${files.length === 1 ? nameOf(files[0]) : 'those files'}`);
 }
 function needsCard(tool, opts, it) {
   if (it.quick) return false;
@@ -356,6 +501,7 @@ async function run(tool, opts) {
   const id = await api.invoke('jobs:submit', { tool: tool.id, files, opts, dest: dest.kind === 'none' || dest.kind === 'auto' ? null : dest }).catch((e) => { fail(tool.name, clean(e), { tool, opts, files }); return null; });
   if (!id) return;
   S.last = { tool, opts, files };
+  rememberTool(tool.id);
   S.job = { id, name: tool.name, progress: 0, label: 'Starting', status: 'queued' };
   setState('busy');
   drawPill();
@@ -389,7 +535,7 @@ api.on('jobs', (list) => {
     const outs = j.results.flatMap((r) => r.paths || (r.path ? [r.path] : []));
     const note = j.results.map((r) => r.note).find(Boolean) || '';
     const text = j.results.map((r) => r.text).filter(Boolean).join('\n\n');
-    S.result = { title: j.name, outs, note: note.includes('\n') ? note.split('\n')[0] : note, fullNote: note, text, inPlace: j.results[0]?.inPlace };
+    S.result = { title: j.name, outs, note: note.includes('\n') ? note.split('\n')[0] : note, fullNote: note, text, inPlace: j.results[0]?.inPlace, edit: j.edit };
     showDone();
   } else if (j.status === 'cancelled') {
     drawProgress(null);
@@ -405,6 +551,7 @@ function showDone() {
   if (r.outs.length) ring.push({ act: 'open', label: 'Open', hint: r.outs.length > 1 ? `${r.outs.length} files` : 'Default app' }, { act: 'reveal', label: isMac ? 'Finder' : 'Show', hint: 'Reveal' });
   if (r.text) ring.push({ act: 'copy', label: 'Copy', hint: 'Text' }, { act: 'view', label: 'View', hint: 'Text' });
   if (r.outs.length && !r.inPlace) ring.push({ act: 'next', label: 'Next', hint: 'Use result' });
+  if (r.edit) ring.push({ act: 'craft', app: r.edit.app, label: r.edit.name, hint: 'Edit in' });
   ring.push({ act: 'again', label: 'Again', hint: 'Other format' }, { act: 'close', label: 'Done', hint: 'Close' });
   if (S.state === 'idle') { flash(`${r.title} finished`); }
   setState('done');
@@ -438,6 +585,7 @@ async function doneAction(it) {
     case 'copy': await api.invoke('clip:text', r.text); flash('Text copied'); break;
     case 'view': showText(); break;
     case 'next': openWith(r.outs.filter(Boolean)); break;
+    case 'craft': flash(await api.invoke('wheel:action', { action: 'craft', app: it.app }, r.outs.slice(0, 1)).catch((e) => clean(e))); armCollapse(4000); break;
     case 'again': if (S.last?.files?.length) openWith(S.last.files); else collapse(); break;
     case 'retry': if (S.last) { S.files = S.last.files; run(S.last.tool, S.last.opts); } break;
     case 'options': if (S.last) { S.files = S.last.files; setState('open'); drawPill(); drawRing(ringFor(S.mode)); showOptions(S.last.tool, { ...S.last.opts }); } break;
@@ -547,18 +695,45 @@ function orderList(tool, changed) {
 }
 const CATS = [['pdf', 'PDF'], ['image', 'Images'], ['media', 'Video & audio'], ['docs', 'Documents'], ['cad', 'CAD & vector'], ['archive', 'Archives'], ['utility', 'Utilities']];
 const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft' };
-function showAll() {
-  const ids = S.items.all || [];
+// Search ranks what it finds: letters in a row and at the start of words count more, and an exact name comes first
+// (after PhotoCraft's palette.rs). With nothing typed, the tools used lately come first.
+function fuzzy(q, text) {
+  const t = text.toLowerCase();
+  let score = 0, ti = 0, last = -2;
+  for (const c of q.toLowerCase()) {
+    while (ti < t.length && t[ti] !== c) ti++;
+    if (ti >= t.length) return null;
+    score += (last === ti - 1 ? 8 : 1) + (ti === 0 || t[ti - 1] === ' ' ? 5 : 0);
+    last = ti++;
+  }
+  return score - Math.floor(t.length / 8);
+}
+const recentTools = () => { try { return JSON.parse(localStorage.getItem('lime.recentTools') || '[]'); } catch (_) { return []; } };
+function rememberTool(id) { try { localStorage.setItem('lime.recentTools', JSON.stringify([id, ...recentTools().filter((x) => x !== id)].slice(0, 8))); } catch (_) {} }
+function showAll({ app } = {}) {
+  // From an app's More slice: just that app's actions (all of them with no files yet, else the ones that fit).
+  const a = app && (appsList().find((x) => x.id === app) || S.home?.find((x) => x.id === app));
+  const ids = a ? a.all : S.items.all || [];
   const node = h(`<div><div class="search"><input class="input" type="search" placeholder="Search ${ids.length} tools" spellcheck="false"><button class="btn subtle icon" data-a="x">${icon('close', 'sm')}</button></div><div class="list"></div></div>`);
   const list = $('.list', node), q = $('input', node);
   let kb = -1;
+  const row = (t) => `<button data-t="${t.id}"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span>${t.craft ? `<i>${CRAFT[t.craft]}</i>` : ''}</button>`;
   const render = () => {
     const term = q.value.trim().toLowerCase();
-    const tools = ids.map((id) => catalog[id]).filter((t) => t && (!term || `${t.name} ${t.desc} ${t.craft || ''}`.toLowerCase().includes(term)));
-    list.innerHTML = CATS.map(([c, label]) => {
-      const ts = tools.filter((t) => t.cat === c);
-      return ts.length ? `<div class="grp">${label}</div>${ts.map((t) => `<button data-t="${t.id}"><b>${esc(t.name)}</b><span>${esc(t.desc)}</span>${t.craft ? `<i>${CRAFT[t.craft]}</i>` : ''}</button>`).join('')}` : '';
-    }).join('') || '<p class="muted" style="padding:8px">No tools match.</p>';
+    const tools = ids.map((id) => catalog[id]).filter(Boolean);
+    if (term) {
+      const hits = tools.map((t) => {
+        const name = fuzzy(term, t.name), rest = `${t.desc} ${CRAFT[t.craft] || ''}`.toLowerCase().includes(term);
+        return { t, score: name == null ? (rest ? -50 : null) : name + (t.name.toLowerCase() === term ? 1000 : 0) };
+      }).filter((x) => x.score != null).sort((a, b) => b.score - a.score);
+      list.innerHTML = hits.length ? `<div class="grp">Best matches</div>${hits.map((x) => row(x.t)).join('')}` : '<p class="muted" style="padding:8px">No tools match.</p>';
+    } else {
+      const recent = recentTools().map((id) => catalog[id]).filter((t) => t && ids.includes(t.id)).slice(0, 4);
+      list.innerHTML = (recent.length ? `<div class="grp">Used lately</div>${recent.map(row).join('')}` : '') + CATS.map(([c, label]) => {
+        const ts = tools.filter((t) => t.cat === c);
+        return ts.length ? `<div class="grp">${label}</div>${ts.map(row).join('')}` : '';
+      }).join('');
+    }
     kb = -1;
     requestAnimationFrame(layout);
   };
@@ -573,12 +748,26 @@ function showAll() {
     const b = e.target.closest('button[data-t]');
     if (!b) return;
     const t = catalog[b.dataset.t];
+    if (!S.files.length) { closeCard(true); chooseFor({ tool: t.id, exts: a?.exts?.[t.id] }); return; }
     if (t.editor) { pick({ tool: t.id }); return; }
     if ((t.options || []).length) showOptions(t, defaultsFor(t)); else run(t, defaultsFor(t));
   });
   openCard(node);
   render();
   setTimeout(() => q.focus(), 60);
+}
+async function showRecent() {
+  const list = (await api.invoke('recent:list').catch(() => [])).filter((r) => r.kind === 'output').slice(0, 14);
+  const node = h(`<div><div class="head"><h3>Recent results</h3><button class="btn subtle icon" data-a="x" title="Close">${icon('close', 'sm')}</button></div><p class="desc">Pick one to keep working on it.</p><div class="list recent"></div></div>`);
+  $('.list', node).innerHTML = list.length ? list.map((r) => `<button data-p="${esc(r.path)}"><b>${esc(nameOf(r.path))}</b><span>${esc(dirOf(r.path))}</span><i data-show title="Show in folder">${isMac ? 'Finder' : 'Show'}</i></button>`).join('') : '<p class="muted" style="padding:8px">Nothing yet. What Lime makes shows up here.</p>';
+  node.addEventListener('click', (e) => {
+    if (e.target.closest('[data-a="x"]')) { closeCard(); return; }
+    const b = e.target.closest('button[data-p]');
+    if (!b) return;
+    if (e.target.closest('[data-show]')) api.invoke('shell:show', b.dataset.p);
+    else openWith([b.dataset.p]);
+  });
+  openCard(node);
 }
 function showText() {
   const node = h(`<div><div class="head"><h3>Recognised text</h3><button class="btn subtle icon" data-a="x">${icon('close', 'sm')}</button></div><div class="textout"></div><div class="foot"><button class="btn primary" data-a="copy">${icon('copy', 'sm')}Copy text</button></div></div>`);
@@ -595,40 +784,58 @@ function toWheel(x, y) {
   const r = svg.getBoundingClientRect(), k2 = 300 / r.width;
   return [(x - (r.left + r.width / 2)) * k2, (y - (r.top + r.height / 2)) * k2];
 }
-const ringIndexAt = (x, y) => hitIndex(...toWheel(x, y), S.ring.length, R_IN - 2, R_OUT + 14);
+const ringIndexAt = (x, y) => hitIndex(...toWheel(x, y), S.ring.length, R_IN - 2, R_OUT + 14, S.hot);
 const inCenter = (x, y) => Math.hypot(...toWheel(x, y)) < R_IN - 4;
-const petalAt = (e) => (['open', 'done', 'failed'].includes(S.state) ? ringIndexAt(e.clientX, e.clientY) : -1);
-wheelEl.addEventListener('pointermove', (e) => { if (['open', 'done', 'failed'].includes(S.state)) setHot(petalAt(e)); });
-wheelEl.addEventListener('pointerleave', () => { if (['open', 'done', 'failed'].includes(S.state)) setHot(-1); });
-let downAt = null, dragging = false;
+const interactive = () => ['open', 'done', 'failed'].includes(S.state) || atHome();
+const petalAt = (e) => (interactive() ? ringIndexAt(e.clientX, e.clientY) : -1);
+wheelEl.addEventListener('pointermove', (e) => { if (interactive() && !moving) setHot(petalAt(e)); });
+wheelEl.addEventListener('pointerleave', () => { if (interactive() && !moving) setHot(-1); });
+// Press and drag anywhere moves the wheel, with files or without: a press that travels a few pixels is a move, not a
+// click. Only the middle of a finished job drags its results out instead. The window follows on every frame drawn.
+let downAt = null, moving = false, justMoved = false;
 stage.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || e.target.closest('.pill, .card, input, button, select, textarea')) return;
-  const onBtn = e.target.classList?.contains('btn') || inCenter(e.clientX, e.clientY);
-  const onPetal = petalAt(e) >= 0;
-  downAt = { x: e.screenX, y: e.screenY, onBtn, onPetal, i: petalAt(e) };
-  dragging = false;
-  if (onPetal) $(`.petal[data-i="${downAt.i}"]`)?.classList.add('press');
+  if (e.button !== 0 || e.target.closest('.card, input, select, textarea')) return;
+  const i = petalAt(e);
+  downAt = { x: e.clientX, y: e.clientY, id: e.pointerId, i, onPetal: i >= 0, onBtn: e.target.classList?.contains('btn') || inCenter(e.clientX, e.clientY), onPill: !!e.target.closest('.pill') };
+  if (i >= 0) $(`.petal[data-i="${i}"]`)?.classList.add('press');
 });
 window.addEventListener('pointermove', (e) => {
-  if (!downAt || dragging) return;
-  if (Math.hypot(e.screenX - downAt.x, e.screenY - downAt.y) > 4 && (S.state === 'idle' || (!downAt.onPetal && !downAt.onBtn) || (S.state === 'idle' && downAt.onBtn))) {
-    dragging = true;
-    $$('.petal.press').forEach((g) => g.classList.remove('press'));
-    api.invoke('wheel:dragStart');
-  }
+  if (!downAt || moving || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) <= 5) return;
+  if (S.state === 'done' && downAt.onBtn && S.result?.outs?.length) return;
+  moving = true;
+  $$('.petal.press').forEach((g) => g.classList.remove('press'));
+  setHot(-1);
+  stage.classList.add('moving');
+  try { stage.setPointerCapture(downAt.id); } catch (_) {}
+  api.invoke('wheel:dragStart');
+  const step = () => { if (!moving) return; api.moveTick(); requestAnimationFrame(step); };
+  requestAnimationFrame(step);
 });
+function endMove() {
+  if (!moving) return false;
+  moving = false;
+  stage.classList.remove('moving');
+  api.invoke('wheel:dragEnd');
+  justMoved = true;
+  setTimeout(() => { justMoved = false; }, 0);
+  return true;
+}
+window.addEventListener('click', (e) => { if (justMoved) { e.preventDefault(); e.stopPropagation(); } }, true);
+stage.addEventListener('pointercancel', () => { downAt = null; endMove(); });
+stage.addEventListener('lostpointercapture', () => { if (moving) { downAt = null; endMove(); } });
 window.addEventListener('pointerup', async (e) => {
   const d = downAt;
   downAt = null;
   $$('.petal.press').forEach((g) => g.classList.remove('press'));
-  if (!d) return;
-  if (dragging) { dragging = false; api.invoke('wheel:dragEnd'); return; }
+  if (!d || endMove() || d.onPill) return;
   if (d.onPetal) { const i = petalAt(e); if (i === d.i) pick(S.ring[i], { options: e.altKey }); return; }
   if (S.state === 'idle' && e.target.closest('.tab')) { expand('click'); return; }
   if (d.onBtn || e.target.closest('.center')) {
-    if (S.state === 'ready') { S.asking = true; const files = await api.invoke('dialog:open', { title: 'Choose files for Lime' }).finally(() => { S.asking = false; }); if (files.length) openWith(files); }
+    if (atHome() && S.app) back();
+    else if (S.state === 'ready') { S.asking = true; const files = await api.invoke('dialog:open', { title: 'Choose files for Lime' }).finally(() => { S.asking = false; }); if (files.length) openWith(files); }
     else if (S.state === 'busy' && S.job) api.invoke('jobs:cancel', S.job.id);
     else if (S.ring[S.hot]) pick(S.ring[S.hot]);
+    else if (canBack()) back();
     else if (S.state === 'done' && S.result?.outs?.[0]) api.invoke('shell:show', S.result.outs[0]);
   }
 });
@@ -643,35 +850,51 @@ center.addEventListener('dragstart', (e) => {
   e.preventDefault();
   if (S.state === 'done' && S.result?.outs?.length) api.drag(S.result.outs);
 });
-let wheelAcc = 0;
+// One slice per mouse notch, however many pixels the system calls a notch (Windows says about 100, which used to skip
+// three or four slices); trackpad motion adds up, a bounded amount per event, and starts over after a pause. After
+// PdfCraft's wheel_pager.rs.
+let wheelAcc = 0, wheelAt = 0;
 stage.addEventListener('wheel', (e) => {
   if (e.target.closest('.card')) return;
-  if (['idle', 'busy', 'ready'].includes(S.state) || !S.ring.length) return;
+  if (['idle', 'busy'].includes(S.state) || (S.state === 'ready' && !atHome()) || !S.ring.length) return;
   e.preventDefault();
-  wheelAcc += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-  const n = S.ring.length;
-  while (Math.abs(wheelAcc) >= 26) {
-    const dir = Math.sign(wheelAcc);
-    wheelAcc -= dir * 26;
-    setHot(S.hot < 0 ? (dir > 0 ? 0 : n - 1) : (S.hot + dir + n) % n);
-  }
+  const dy = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX, now = performance.now(), idle = now - wheelAt;
+  wheelAt = now;
+  if (!dy) return;
+  if (idle > 150) wheelAcc = 0;
+  const n = S.ring.length, turn = (dir) => setHot(S.hot < 0 ? (dir > 0 ? 0 : n - 1) : (S.hot + dir + n) % n);
+  if (e.deltaMode !== 0 || (Math.abs(dy) >= 50 && idle >= 20)) { wheelAcc = 0; turn(Math.sign(dy)); return; }
+  wheelAcc += Math.max(-26, Math.min(26, dy));
+  if (Math.abs(wheelAcc) >= 26) { turn(Math.sign(wheelAcc)); wheelAcc = 0; }
 }, { passive: false });
 pill.addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   if (b.dataset.a === 'close') { if (S.state === 'busy') { collapseKeepJob(); } else collapse(); return; }
-  if (b.dataset.m) { closeCard(); setMode(b.dataset.m); }
+  if (b.dataset.a === 'home') { closeCard(); back(); return; }
+  if (b.dataset.m) { closeCard(); if (b.dataset.m === 'apps' && S.mode === 'apps' && canBack()) back(); else setMode(b.dataset.m); }
 });
+// The ✕ at the top right folds the wheel back into the lime from any state; a running job carries on.
+const closeBtn = $('.close');
+closeBtn.innerHTML = icon('close', 'sm');
+closeBtn.addEventListener('click', () => { closeCard(true); if (S.state === 'busy') collapseKeepJob(); else collapse(); });
 function collapseKeepJob() {
   fold({ keepJob: true }).then(() => tabProgress(S.job?.progress || 0));
 }
 document.addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, textarea, select') && e.key !== 'Escape') return;
-  if (e.key === 'Escape') { e.preventDefault(); if (!card.hidden) closeCard(); else if (S.state === 'busy') collapseKeepJob(); else collapse(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); if (!card.hidden) closeCard(); else if (canBack()) back(); else if (S.state === 'busy') collapseKeepJob(); else collapse(); return; }
   if (S.state === 'idle' || S.state === 'busy') return;
-  if (S.state === 'ready') return;
+  if (S.state === 'ready' && !atHome()) return;
+  if (e.key === 'Backspace' && canBack()) { e.preventDefault(); back(); return; }
   const n = S.ring.length;
-  if (e.key === 'Tab' && S.state === 'open') { e.preventDefault(); const i = MODES.findIndex(([m]) => m === S.mode); closeCard(true); setMode(MODES[(i + (e.shiftKey ? 2 : 1)) % 3][0]); return; }
+  if (e.key === 'Tab' && S.state === 'open') {
+    e.preventDefault();
+    const modes = MODES.filter(([m]) => m !== 'apps' || ringFor(m).length), i = modes.findIndex(([m]) => m === S.mode);
+    closeCard(true);
+    setMode(modes[(i + (e.shiftKey ? modes.length - 1 : 1)) % modes.length][0]);
+    return;
+  }
   if (n && ['ArrowRight', 'ArrowDown'].includes(e.key)) { e.preventDefault(); setHot((S.hot + 1 + n) % n); }
   if (n && ['ArrowLeft', 'ArrowUp'].includes(e.key)) { e.preventDefault(); setHot(S.hot < 0 ? n - 1 : (S.hot - 1 + n) % n); }
   if (/^[1-9]$/.test(e.key) && Number(e.key) <= n) pick(S.ring[Number(e.key) - 1]);
@@ -698,62 +921,94 @@ function dragMods(e) {
   const m = key && ringFor(key).length ? key : S.baseMode;
   if (m !== S.mode) setMode(m);
 }
+// Whether files are being dragged over the window. Counting enters against leaves drifted whenever the ring was redrawn
+// under the pointer (a slice that is replaced never reports its leave), and once the count was off, dragging onto the
+// lime stopped opening the wheel. Moving between parts of the wheel fires an enter just before its leave, so a leave
+// with no enter in the same moment is the drag leaving the window.
+let entering = false;
+function dragOver(on) {
+  S.over = on;
+  stage.classList.toggle('over', on);
+}
 window.addEventListener('dragenter', (e) => {
   if (!isFiles(e)) return;
   e.preventDefault();
-  if (++S.depth === 1) {
-    stage.classList.add('over');
-    clearTimeout(collapseT);
-    clearTimeout(foldT);
-    if (S.state === 'idle') expand('edge');
-  }
+  entering = true;
+  setTimeout(() => { entering = false; }, 0);
+  if (S.over && S.state !== 'idle') return;
+  dragOver(true);
+  clearTimeout(collapseT);
+  clearTimeout(foldT);
+  if (S.state === 'idle') expand('edge');
 });
+// Holding dragged files over an app for a moment opens its actions, so a drop runs one in the same gesture (as
+// LightCraft opens a folder held over while dragging).
+let drillWait = null, drillT = null;
+function drillOn(it) {
+  const id = it?.drill || null;
+  if (id === drillWait) return;
+  clearTimeout(drillT);
+  drillWait = id;
+  if (id) drillT = setTimeout(() => { if (S.ring[S.hot]?.drill === id) { S.app = id; S.hot = -1; redraw(); } drillWait = null; }, DWELL);
+}
 window.addEventListener('dragover', (e) => {
   if (!isFiles(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
-  if (S.state !== 'ready' || !S.peek) return;
-  dragMods(e);
+  if (S.state !== 'ready' || !(S.peek || atHome())) return;
+  if (S.peek) dragMods(e);
   const tab = e.target.closest?.('.pill button[data-m]');
   dwellOn(tab || null);
   setHot(tab ? -1 : ringIndexAt(e.clientX, e.clientY));
+  drillOn(tab ? null : S.ring[S.hot]);
 });
 window.addEventListener('dragleave', () => {
-  if (--S.depth > 0) return;
-  S.depth = 0;
-  stage.classList.remove('over');
+  if (entering || !S.over) return;
+  dragOver(false);
   dwellOn(null);
-  if (S.state === 'ready') { setHot(-1); armFold(1400); }
+  if (S.state === 'ready') { setHot(-1); armFold(1400, { drag: true }); }
 });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
-  S.depth = 0;
+  dragOver(false);
   clearTimeout(foldT);
   dwellOn(null);
-  stage.classList.remove('over');
   const real = [...(e.dataTransfer?.files || [])].map((f) => api.pathFor(f)).filter(Boolean);
   const files = real.length ? real : S.peek || [];
   if (!files.length) return;
-  const it = S.state === 'ready' && S.peek ? S.ring[ringIndexAt(e.clientX, e.clientY)] : null;
+  const it = S.state === 'ready' && (S.peek || atHome()) ? S.ring[ringIndexAt(e.clientX, e.clientY)] : null;
   S.dropping = true;
-  if (!it) { openWith(files).finally(() => { S.dropping = false; }); return; }
+  if (!it || it.recent) { openWith(files).finally(() => { S.dropping = false; }); return; }
+  // Dropped on an app: its ring for these files. Dropped on one of an app's actions: that action.
+  const home = atHome();
+  if (it.drill) { openWith(files, { mode: 'apps', app: it.drill }).finally(() => { S.dropping = false; }); return; }
   const want = itemKey(it);
   S.settle = true;
-  await openWith(files, { mode: S.mode }).finally(() => { S.settle = false; S.dropping = false; });
-  const match = [S.mode, 'convert', 'tools', 'more'].flatMap((m) => ringFor(m)).find((x) => itemKey(x) === want);
-  if (!match) { flash(`${it.label} isn’t available for ${files.length === 1 ? nameOf(files[0]) : 'these files'}`); return; }
+  await openWith(files, home ? { mode: 'apps', app: S.app } : { mode: S.mode, app: S.app }).finally(() => { S.settle = false; S.dropping = false; });
+  const match = [S.mode, 'convert', 'tools', 'apps', 'more'].flatMap((m) => ringFor(m)).find((x) => itemKey(x) === want);
+  if (!match) { flash(`${it.app && it.action ? `${appName(it.app)} can’t open` : `${it.label} isn’t available for`} ${files.length === 1 ? nameOf(files[0]) : 'these files'}`); return; }
   setHot(S.ring.indexOf(match));
   pick(match);
 });
 window.addEventListener('blur', () => { if ((S.state === 'open' || (S.state === 'ready' && !S.dragSummon)) && card.hidden && !S.asking) armCollapse(900); });
 window.addEventListener('focus', () => { if (S.state === 'open' || S.state === 'ready') clearTimeout(collapseT); });
 stage.addEventListener('pointerenter', () => { clearTimeout(collapseT); clearTimeout(foldT); });
-stage.addEventListener('pointerleave', () => { if (S.state === 'done') armCollapse(6000); if (S.state === 'ready' && !S.depth) armFold(2500); });
+stage.addEventListener('pointerleave', () => { if (S.state === 'done') armCollapse(6000); if (S.state === 'ready' && !S.over) armFold(2500); });
 
 api.on('wheel:files', (files) => openWith(files));
-api.on('wheel:summon', ({ why, at, peek }) => { if (S.state === 'idle') expand(why, at, peek); else if (why === 'show') window.focus(); else if (S.state === 'ready' && peek?.length) setPeek(peek); });
+api.on('wheel:summon', ({ why, at, peek, tab }) => {
+  // The window is tucked at the edge but the page thinks it's open (a fold that never finished): start over from the lime.
+  if (tab && !folding && ['ready', 'open', 'done', 'failed'].includes(S.state)) { toIdle(); stage.classList.remove('folding', 'tucking'); }
+  if (S.state === 'idle') expand(why, at, peek); else if (why === 'show') window.focus(); else if (S.state === 'ready' && peek?.length) setPeek(peek);
+});
 api.on('wheel:peek', (files) => { if (S.state === 'ready') setPeek(files); });
-api.on('wheel:dragEnded', () => { if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.depth && !S.dropping) fold(); }, 260); });
+api.on('wheel:dragEnded', () => {
+  // The system says the drag is over, so nothing is over the wheel any more, whatever its events said.
+  dragOver(false);
+  dwellOn(null);
+  if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.over && !S.dropping) fold(); }, 260);
+});
+api.on('wheel:flash', (msg) => flash(msg));
 api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
 api.on('settings', (s) => { settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
 
@@ -761,4 +1016,4 @@ setState('idle');
 drawRing([]);
 drawCenter();
 layout();
-window.__lime = { S, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo };
+window.__lime = { S, drawCenter, folding: () => !!folding, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo, atHome, homeRing, currentApp, back, redraw, loadHome, ringFor };

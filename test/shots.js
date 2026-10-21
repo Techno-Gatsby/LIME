@@ -42,6 +42,37 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       await frame('b4-tucked-again');
     }
     const img = path.join(samples, 'photo.jpg');
+    if (want('apps')) {
+      const pdfFile = path.join(samples, 'doc.pdf');
+      await js('window.__lime.fold()');
+      await sleep(900);
+      await js('window.__lime.expand("click"); window.__lime.loadHome()');
+      await sleep(900);
+      await shot('30-apps-home');
+      await js('window.__lime.setHot(window.__lime.S.ring.findIndex((x) => x.label === "PdfCraft"))');
+      await shot('31-apps-hover-pdfcraft');
+      await js('window.__lime.pick(window.__lime.S.ring.find((x) => x.label === "PdfCraft"))');
+      await shot('32-pdfcraft-ring');
+      await js('window.__lime.back(); window.__lime.S.app = "photocraft"; window.__lime.redraw()');
+      await shot('33-photocraft-ring');
+      await js('window.__lime.fold()');
+      await sleep(900);
+      await js(`window.__lime.openWith(${JSON.stringify([pdfFile])})`);
+      await sleep(900);
+      await shot('34-pdf-tools');
+      await js('window.__lime.setMode("apps")');
+      await shot('35-pdf-apps');
+      await js('window.__lime.fold()');
+      await sleep(900);
+      const a = screen.getPrimaryDisplay().workArea, at = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
+      peek([img]);
+      summon('shift', at);
+      await until('window.__lime.S.peek && window.__lime.S.ring.length > 0');
+      await shot('36-shift-live');
+      const frame = async (name) => { const im = await w().webContents.capturePage(); fs.writeFileSync(path.join(dir, `${name}.png`), im.toPNG()); console.log('shot', name, im.getSize()); };
+      js('window.__lime.fold()');
+      for (const t of [80, 180, 280]) { await sleep(100); await frame(`37-fold-${t}ms`); }
+    }
     if (want('drag')) {
       const a = screen.getPrimaryDisplay().workArea, at = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
       const over = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); const b = el.getBoundingClientRect(), x = b.x + b.width / 2, y = b.y + b.height / 2; const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt')); document.elementFromPoint(x, y).dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true })); })()`);
@@ -149,7 +180,17 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       openEditor(path.join(samples, 'doc.pdf'), 'edit');
       await sleep(4500);
       const e = BrowserWindow.getAllWindows().find((x) => x.editorData);
-      if (e) await shot('15-editor', e);
+      if (e) {
+        await shot('15-editor', e);
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        await ejs(`document.querySelector('[data-tool="addtext"]').click(); (() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(); l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + 60, clientY: b.top + 160 })); })()`);
+        await sleep(300);
+        await ejs(`(() => { const el = document.querySelector('.obj.text[contenteditable]'); el.textContent = 'Styled text'; el.dispatchEvent(new Event('input', { bubbles: true })); for (const s of ['[data-s="bold"]', '[data-s="underline"]', '.swatches [data-c="#fff4ce"]']) document.querySelector('.props ' + s).click(); document.querySelector('.props details.more').open = true; })()`);
+        await shot('16-editor-text', e);
+        await ejs(`document.querySelector('[data-tool="select"]').click()`);
+        await sleep(800);
+        await shot('17-editor-select', e);
+      }
     }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;

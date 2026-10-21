@@ -33,6 +33,9 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
   PhotoCraft 0.10.0, VectorCraft 0.13.1, FilmCraft 0.9.0, LightCraft 0.9.1, PdfCraft 0.9.0, EffectCraft 0.11.1, DesignCraft 0.9.0
   © ArtCraft Team and contributors, MIT OR Apache-2.0. ArtCraft names and logos are trademarks of their owners.
   Lime is not affiliated with ArtCraft.
+  The wheel's slice hysteresis, one-slice-per-notch scrolling, time-based easing, ranked search and middle-shortened
+  names are ported from PhotoCraft, PdfCraft, FilmCraft and LightCraft (crates/ui-egui), MIT OR Apache-2.0:
+  Copyright (c) ArtCraft Team and the PhotoCraft, PdfCraft, FilmCraft and LightCraft contributors.
 
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil

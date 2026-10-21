@@ -95,6 +95,15 @@ const SLIDE_PRINT = [
   choice('orientation', 'Orientation', [['portrait', 'Portrait'], ['landscape', 'Landscape']], 'portrait', { when: { layout: HANDOUTS } }),
   toggle('frame', 'Frame slides', true, { when: { layout: HANDOUTS } }),
 ];
+// For the ArtCraft actions below (see the end of TOOLS).
+const PHOTO_EXT = ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'psd', 'psb', 'pcraft'];
+const LAYERED_EXT = ['psd', 'psb', 'pcraft', 'tif', 'tiff'];
+const LIGHT_EXT = ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'heic', 'heif', 'webp', 'avif', 'jxl'];
+const photoExt = (o, files) => { const e = U.ext(files[0] || ''); return ['jpg', 'png', 'webp'].includes(e) ? e : e === 'jpeg' ? 'jpg' : 'png'; };
+const lightExt = (o, files) => (['png', 'tif', 'tiff'].includes(U.ext(files[0] || '')) ? 'png' : 'jpg');
+const LIGHT_LOOK_CHOICES = craft().LIGHT_PRESETS.map((id) => [id, id.replace(/^lc\./, '').replace(/^bw-/, 'B&W ').replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()).replace('70s', '70s')]);
+const VIDEO_LOOK_CHOICES = craft().VIDEO_LOOKS.map((l) => [l, l]);
+
 const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
   { id: 'sign-pdf', cat: 'pdf', name: 'Sign PDF', desc: 'Draw, type or place a signature.', accepts: ['pdf'], max: 1, editor: 'sign' },
@@ -115,7 +124,7 @@ const TOOLS = [
     run: each((f, o, c) => pdf().split(f, o, c)) },
   { id: 'compress-pdf', cat: 'pdf', name: 'Compress PDF', desc: 'Recompress images and rebuild the file.', accepts: ['pdf'], ext: 'pdf', suffix: '-compressed',
     options: [level(), pdfPassword], run: each((f, o, c) => pdf().compress(f, o, outFile('-compressed', 'pdf')(f, c), c)) },
-  { id: 'optimize-pdf', cat: 'pdf', name: 'Optimize PDF', desc: 'PdfCraft rebuilds and slims the file.', accepts: ['pdf'], ext: 'pdf', suffix: '-optimized', craft: 'pdfcraft',
+  { id: 'optimize-pdf', cat: 'pdf', name: 'Optimize PDF', desc: 'PdfCraft rebuilds and slims the file.', accepts: ['pdf'], ext: 'pdf', suffix: '-optimized', craft: 'pdfcraft', petal: ['Optimize', 'Rebuild'],
     options: [range('quality', 'Image quality', 60, 20, 95, { unit: '%', advanced: true })], run: each((f, o, c) => craft().optimizePdf(f, o, c)) },
   { id: 'pdf-to-word', cat: 'pdf', name: 'PDF to Word', desc: 'Editable DOCX with paragraphs and images.', accepts: ['pdf'], ext: 'docx',
     options: [pdfPassword], run: each((f, o, c) => pdf().toWord(f, o, outFile('', 'docx')(f, c), c)) },
@@ -133,7 +142,7 @@ const TOOLS = [
   { id: 'pdf-to-markdown', cat: 'pdf', name: 'PDF to Markdown', desc: 'Headings, paragraphs, lists and pictures as Markdown.', accepts: ['pdf'], ext: 'md', options: [pdfPassword], run: each((f, o, c) => pdf().toMarkdown(f, o, outFile('', 'md')(f, c), c)) },
   { id: 'pdf-to-text', cat: 'pdf', name: 'PDF to text', desc: 'All text as a plain-text file.', accepts: ['pdf'], ext: 'txt', options: [pdfPassword], run: each((f, o, c) => pdf().toText(f, o, outFile('', 'txt')(f, c))) },
   { id: 'pdf-to-html', cat: 'pdf', name: 'PDF to HTML', desc: 'A web page that keeps the layout.', accepts: ['pdf'], ext: 'html', options: [pdfPassword], run: each((f, o, c) => pdf().toHtml(f, o, outFile('', 'html')(f, c))) },
-  { id: 'pdf-to-svg', cat: 'pdf', name: 'PDF to SVG', desc: 'Vector artwork via VectorCraft.', accepts: ['pdf'], ext: 'svg', craft: 'vectorcraft', run: each((f, o, c) => craft().vector(f, { to: 'svg' }, c)) },
+  { id: 'pdf-to-svg', cat: 'pdf', name: 'PDF to SVG', desc: 'Vector artwork via VectorCraft.', accepts: ['pdf'], ext: 'svg', craft: 'vectorcraft', petal: ['SVG', 'Vector'], run: each((f, o, c) => craft().vector(f, { to: 'svg' }, c)) },
   { id: 'to-pdf', cat: 'pdf', name: 'Make PDF', desc: 'Documents, slides, sheets, drawings or images to PDF.', accepts: ['doc', 'sheet', 'slides', 'vector', 'cad2d', 'layout', 'image', 'raw', 'ebook'], ext: 'pdf',
     run: each((f, o, c) => anyToPdf(f, c)) },
   { id: 'jpg-to-pdf', cat: 'pdf', name: 'Images to PDF', desc: 'One PDF from photos, scans or screenshots.', accepts: IMAGE_IN, ordered: true, ext: 'pdf',
@@ -171,7 +180,7 @@ const TOOLS = [
   { id: 'redact-pdf', cat: 'pdf', name: 'Redact PDF', desc: 'Permanently remove words, emails and numbers.', accepts: ['pdf'], ext: 'pdf', suffix: '-redacted',
     options: [{ key: 'terms', type: 'textarea', label: 'Words or phrases, one per line', default: '' }, { key: 'patterns', type: 'multi', label: 'Also find', choices: [['email', 'Emails'], ['phone', 'Phones'], ['card', 'Cards'], ['iban', 'IBANs']], default: [] }, toggle('boxes', 'Black boxes', true), pdfPassword],
     run: each((f, o, c) => pdf().redact(f, o, outFile('-redacted', 'pdf')(f, c))) },
-  { id: 'audit-pdf', cat: 'pdf', name: 'Check redactions', desc: 'PdfCraft finds text hidden under black boxes.', accepts: ['pdf'], save: 'none', craft: 'pdfcraft', run: each((f, o, c) => craft().auditPdf(f, o, c)) },
+  { id: 'audit-pdf', cat: 'pdf', name: 'Check redactions', desc: 'PdfCraft finds text hidden under black boxes.', accepts: ['pdf'], save: 'none', craft: 'pdfcraft', petal: ['Redactions', 'Check'], run: each((f, o, c) => craft().auditPdf(f, o, c)) },
   { id: 'protect-pdf', cat: 'pdf', name: 'Protect PDF', desc: 'AES-256 password and permissions.', accepts: ['pdf'], ext: 'pdf', suffix: '-protected',
     options: [password('userPassword', 'Password to open', { required: true }), toggle('allowPrint', 'Allow printing', true), toggle('allowCopy', 'Allow copying', true), toggle('allowEdit', 'Allow editing', false)],
     run: each((f, o, c) => pdf().protect(f, o, outFile('-protected', 'pdf')(f, c))) },
@@ -180,12 +189,12 @@ const TOOLS = [
   { id: 'ocr-pdf', cat: 'pdf', name: 'Searchable PDF', desc: 'Recognise text in scans so you can search and copy it.', accepts: ['pdf'], ext: 'pdf', suffix: '-searchable',
     options: [select('lang', 'Language', LANGS), toggle('skipText', 'Skip pages that already have text', true), choice('dpi', 'Quality', [['200', 'Fast'], ['300', 'Accurate']], '300'), pdfPassword],
     run: each((f, o, c) => pdf().ocr(f, o, outFile('-searchable', 'pdf')(f, c), c)) },
-  { id: 'pdf-to-pdfa', cat: 'pdf', name: 'PDF to PDF/A', desc: 'Archive-safe PDF/A, checked against the standard.', accepts: ['pdf'], ext: 'pdf', suffix: '-pdfa', craft: 'pdfcraft',
+  { id: 'pdf-to-pdfa', cat: 'pdf', name: 'PDF to PDF/A', desc: 'Archive-safe PDF/A, checked against the standard.', accepts: ['pdf'], ext: 'pdf', suffix: '-pdfa', craft: 'pdfcraft', petal: ['PDF/A', 'Archive'],
     options: [choice('level', 'Standard', [['2b', 'PDF/A-2b'], ['3b', 'PDF/A-3b']]), pdfPassword], run: each((f, o, c) => craft().toPdfA(f, o, c)) },
-  { id: 'compare-pdf', cat: 'pdf', name: 'Compare PDF', desc: 'Show what changed between two versions. Put the older one first.', accepts: ['pdf'], min: 2, max: 2, ordered: true, ext: 'pdf', suffix: ' - compared', craft: 'pdfcraft',
+  { id: 'compare-pdf', cat: 'pdf', name: 'Compare PDF', desc: 'Show what changed between two versions. Put the older one first.', accepts: ['pdf'], min: 2, max: 2, ordered: true, ext: 'pdf', suffix: ' - compared', craft: 'pdfcraft', petal: ['Compare', '2 versions'],
     options: [choice('output', 'Result', [['marked', 'Marked-up copy'], ['report', 'List of changes']])], run: async (files, o, c) => [await craft().comparePdf(files, o, c)] },
-  { id: 'make-fillable', cat: 'pdf', name: 'Make PDF fillable', desc: 'Turn blank lines and boxes into form fields.', accepts: ['pdf'], ext: 'pdf', suffix: '-fillable', craft: 'pdfcraft', options: [pdfPassword], run: each((f, o, c) => craft().makeFillable(f, o, c)) },
-  { id: 'scan-to-pdf', cat: 'pdf', name: 'Scan to PDF', desc: 'Straighten photos of documents into a clean, searchable PDF.', accepts: IMAGE_IN, ordered: true, ext: 'pdf', craft: 'pdfcraft',
+  { id: 'make-fillable', cat: 'pdf', name: 'Make PDF fillable', desc: 'Turn blank lines and boxes into form fields.', accepts: ['pdf'], ext: 'pdf', suffix: '-fillable', craft: 'pdfcraft', petal: ['Fillable', 'Form'], options: [pdfPassword], run: each((f, o, c) => craft().makeFillable(f, o, c)) },
+  { id: 'scan-to-pdf', cat: 'pdf', name: 'Scan to PDF', desc: 'Straighten photos of documents into a clean, searchable PDF.', accepts: IMAGE_IN, ordered: true, ext: 'pdf', craft: 'pdfcraft', petal: ['Scan', 'Clean PDF'],
     options: [choice('mode', 'Look', [['greyscale', 'Greyscale'], ['colour', 'Colour'], ['bw', 'Black & white']]), toggle('ocr', 'Make text searchable', true), select('lang', 'Language', LANGS, 'eng', { when: { ocr: true } })],
     run: async (files, o, c) => {
       const out = c.out.file(files[0], `${U.base(files[0])}${files.length > 1 ? ` and ${files.length - 1} more` : ''} - scan.pdf`);
@@ -211,13 +220,13 @@ const TOOLS = [
       if (U.groupOf(f) === 'raw' && o.develop !== false && ['jpg', 'png', 'tiff', 'avif', 'webp'].includes(o.to)) return craft().develop(f, { to: o.to === 'tiff' ? 'tif' : o.to, quality: o.quality }, c).catch(() => img().convert(f, o, c));
       return img().convert(f, o, c);
     }) },
-  { id: 'develop-raw', cat: 'image', name: 'Develop RAW', desc: 'LightCraft develops camera RAW into a finished photo.', accepts: ['raw', 'image'], craft: 'lightcraft', ext: (o) => o.to,
+  { id: 'develop-raw', cat: 'image', name: 'Develop RAW', desc: 'LightCraft develops camera RAW into a finished photo.', accepts: ['raw', 'image'], craft: 'lightcraft', petal: ['Develop', 'Options'], ext: (o) => o.to,
     options: [select('to', 'Save as', [['jpg', 'JPG'], ['tif', 'TIFF (16-bit)'], ['png', 'PNG'], ['avif', 'AVIF'], ['jxl', 'JPEG XL'], ['dng', 'DNG']]), toggle('auto', 'Auto-adjust light and colour', true), num('size', 'Long edge (px)', '', { placeholder: 'Full size' }), range('quality', 'Quality', 92, 50, 100, { unit: '%' })],
     run: each((f, o, c) => craft().develop(f, o, c)) },
-  { id: 'enhance-photo', cat: 'image', name: 'Auto enhance', desc: 'LightCraft balances exposure, contrast and colour.', accepts: ['raw', 'image'], craft: 'lightcraft', ext: (o, files) => (['png', 'tif', 'tiff'].includes(U.ext(files[0] || '')) ? 'png' : 'jpg'), suffix: '-enhanced',
+  { id: 'enhance-photo', cat: 'image', name: 'Auto enhance', desc: 'LightCraft balances exposure, contrast and colour.', accepts: ['raw', 'image'], craft: 'lightcraft', petal: ['Enhance', 'Auto'], ext: (o, files) => (['png', 'tif', 'tiff'].includes(U.ext(files[0] || '')) ? 'png' : 'jpg'), suffix: '-enhanced',
     run: each((f, o, c) => craft().develop(f, { to: ['png', 'tif', 'tiff'].includes(U.ext(f)) ? 'png' : 'jpg', auto: true, quality: 92 }, c)) },
-  { id: 'hdr-merge', cat: 'image', name: 'HDR merge', desc: 'Blend bracketed exposures into one HDR photo.', accepts: ['raw', 'image'], min: 2, craft: 'lightcraft', ext: 'jpg', suffix: '-HDR', run: async (files, o, c) => [await craft().merge(files, { mode: 'hdr' }, c)] },
-  { id: 'panorama', cat: 'image', name: 'Panorama', desc: 'Stitch overlapping photos into one wide image.', accepts: ['raw', 'image'], min: 2, craft: 'lightcraft', ext: 'jpg', suffix: '-Pano', run: async (files, o, c) => [await craft().merge(files, { mode: 'panorama' }, c)] },
+  { id: 'hdr-merge', cat: 'image', name: 'HDR merge', desc: 'Blend bracketed exposures into one HDR photo.', accepts: ['raw', 'image'], min: 2, craft: 'lightcraft', petal: ['HDR', 'Merge'], ext: 'jpg', suffix: '-HDR', run: async (files, o, c) => [await craft().merge(files, { mode: 'hdr' }, c)] },
+  { id: 'panorama', cat: 'image', name: 'Panorama', desc: 'Stitch overlapping photos into one wide image.', accepts: ['raw', 'image'], min: 2, craft: 'lightcraft', petal: ['Panorama', 'Stitch'], ext: 'jpg', suffix: '-Pano', run: async (files, o, c) => [await craft().merge(files, { mode: 'panorama' }, c)] },
   { id: 'compress-image', cat: 'image', name: 'Compress image', desc: 'Smaller JPG, PNG, WebP and GIF files.', accepts: IMAGE_IN, suffix: '-compressed', ext: (o, files) => { const e = U.ext(files[0] || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'jpg'; },
     options: [level(), num('maxSide', 'Longest side (px)', '', { advanced: true, placeholder: 'Keep size' })], run: each((f, o, c) => img().compress(f, o, c)) },
   { id: 'resize-image', cat: 'image', name: 'Resize image', desc: 'Exact pixels or a percentage.', accepts: IMAGE_IN, suffix: '-resized', ext: (o, files) => keepExt(files[0]),
@@ -335,10 +344,10 @@ const TOOLS = [
     run: async (files, o, c) => [await media().imagesToVideo(files, o, c)] },
   { id: 'convert-subtitles', cat: 'media', name: 'Convert subtitles', desc: 'SRT, VTT, ASS, SAMI, LRC, TTML, MicroDVD and SCC, in any encoding, to UTF-8.', accepts: ['subtitle'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['srt', 'SRT'], ['vtt', 'WebVTT'], ['ass', 'ASS'], ['smi', 'SAMI'], ['lrc', 'LRC'], ['ttml', 'TTML'], ['sub', 'MicroDVD']])], run: each((f, o, c) => subs().convert(f, o, c)) },
-  { id: 'render-motion', cat: 'media', name: 'Render animation', desc: 'EffectCraft renders Lottie and EffectCraft projects to video.', accepts: ['motion'], craft: 'effectcraft', ext: (o) => o.to,
+  { id: 'render-motion', cat: 'media', name: 'Render animation', desc: 'EffectCraft renders Lottie and EffectCraft projects to video.', accepts: ['motion'], craft: 'effectcraft', petal: ['Render', 'Video'], ext: (o) => o.to,
     options: [select('to', 'Render as', [['mp4', 'MP4'], ['gif', 'GIF'], ['webm', 'WebM'], ['mov', 'MOV (ProRes)']]), select('resolution', 'Resolution', [['full', 'Full'], ['half', 'Half'], ['quarter', 'Quarter']])],
     run: each((f, o, c) => craft().motion(f, o, c)) },
-  { id: 'convert-timeline', cat: 'media', name: 'Convert timeline', desc: 'FilmCraft converts and renders editing timelines.', accepts: ['timeline'], craft: 'filmcraft', ext: (o) => o.to,
+  { id: 'convert-timeline', cat: 'media', name: 'Convert timeline', desc: 'FilmCraft converts and renders editing timelines.', accepts: ['timeline'], craft: 'filmcraft', petal: ['Convert', 'Timeline'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['mp4', 'MP4 (render)'], ['fcpxml', 'Final Cut (FCPXML)'], ['xml', 'Premiere / Resolve (XML)'], ['otio', 'OpenTimelineIO'], ['edl', 'EDL'], ['aaf', 'Avid (AAF)']])],
     run: each((f, o, c) => craft().timeline(f, o, c)) },
 
@@ -378,7 +387,7 @@ const TOOLS = [
   { id: 'merge-sheets', cat: 'docs', name: 'Merge spreadsheets', desc: 'One workbook, or stacked rows.', accepts: ['sheet'], min: 2, ordered: true, ext: 'xlsx', stem: 'Merged workbook',
     options: [choice('mode', 'How', [['sheets', 'Sheet per file'], ['stack', 'Stack rows']]), toggle('skipHeaders', 'Keep one header row', true, { when: { mode: 'stack' } })],
     run: async (files, o, c) => [await office().mergeSheets(files, o, c)] },
-  { id: 'convert-layout', cat: 'docs', name: 'Convert layout', desc: 'DesignCraft exports InDesign IDML and INDD to PDF, images, EPUB or PowerPoint.', accepts: ['layout'], craft: 'designcraft', ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
+  { id: 'convert-layout', cat: 'docs', name: 'Convert layout', desc: 'DesignCraft exports InDesign IDML and INDD to PDF, images, EPUB or PowerPoint.', accepts: ['layout'], craft: 'designcraft', petal: ['Export', 'PDF & more'], ext: (o) => o.to, folderWhen: { to: 'png' }, suffix: '',
     options: [select('to', 'Export as', [['pdf', 'PDF'], ['png', 'Page images'], ['epub', 'EPUB'], ['pptx', 'PowerPoint'], ['idml', 'IDML']])], run: each((f, o, c) => craft().layout(f, o, c)) },
 
   { id: 'convert-email', cat: 'docs', name: 'Convert e-mail', desc: 'EML and Outlook MSG to PDF, a web page or text, safely offline.', accepts: ['mail'], ext: (o) => o.to,
@@ -393,7 +402,7 @@ const TOOLS = [
   { id: 'font-info', cat: 'docs', name: 'Font info', desc: 'Family, style, glyphs, characters and embedding rights.', accepts: ['font'], save: 'none',
     options: [toggle('save', 'Save a report', false)], run: each((f, o, c) => fonts().report(f, o, c)) },
 
-  { id: 'convert-vector', cat: 'cad', name: 'Convert vector', desc: 'VectorCraft converts AI, EPS, SVG, PDF, DXF, EMF and Affinity files.', accepts: ['vector'], extAccept: ['svg', 'svgz', 'pdf', 'dxf'], craft: 'vectorcraft', ext: (o) => o.to,
+  { id: 'convert-vector', cat: 'cad', name: 'Convert vector', desc: 'VectorCraft converts AI, EPS, SVG, PDF, DXF, EMF and Affinity files.', accepts: ['vector'], extAccept: ['svg', 'svgz', 'pdf', 'dxf'], craft: 'vectorcraft', petal: ['Convert', 'Format'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['svg', 'SVG'], ['pdf', 'PDF'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['png', 'PNG'], ['dxf', 'DXF'], ['emf', 'EMF'], ['psd', 'Photoshop (PSD)']]), num('scale', 'Image scale', 2, { when: { to: ['png', 'psd'] }, min: 1 }), toggle('outlineText', 'Text as outlines', false, { when: { to: 'svg' }, advanced: true })],
     run: each((f, o, c) => craft().vector(f, o, c)) },
   { id: 'convert-cad', cat: 'cad', name: 'Convert drawing', desc: 'DWG and DXF to PDF, SVG, PNG, DXF, AI or EPS.', accepts: ['cad2d'], ext: (o) => o.to,
@@ -443,6 +452,78 @@ const TOOLS = [
       }
       return [{ path: out[0], paths: out, note: `Renamed ${out.length} file${out.length === 1 ? '' : 's'}`, inPlace: true }];
     } },
+  // One-click actions from the seven ArtCraft apps: each sits on its app's ring in the wheel (Apps), lowest `prio`
+  // first, and in All tools. They run the app's own engine headless.
+  { id: 'auto-tone', cat: 'image', name: 'Auto tone', desc: 'PhotoCraft fixes dull, flat or colour-cast photos.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 10, petal: ['Auto tone', 'Fix colour'], ext: photoExt, suffix: '-autotone', run: each((f, o, c) => craft().autoTone(f, o, c)) },
+  { id: 'sharpen-photo', cat: 'image', name: 'Sharpen', desc: 'PhotoCraft Smart Sharpen brings back crisp detail.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 12, petal: ['Sharpen', 'Detail'], ext: photoExt, suffix: '-sharpened',
+    options: [range('amount', 'Amount', 120, 50, 300, { unit: '%', advanced: true }), range('radius', 'Radius', 1.5, 0.5, 3, { step: 0.1, unit: 'px', advanced: true })], run: each((f, o, c) => craft().sharpenPhoto(f, o, c)) },
+  { id: 'denoise-photo', cat: 'image', name: 'Reduce noise', desc: 'PhotoCraft removes grain and JPEG blocks.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 14, petal: ['Denoise', 'Grain'], ext: photoExt, suffix: '-denoised',
+    options: [range('strength', 'Strength', 10, 1, 10, { advanced: true })], run: each((f, o, c) => craft().denoisePhoto(f, o, c)) },
+  { id: 'lift-shadows', cat: 'image', name: 'Lift shadows', desc: 'PhotoCraft brightens dark areas and keeps the sky.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 16, petal: ['Shadows', 'Lift'], ext: photoExt, suffix: '-shadows',
+    options: [range('amount', 'Amount', 50, 0, 100, { unit: '%', advanced: true })], run: each((f, o, c) => craft().liftShadows(f, o, c)) },
+  { id: 'paint-photo', cat: 'image', name: 'Paint look', desc: 'Oil, watercolour, poster, ink or coloured pencil, by PhotoCraft.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 18, petal: ['Paint', 'Looks'], ext: photoExt, outName: (files, o) => `${U.base(files[0])}-${o.look || 'oil'}.${photoExt(o, files)}`,
+    options: [choice('look', 'Look', [['oil', 'Oil'], ['watercolor', 'Watercolour'], ['poster', 'Poster'], ['ink', 'Ink'], ['pencil', 'Pencil']])], run: each((f, o, c) => craft().paintPhoto(f, o, c)) },
+  { id: 'split-scans', cat: 'image', name: 'Split scans', desc: 'Cut each photo out of a flatbed scan and straighten it.', accepts: [], extAccept: PHOTO_EXT, craft: 'photocraft', prio: 20, petal: ['Split scan', 'Photos'], save: 'folder', suffix: ' - photos', run: each((f, o, c) => craft().straightenScans(f, o, c)) },
+  { id: 'export-layers', cat: 'image', name: 'Export layers', desc: 'Each visible layer of a PSD as its own transparent PNG.', accepts: [], extAccept: LAYERED_EXT, craft: 'photocraft', prio: 22, petal: ['Layers', 'Export'], save: 'folder', suffix: ' - layers',
+    options: [toggle('hidden', 'Hidden layers too', false, { advanced: true })], run: each((f, o, c) => craft().exportLayers(f, o, c)) },
+  { id: 'layer-info', cat: 'image', name: 'Layer list', desc: 'Size, mode and every layer of a PSD, as text.', accepts: [], extAccept: LAYERED_EXT, craft: 'photocraft', prio: 24, petal: ['Layer list', 'Info'], save: 'none', run: each((f, o, c) => craft().layerInfo(f, o, c)) },
+
+  { id: 'photo-look', cat: 'image', name: 'Apply look', desc: 'One of LightCraft’s 41 looks: film, black & white, golden hour and more.', accepts: ['raw'], extAccept: LIGHT_EXT, craft: 'lightcraft', prio: 10, petal: ['Looks', '41 presets'], ext: lightExt,
+    outName: (files, o) => `${U.base(files[0])}-${String(o.preset || 'lc.vivid-pop').replace(/^lc\./, '')}.${lightExt(o, files)}`,
+    options: [select('preset', 'Look', LIGHT_LOOK_CHOICES, 'lc.vivid-pop')], run: each((f, o, c) => craft().lookPhoto(f, o, c)) },
+  { id: 'smart-bw', cat: 'image', name: 'Smart B&W', desc: 'LightCraft mixes black & white from the photo’s own colours.', accepts: ['raw'], extAccept: LIGHT_EXT, craft: 'lightcraft', prio: 14, petal: ['B&W', 'Smart mix'], ext: lightExt, suffix: '-bw', run: each((f, o, c) => craft().smartBw(f, o, c)) },
+  { id: 'straighten-photo', cat: 'image', name: 'Straighten', desc: 'LightCraft levels a tilted horizon and crops the edges.', accepts: ['raw'], extAccept: LIGHT_EXT, craft: 'lightcraft', prio: 16, petal: ['Straighten', 'Level'], ext: lightExt, suffix: '-straight', run: each((f, o, c) => craft().straightenPhoto(f, o, c)) },
+  { id: 'remove-dust', cat: 'image', name: 'Remove dust', desc: 'LightCraft finds and heals sensor-dust spots.', accepts: ['raw'], extAccept: LIGHT_EXT, craft: 'lightcraft', prio: 18, petal: ['Dust', 'Remove'], ext: lightExt, suffix: '-clean',
+    options: [range('sensitivity', 'Sensitivity', 50, 0, 100, { advanced: true })], run: each((f, o, c) => craft().removeDust(f, o, c)) },
+  { id: 'hdr-batch', cat: 'image', name: 'HDR sets', desc: 'Merge every bracketed set in a folder or a pile of shots.', accepts: ['folder', 'raw', 'image'], craft: 'lightcraft', prio: 30, petal: ['HDR sets', 'Folder'], save: 'folder', suffix: ' - HDR',
+    ok: (files) => (files.length === 1 && groupOf(files[0]) === 'folder') || (files.length >= 3 && !files.some((f) => groupOf(f) === 'folder')), run: async (files, o, c) => [await craft().hdrBatch(files, o, c)] },
+
+  { id: 'trace-image', cat: 'cad', name: 'Trace to vector', desc: 'VectorCraft turns a picture or logo into clean, scalable shapes.', accepts: [], extAccept: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'tif', 'tiff', 'bmp', 'psd'], craft: 'vectorcraft', prio: 10, ext: (o) => o.to || 'svg', suffix: '',
+    petals: [['Trace', 'To SVG', { style: 'auto', to: 'svg' }], ['Trace logo', 'Flat colours', { style: 'logo', to: 'svg' }]],
+    options: [select('style', 'Style', [['auto', 'Colour (auto)'], ['logo', 'Flat logo'], ['colors16', '16 colours'], ['bw', 'Black & white'], ['lineart', 'Line art'], ['sketch', 'Sketch'], ['photo', 'Photo (detailed, large)']]), choice('to', 'Save as', [['svg', 'SVG'], ['ai', 'AI'], ['pdf', 'PDF'], ['eps', 'EPS']]), toggle('transparent', 'Drop the white background', false, { advanced: true })],
+    run: each((f, o, c) => craft().traceImage(f, o, c)) },
+  { id: 'outline-text', cat: 'cad', name: 'Outline text', desc: 'VectorCraft turns text into shapes, so it prints without the fonts.', accepts: [], extAccept: ['ai', 'eps', 'svg', 'pdf'], craft: 'vectorcraft', prio: 12, petal: ['Outline', 'Text'], ext: (o, files) => (['svg', 'ai', 'eps', 'pdf'].includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'pdf'), suffix: '-outlined', run: each((f, o, c) => craft().outlineText(f, o, c)) },
+  { id: 'export-artboards', cat: 'cad', name: 'Export artboards', desc: 'Every artboard as its own picture.', accepts: [], extAccept: ['ai', 'svg', 'pdf', 'eps', 'vectorcraft'], craft: 'vectorcraft', prio: 14, petal: ['Artboards', 'PNG'], save: 'folder', suffix: ' - artboards',
+    options: [choice('to', 'Format', [['png', 'PNG'], ['jpg', 'JPG'], ['svg', 'SVG'], ['pdf', 'PDF']]), range('scale', 'Scale', 2, 1, 4, { unit: '×', when: { to: ['png', 'jpg'] }, advanced: true })], run: each((f, o, c) => craft().exportArtboards(f, o, c)) },
+  { id: 'logo-package', cat: 'cad', name: 'Logo package', desc: 'SVG, PNG at 1× and 2×, PDF and a print PDF, in one folder.', accepts: [], extAccept: ['ai', 'svg', 'pdf', 'eps', 'vectorcraft'], craft: 'vectorcraft', prio: 16, petal: ['Logo kit', 'All sizes'], save: 'folder', suffix: ' - logo package', run: each((f, o, c) => craft().logoPackage(f, o, c)) },
+  { id: 'vector-info', cat: 'cad', name: 'Vector info', desc: 'Artboards, colour mode, objects and fonts, with any that are missing.', accepts: ['vector'], extAccept: ['ai', 'svg', 'pdf', 'eps'], craft: 'vectorcraft', prio: 30, petal: ['Info', 'Fonts'], save: 'none', run: each((f, o, c) => craft().vectorInfo(f, o, c)) },
+
+  { id: 'preflight-layout', cat: 'docs', name: 'Preflight', desc: 'DesignCraft checks for overset text, low-resolution pictures and missing links.', accepts: ['layout'], craft: 'designcraft', prio: 10, petal: ['Preflight', 'Check'], save: 'none',
+    options: [num('minPpi', 'Lowest picture resolution (ppi)', 150, { advanced: true })], run: each((f, o, c) => craft().preflightLayout(f, o, c)) },
+  { id: 'layout-pdf', cat: 'docs', name: 'Print or web PDF', desc: 'A press-ready PDF/X-4 with bleed and marks, or a small tagged PDF for screens.', accepts: ['layout'], craft: 'designcraft', prio: 12, ext: 'pdf', outName: (files, o) => `${U.base(files[0])}-${o.preset === 'web' ? 'web' : 'print'}.pdf`,
+    petals: [['Print PDF', 'Bleed & marks', { preset: 'print' }], ['Web PDF', 'Small', { preset: 'web' }]], options: [choice('preset', 'For', [['print', 'Print'], ['web', 'Screen']])], run: each((f, o, c) => craft().layoutPdf(f, o, c)) },
+  { id: 'package-layout', cat: 'docs', name: 'Package', desc: 'The document with its pictures, fonts, an IDML and a PDF, ready to hand over.', accepts: ['layout'], craft: 'designcraft', prio: 14, petal: ['Package', 'Hand over'], save: 'folder', suffix: ' Folder', run: each((f, o, c) => craft().packageLayout(f, o, c)) },
+  { id: 'fixed-epub', cat: 'docs', name: 'Fixed-layout EPUB', desc: 'An e-book that keeps every page exactly as designed.', accepts: ['layout'], craft: 'designcraft', prio: 16, petal: ['EPUB', 'Fixed'], ext: 'epub', suffix: '-fixed', run: each((f, o, c) => craft().fixedEpub(f, o, c)) },
+  { id: 'booklet-pdf', cat: 'docs', name: 'Booklet', desc: 'Pages put in booklet order: print double-sided, fold and staple.', accepts: ['layout'], craft: 'designcraft', prio: 18, petal: ['Booklet', 'Fold'], ext: 'pdf', suffix: '-booklet', run: each((f, o, c) => craft().bookletPdf(f, o, c)) },
+
+  { id: 'poster-frame', cat: 'media', name: 'Poster frame', desc: 'A still picture from the middle of the animation.', accepts: ['motion'], craft: 'effectcraft', prio: 10, petal: ['Poster', 'PNG'], ext: 'png', suffix: '-poster',
+    options: [toggle('transparent', 'Transparent background', true, { advanced: true })], run: each((f, o, c) => craft().posterFrame(f, o, c)) },
+  { id: 'alpha-render', cat: 'media', name: 'Transparent video', desc: 'A GIF or ProRes 4444 MOV that keeps the animation’s transparency.', accepts: ['motion'], craft: 'effectcraft', prio: 12, ext: (o) => (o.to === 'mov' ? 'mov' : 'gif'), outName: (files, o) => `${U.base(files[0])}-transparent.${o.to === 'mov' ? 'mov' : 'gif'}`,
+    petals: [['Alpha GIF', 'Transparent', { to: 'gif' }], ['Alpha MOV', 'ProRes 4444', { to: 'mov' }]], options: [choice('to', 'Format', [['gif', 'GIF'], ['mov', 'MOV (ProRes 4444)']])], run: each((f, o, c) => craft().alphaRender(f, o, c)) },
+  { id: 'frame-sequence', cat: 'media', name: 'PNG frames', desc: 'Every frame as a transparent PNG.', accepts: ['motion'], craft: 'effectcraft', prio: 14, petal: ['Frames', 'PNG'], save: 'folder', suffix: ' - frames',
+    options: [select('resolution', 'Size', [['full', 'Full'], ['half', 'Half']], 'full', { advanced: true })], run: each((f, o, c) => craft().frameSequence(f, o, c)) },
+  { id: 'motion-info', cat: 'media', name: 'Animation info', desc: 'Size, length, frame rate and layers.', accepts: ['motion'], craft: 'effectcraft', prio: 30, petal: ['Info', 'Layers'], save: 'none', run: each((f, o, c) => craft().motionInfo(f, o, c)) },
+
+  { id: 'split-scenes', cat: 'media', name: 'Split scenes', desc: 'FilmCraft finds each cut and saves every shot as its own clip.', accepts: ['video'], craft: 'filmcraft', prio: 10, petal: ['Scenes', 'Split'], save: 'folder', suffix: ' - scenes',
+    options: [range('sensitivity', 'Sensitivity', 50, 1, 100, { advanced: true })], run: each((f, o, c) => craft().splitScenes(f, o, c)) },
+  { id: 'clean-voice', cat: 'media', name: 'Clean voice', desc: 'FilmCraft takes background noise and rumble out of speech.', accepts: ['video', 'audio'], craft: 'filmcraft', prio: 12, petal: ['Clean voice', 'Noise'],
+    ext: (o, files) => (groupOf(files[0] || '') === 'video' ? 'mp4' : ['wav', 'aif', 'aiff', 'flac'].includes(U.ext(files[0] || '')) ? 'wav' : 'm4a'), suffix: '-clean', run: each((f, o, c) => craft().cleanVoice(f, o, c)) },
+  { id: 'video-look', cat: 'media', name: 'Colour grade', desc: 'One of FilmCraft’s film looks, applied to the whole video.', accepts: ['video'], craft: 'filmcraft', prio: 14, petal: ['Grade', 'Looks'], ext: 'mp4', suffix: '-graded',
+    options: [select('look', 'Look', VIDEO_LOOK_CHOICES)], run: each((f, o, c) => craft().videoLook(f, o, c)) },
+  { id: 'edit-ready', cat: 'media', name: 'Edit-ready copy', desc: 'ProRes or DNxHR, which editing apps play back and scrub smoothly.', accepts: ['video'], craft: 'filmcraft', prio: 16, petal: ['ProRes', 'Edit-ready', { codec: 'prores' }], ext: 'mov', outName: (files, o) => `${U.base(files[0])}-${o.codec === 'dnxhr' ? 'dnxhr' : 'prores'}.mov`,
+    options: [choice('codec', 'Codec', [['prores', 'ProRes 422'], ['dnxhr', 'DNxHR (Avid)']])], run: each((f, o, c) => craft().editReady(f, o, c)) },
+  { id: 'media-info', cat: 'media', name: 'Media info', desc: 'Codecs, size, frame rate, colour and audio tracks.', accepts: ['video', 'audio'], craft: 'filmcraft', prio: 30, petal: ['Info', 'Codecs'], save: 'none', run: each((f, o, c) => craft().mediaInfo(f, o, c)) },
+
+  { id: 'sanitize-pdf', cat: 'pdf', name: 'Remove hidden data', desc: 'PdfCraft strips metadata, attachments, comments, scripts and hidden layers.', accepts: ['pdf'], craft: 'pdfcraft', prio: 12, petal: ['Sanitize', 'Hidden data'], suffix: '-sanitized', ext: 'pdf', options: [pdfPassword], run: each((f, o, c) => craft().sanitizePdf(f, o, c)) },
+  { id: 'bates-pdf', cat: 'pdf', name: 'Bates numbers', desc: 'Legal page numbers like ABC000001 on every page.', accepts: ['pdf'], craft: 'pdfcraft', prio: 18, petal: ['Bates', 'Numbers'], suffix: '-bates', ext: 'pdf',
+    options: [text('prefix', 'Prefix', '', { placeholder: 'ABC' }), num('start', 'First number', 1), num('digits', 'Digits', 6, { advanced: true }), text('suffix', 'Suffix', '', { advanced: true }), choice('position', 'Position', [['right', 'Right'], ['center', 'Centre'], ['left', 'Left']], 'right', { advanced: true }), pdfPassword],
+    run: each((f, o, c) => craft().batesPdf(f, o, c)) },
+  { id: 'word-count', cat: 'pdf', name: 'Word count', desc: 'Words and characters, page by page.', accepts: ['pdf'], craft: 'pdfcraft', prio: 20, petal: ['Words', 'Count'], save: 'none', options: [pdfPassword], run: each((f, o, c) => craft().wordCount(f, o, c)) },
+  { id: 'print-check', cat: 'pdf', name: 'Print check', desc: 'Low-resolution pictures, missing fonts and other print problems.', accepts: ['pdf'], craft: 'pdfcraft', prio: 22, petal: ['Print', 'Check'], save: 'none', options: [pdfPassword], run: each((f, o, c) => craft().printCheck(f, o, c)) },
+  { id: 'link-urls', cat: 'pdf', name: 'Link web addresses', desc: 'Make every web and e-mail address in the text clickable.', accepts: ['pdf'], craft: 'pdfcraft', prio: 24, petal: ['Links', 'From URLs'], suffix: '-linked', ext: 'pdf', options: [pdfPassword], run: each((f, o, c) => craft().linkUrls(f, o, c)) },
+  { id: 'split-chapters', cat: 'pdf', name: 'Split at bookmarks', desc: 'One PDF per chapter, following the bookmarks.', accepts: ['pdf'], craft: 'pdfcraft', prio: 26, petal: ['Chapters', 'Split'], save: 'folder', suffix: ' - chapters', options: [pdfPassword], run: each((f, o, c) => craft().splitChapters(f, o, c)) },
+  { id: 'access-check', cat: 'pdf', name: 'Accessibility check', desc: 'Tags, reading order, alternative text and more, checked.', accepts: ['pdf'], craft: 'pdfcraft', prio: 28, petal: ['Access', 'Check'], save: 'none', options: [pdfPassword], run: each((f, o, c) => craft().accessCheck(f, o, c)) },
+  { id: 'comment-summary', cat: 'pdf', name: 'Comment summary', desc: 'Every comment in the PDF, listed by page in a new PDF.', accepts: ['pdf'], craft: 'pdfcraft', prio: 30, petal: ['Comments', 'Summary'], suffix: ' - comments', ext: 'pdf', options: [pdfPassword], run: each((f, o, c) => craft().commentSummary(f, o, c)) },
 ];
 function keepExt(f) { const e = U.ext(f || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'png'; }
 
@@ -561,12 +642,13 @@ const MULTI = {
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
   media: [W('add-audio', 'Soundtrack', 'Replace', { mode: 'replace' }), W('add-audio', 'Mix', 'Add music', { mode: 'mix' }), W('merge-media', 'Merge', 'One video')],
 };
-const SINGLE_OUTPUT = new Set(['scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
+const SINGLE_OUTPUT = new Set(['hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);
 function accepts(t, files) {
   if (!t || t.noFiles) return false;
+  if (t.ok && !t.ok(files)) return false;
   if (t.max && files.length > t.max) return false;
   if (t.min && files.length < t.min) return false;
   if (t.extAccept && files.every((f) => t.extAccept.includes(U.ext(f)))) return true;
@@ -574,6 +656,8 @@ function accepts(t, files) {
   return groupsOf(files).every((g) => t.accepts.includes(g));
 }
 const toolsFor = (files) => TOOLS.filter((t) => accepts(t, files)).map((t) => t.id);
+// The extensions a tool takes, for the file chooser it opens when picked with no files.
+const extsFor = (t) => (t.accepts.includes('any') ? [] : [...new Set([...t.accepts.flatMap((g) => [...(U.GROUPS[g] || []), ...(MORE_GROUPS[g] || [])]), ...(t.extAccept || [])])]);
 const dedupe = (list) => list.filter((w, i) => list.findIndex((x) => x.tool === w.tool && x.label === w.label) === i);
 function wheelsFor(files) {
   const gs = groupsOf(files);
@@ -593,7 +677,7 @@ function wheelsFor(files) {
   const tools = [...multi, ...(g === 'mixed' ? [] : base.tools.filter((w) => !get(w.tool)?.editor).slice(0, 5)), all];
   return { convert: dedupe(convert.filter(ok)).slice(0, 10), tools: dedupe(tools.filter(ok)).slice(0, 10) };
 }
-const catalog = () => TOOLS.map(({ run, ext, single, outName, ...meta }) => (FFMPEG_TARGETS.has(meta.id) ? { ...meta, options: meta.options.map((o) => (o.key === 'to' ? { ...o, choices: o.choices.filter(([v]) => media().supports(v)) } : o)) } : meta));
+const catalog = () => TOOLS.map(({ run, ext, single, outName, ok, ...meta }) => (FFMPEG_TARGETS.has(meta.id) ? { ...meta, options: meta.options.map((o) => (o.key === 'to' ? { ...o, choices: o.choices.filter(([v]) => media().supports(v)) } : o)) } : meta));
 function suggest(id, files, opts = {}) {
   const t = get(id);
   if (!t || t.save === 'none' || t.save === 'inplace' || t.editor) return { kind: 'none' };
@@ -614,4 +698,4 @@ function suggest(id, files, opts = {}) {
   return { kind: 'file', name: `${name}${suffix}.${e}`, ext: e };
 }
 
-module.exports = { TOOLS, catalog, get, toolsFor, wheelsFor, groupOf, groupsOf, suggest, accepts };
+module.exports = { TOOLS, catalog, get, toolsFor, extsFor, wheelsFor, groupOf, groupsOf, suggest, accepts };

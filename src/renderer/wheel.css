@@ -27,7 +27,7 @@ html, body { background: transparent !important; overflow: hidden; }
 .s-bezel-in { stop-color: var(--bezel-in); } .s-bezel { stop-color: var(--bezel); } .s-bezel-out { stop-color: var(--bezel-out); }
 
 #stage { position: absolute; left: 0; top: 0; width: var(--w); height: var(--h); transform-origin: 0 0; transform: scale(var(--k, 1)); }
-.wheel { position: absolute; left: calc(var(--cx) - 150px); top: calc(var(--cy) - 150px); width: 300px; height: 300px; transform: scale(var(--ws, 1)); transition: transform .42s var(--spring); }
+.wheel { position: absolute; left: calc(var(--cx) - 150px); top: calc(var(--cy) - 150px); width: 300px; height: 300px; transform: scale(var(--ws, 1)); transition: transform .42s var(--spring); will-change: transform; }
 .wheel::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; background: rgba(128, 128, 128, .012); }
 .wheel::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; box-shadow: 0 16px 34px -8px var(--drop), 0 3px 8px -2px var(--drop); pointer-events: none; }
 .dial { position: relative; z-index: 1; width: 300px; height: 300px; overflow: visible; display: block; }
@@ -55,21 +55,25 @@ html, body { background: transparent !important; overflow: hidden; }
 .petal.hot .h { fill: var(--hot-hint); }
 .petal.press { transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .4)) scale(.975); transition-duration: .12s; }
 .petal.danger .l { fill: var(--danger); }
+.petal.off .l, .petal.off .h { opacity: .42; }
 .petal.dim { opacity: .4; }
 .open .petal, .ready .petal { animation: bloom .46s var(--spring) both; animation-delay: calc(var(--i) * 18ms); }
 .settled .petal { animation: none !important; }
 @keyframes bloom { from { opacity: 0; transform: scale(.84) rotate(-6deg); } }
 
 .idle .wheel, .idle .caption, .idle .pill, .idle .card { display: none; }
-.ready:not(.live) .petal text { display: none; }
-.ready:not(.live) .petal { pointer-events: none; }
-.ready:not(.live) .petal .glass { opacity: .78; }
+.ready:not(.live):not(.home) .petal text { display: none; }
+.ready:not(.live):not(.home) .petal { pointer-events: none; }
+.ready:not(.live):not(.home) .petal .glass { opacity: .78; }
 .over .halo { opacity: .85; stroke-width: 2.5; }
-.over:not(.live) .petal .tint { animation: chase 1.2s ease-in-out infinite; animation-delay: calc(var(--i) * .15s); }
+.over:not(.live):not(.home) .petal .tint { animation: chase 1.2s ease-in-out infinite; animation-delay: calc(var(--i) * .15s); }
 @keyframes chase { 0%, 60%, 100% { opacity: 0; } 15% { opacity: .55; } }
 .ready.over:not(.live) .wheel { --ws: 1.03 !important; }
 
 .tab { position: absolute; inset: 0; display: none; background: rgba(128, 128, 128, .012); cursor: grab; }
+/* While the wheel is carried: a grabbing hand, and nothing re-animates under it. */
+.moving, .moving * { cursor: grabbing !important; }
+.moving .petal { transition: none; }
 .idle .tab { display: block; }
 .tab-lime { position: absolute; left: 14px; top: 12px; width: 52px; height: 52px; transform: translateX(30px) rotate(0deg); transition: transform .5s var(--spring); filter: drop-shadow(0 6px 10px rgba(30, 60, 10, .32)) drop-shadow(0 1px 2px rgba(15, 23, 42, .3)); }
 .tab-lime > svg:not(.tab-ring), .tab-lime > img { display: block; }
@@ -79,6 +83,7 @@ html, body { background: transparent !important; overflow: hidden; }
 .tab-ring circle { fill: none; stroke: var(--green-2); stroke-width: 3.2; stroke-linecap: round; stroke-dasharray: 188.5; stroke-dashoffset: calc(188.5 * (1 - var(--p, 0))); opacity: 0; transition: stroke-dashoffset .3s var(--ease), opacity .3s; }
 .tab.working .tab-ring circle { opacity: 1; }
 .tab.working .tab-lime { transform: translateX(10px); }
+.tucking .tab { visibility: hidden; }
 .tuck-in .tab-lime { animation: tuckIn .62s var(--spring) both; }
 @keyframes tuckIn { from { transform: translateX(-18px) scale(1.5) rotate(140deg); opacity: .35; } }
 
@@ -98,6 +103,11 @@ html, body { background: transparent !important; overflow: hidden; }
 
 .center { position: absolute; z-index: 2; left: 50%; top: 50%; width: 108px; height: 108px; margin: -54px 0 0 -54px; border-radius: 50%; display: grid; place-items: center; text-align: center; pointer-events: none; line-height: 1.12; }
 .center > * { pointer-events: none; grid-area: 1 / 1; }
+.center [hidden] { display: none !important; }
+.center .vis { display: grid; place-items: center; }
+.center .vis > .thumb { animation: fade .18s ease both; }
+.center .glyph.app { width: 72px; height: 72px; border-radius: 20px; color: var(--app); }
+.center .glyph.app svg { width: 36px; height: 36px; }
 .center .logo { width: 96px; height: 96px; filter: drop-shadow(0 4px 8px rgba(20, 36, 8, .28)); transition: transform .5s var(--spring); }
 .over .center .logo { transform: scale(1.1) rotate(36deg); }
 .center .thumb { width: 66px; height: 66px; border-radius: 14px; object-fit: cover; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .14), 0 8px 18px -4px rgba(10, 20, 4, .4); transition: opacity .25s, transform .4s var(--spring); }
@@ -121,15 +131,21 @@ html, body { background: transparent !important; overflow: hidden; }
 .done .center { cursor: grab; }
 
 .pill { position: absolute; z-index: 3; left: 50%; top: 6px; transform: translateX(-50%); display: none; gap: 2px; padding: 3px; border-radius: 12px; background: var(--chip); backdrop-filter: blur(20px) saturate(1.8); box-shadow: inset 0 1px 0 var(--chip-line), 0 0 0 .5px rgba(0, 0, 0, .1), 0 8px 20px -8px rgba(0, 0, 0, .35); white-space: nowrap; }
-.open .pill, .card-open .pill, .ready.live .pill { display: flex; animation: drop .4s var(--spring) both; }
+.open .pill, .card-open .pill, .ready.live .pill, .ready.drilled .pill { display: flex; animation: drop .4s var(--spring) both; }
+.pill:empty { display: none !important; }
+.pill button { display: inline-flex; align-items: center; }
+.pill button .ic { display: inline-block; flex: none; width: 13px; height: 13px; margin: 0 3px 0 -5px; }
 .pill button { position: relative; overflow: hidden; height: 24px; padding: 0 13px; border: 0; border-radius: 9px; background: none; color: var(--chip-ink-2); font-size: 12px; font-weight: 650; letter-spacing: .005em; transition: background .2s var(--ease), color .15s, box-shadow .2s; }
 .pill button:hover { color: var(--chip-ink); }
 .pill button[aria-selected="true"] { background: rgba(255, 255, 255, .96); color: #12161a; box-shadow: 0 1px 3px rgba(0, 0, 0, .14), 0 0 0 .5px rgba(0, 0, 0, .06); }
 :root[data-theme="dark"] .pill button[aria-selected="true"] { background: rgba(255, 255, 255, .2); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12); }
 .pill button.dwell::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--lime-500); transform-origin: left; animation: dwell var(--dwell, .45s) linear both; }
 @keyframes dwell { from { transform: scaleX(0); } }
-.pill .x { width: 24px; padding: 0; display: grid; place-items: center; color: var(--chip-ink-2); }
-.ready .pill .x { display: none; }
+.close { position: absolute; z-index: 4; left: calc(var(--cx) + 114px); top: calc(var(--cy) - 142px); width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; display: none; place-items: center; color: var(--chip-ink-2); background: var(--chip); backdrop-filter: blur(16px) saturate(1.8); box-shadow: inset 0 1px 0 var(--chip-line), 0 0 0 .5px rgba(0, 0, 0, .1), 0 6px 14px -6px rgba(0, 0, 0, .35); cursor: pointer; transition: transform .2s var(--spring-soft), color .15s, background .15s; }
+.close:hover { color: var(--chip-ink); transform: scale(1.1); }
+.close:active { transform: scale(.94); }
+.ready .close, .open .close, .busy .close, .done .close, .failed .close { display: grid; animation: fade .3s ease both; }
+.pre .close, .folding .close { opacity: 0 !important; animation: none !important; }
 @keyframes drop { from { opacity: 0; transform: translate(-50%, -8px) scale(.94); } }
 
 .caption { position: absolute; z-index: 3; left: 14px; right: 14px; top: calc(var(--cy) + 157px); display: none; flex-direction: column; align-items: center; gap: 3px; text-align: center; pointer-events: none; }

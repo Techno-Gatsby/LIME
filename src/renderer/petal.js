@@ -24,14 +24,23 @@ export function labelAt(i, n, r) {
   const a = n === 1 ? Math.PI : (i * Math.PI * 2) / n;
   return at(a, n === 1 ? (r) : r);
 }
-export function hitIndex(x, y, n, rIn, rOut) {
-  const d = Math.hypot(x, y);
-  if (!n || d < rIn - 2 || d > rOut + 10) return -1;
+// `prev` is the slice lit now. It keeps a little extra reach, past its sides and its edges, so a pointer resting on a
+// border doesn't flip the highlight back and forth (the hysteresis of PhotoCraft's move_mods.rs `constrain`).
+export function hitIndex(x, y, n, rIn, rOut, prev = -1) {
+  const d = Math.hypot(x, y), held = prev >= 0 && prev < n;
+  const inside = d >= rIn - 2 && d <= rOut + 10;
+  if (!n || (!inside && !(held && d >= rIn - 10 && d <= rOut + 18))) return -1;
   if (n === 1) return 0;
   const step = (Math.PI * 2) / n;
   let a = Math.atan2(x, -y);
   if (a < 0) a += Math.PI * 2;
-  return Math.round(a / step) % n;
+  const k = Math.round(a / step) % n;
+  if (held && k !== prev) {
+    let off = Math.abs(a - prev * step) % (Math.PI * 2);
+    off = Math.min(off, Math.PI * 2 - off);
+    if (off < step / 2 + Math.min(step * 0.15, (8 * Math.PI) / 180)) return prev;
+  }
+  return inside || k === prev ? k : -1;
 }
 export function arc(r, frac) {
   const a = Math.min(0.9999, Math.max(0, frac)) * Math.PI * 2;

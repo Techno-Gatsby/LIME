@@ -444,6 +444,31 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   T('redact pdf', 'redact-pdf', ['doc.pdf'], { terms: 'Invoice', patterns: ['email'], boxes: true }, async ([o]) => { const t = await pdfText(o); ok(!t.includes('hello@example.com') && !t.includes('Invoice'), 'not redacted'); ok(t.includes('quick brown'), 'too much removed'); });
   T('audit pdf', 'audit-pdf', ['doc.pdf'], {}, (o, r) => ok(/No hidden text|fake redaction/.test(r[0].note), r[0].note));
+  // The ArtCraft apps' one-click actions, through Lime.
+  const grey = async (p) => { const st = await sharp(p).stats(); const [r, g, b] = st.channels; return Math.max(Math.abs(r.mean - g.mean), Math.abs(g.mean - b.mean)); };
+  T('photocraft auto tone', 'auto-tone', ['photo.jpg'], {}, async ([o]) => { const m = await fmt(o, 'jpeg'), src = await sharp(fx('photo.jpg')).metadata(); ok(m.width === src.width && m.height === src.height, `size ${m.width}×${m.height}`); });
+  const crisp = async (p) => { const { data } = await sharp(p).greyscale().convolve({ width: 3, height: 3, kernel: [0, -1, 0, -1, 4, -1, 0, -1, 0] }).raw().toBuffer({ resolveWithObject: true }); return data.reduce((a, v) => a + v, 0) / data.length; };
+  T('photocraft sharpen', 'sharpen-photo', ['photo.jpg'], {}, async ([o]) => { await fmt(o, 'jpeg'); const [a, b] = [await crisp(fx('photo.jpg')), await crisp(o)]; ok(b > a * 1.05, `edges ${a.toFixed(2)} → ${b.toFixed(2)}`); });
+  T('photocraft pencil look', 'paint-photo', ['photo.jpg'], { look: 'pencil' }, async ([o]) => { ok(/-pencil\.jpg$/.test(o), o); ok((await diff(o, fx('photo.jpg'))) > 5, 'barely changed'); });
+  T('photocraft export layers', 'export-layers', ['layers.psd'], {}, ([o], r) => { const pngs = files(o).filter((f) => f.endsWith('.png')); ok(pngs.length >= 1, `layers ${files(o)}`); ok(/layer/.test(r[0].note), r[0].note); });
+  T('photocraft layer list', 'layer-info', ['layers.psd'], {}, (o, r) => ok(/\d+ layers?/.test(r[0].note) && /Background/.test(r[0].text), `${r[0].note} / ${r[0].text}`));
+  T('lightcraft b&w look', 'photo-look', ['photo.jpg'], { preset: 'lc.bw-high-contrast' }, async ([o]) => { await fmt(o, 'jpeg'); ok((await grey(o)) < 3, 'still in colour'); });
+  T('lightcraft smart b&w', 'smart-bw', ['photo.jpg'], {}, async ([o]) => { const m = await fmt(o, 'jpeg'), src = await sharp(fx('photo.jpg')).metadata(); ok((await grey(o)) < 3, 'still in colour'); ok(m.width === src.width, `resized to ${m.width}`); });
+  T('vectorcraft trace', 'trace-image', ['cover.png'], { style: 'auto', to: 'svg' }, ([o], r) => { const t = txt(o); ok(/<path/.test(t) && !/<image/.test(t), 'not traced'); ok(/shape/.test(r[0].note), r[0].note); });
+  T('vectorcraft logo package', 'logo-package', ['logo.svg'], {}, ([o]) => { const all = files(o).flatMap((d) => (fs.statSync(path.join(o, d)).isDirectory() ? files(path.join(o, d)) : [d])); ok(all.some((f) => f.endsWith('.svg')) && all.some((f) => f.endsWith('.png')) && all.some((f) => f.endsWith('.pdf')), `package ${all}`); });
+  T('vectorcraft info', 'vector-info', ['logo.svg'], {}, (o, r) => ok(/artboard/.test(r[0].note) && /Artboards:/.test(r[0].text), r[0].note));
+  T('designcraft preflight', 'preflight-layout', ['layout.idml'], {}, (o, r) => ok(r[0].note && r[0].note.length > 5, r[0].note));
+  T('designcraft print pdf', 'layout-pdf', ['layout.idml'], { preset: 'print' }, async ([o]) => { ok(/-print\.pdf$/.test(o), o); ok((await pages(o)) >= 1, 'no pages'); });
+  T('designcraft booklet', 'booklet-pdf', ['layout.idml'], {}, async ([o]) => ok((await pages(o)) >= 1, 'no pages'));
+  T('effectcraft poster frame', 'poster-frame', ['anim.json'], {}, async ([o], r) => { const m = await fmt(o, 'png'); ok(m.width > 50, `${m.width}`); ok(/Frame at/.test(r[0].note), r[0].note); });
+  T('effectcraft info', 'motion-info', ['anim.json'], {}, (o, r) => ok(/fps/.test(r[0].note), r[0].note));
+  T('filmcraft media info', 'media-info', ['clip.mp4'], {}, (o, r) => ok(/fps/.test(r[0].note) && /Video:/.test(r[0].text), r[0].note));
+  T('filmcraft clean voice', 'clean-voice', ['tone.wav'], {}, async ([o]) => { ok(o.endsWith('.wav'), o); const a = await probe(fx('tone.wav')); await dur(o, a.duration); });
+  T('filmcraft edit-ready', 'edit-ready', ['clip.mp4'], { codec: 'prores' }, async ([o]) => { const v = of(await ffp(o), 'video')[0]; ok(v && v.codec_name === 'prores', `codec ${v?.codec_name}`); });
+  T('pdfcraft sanitize', 'sanitize-pdf', ['doc.pdf'], {}, async ([o]) => { await pages(o, 3); ok((await pdfText(o)).includes('Page 2'), 'text lost'); });
+  T('pdfcraft bates', 'bates-pdf', ['doc.pdf'], { prefix: 'ABC', start: 1 }, async ([o], r) => { const t = await pdfText(o); ok(t.includes('ABC000001') && t.includes('ABC000003'), 'numbers missing'); ok(/ABC000001 to ABC000003/.test(r[0].note), r[0].note); });
+  T('pdfcraft word count', 'word-count', ['doc.pdf'], {}, (o, r) => ok(/\d+ words/.test(r[0].note) && /Page 1:/.test(r[0].text), r[0].note));
+  T('pdfcraft print check', 'print-check', ['doc.pdf'], {}, (o, r) => ok(/print|problem|warning/i.test(r[0].note), r[0].note));
   T('protect+unlock', 'protect-pdf', ['doc.pdf'], { userPassword: 'lime123', allowPrint: true, allowCopy: true, allowEdit: false }, async ([o]) => {
     let locked = false;
     try { await E('pdf').pageCount(o); } catch (_) { locked = true; }

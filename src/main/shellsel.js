@@ -63,8 +63,10 @@ function stop() {
 function query(targets, timeout = 4000) {
   const p = warm();
   if (!p) return Promise.resolve([]);
+  // Refreshed now and then, but started again straight away: a cold PowerShell takes seconds to start, which made the
+  // first Shift-drag after a quiet spell slow to show its choices.
   clearTimeout(idleT);
-  idleT = setTimeout(stop, 15 * 60000);
+  idleT = setTimeout(() => { stop(); setTimeout(warm, 1000); }, 15 * 60000);
   return new Promise((resolve) => {
     let done = false;
     const finish = (line) => {
@@ -75,7 +77,9 @@ function query(targets, timeout = 4000) {
       try { v = JSON.parse(line || '[]'); } catch (_) {}
       resolve((Array.isArray(v) ? v : [v]).filter((x) => typeof x === 'string' && x));
     };
-    const t = setTimeout(() => finish('[]'), timeout);
+    // A reply that comes after the time is up still arrives later; its place in the queue is kept by a no-op, so it
+    // can't be taken as the answer for the next drag.
+    const t = setTimeout(() => { const i = waiting.indexOf(finish); if (i >= 0) waiting[i] = () => {}; finish('[]'); }, timeout);
     waiting.push(finish);
     p.stdin.write(`${JSON.stringify({ targets })}\n`);
   });
