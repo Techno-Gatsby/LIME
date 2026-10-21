@@ -326,6 +326,13 @@ export function openEditor(view, { file }, ctx) {
     const [W0, H0] = e.rotate % 180 ? [v.height, v.width] : [v.width, v.height];
     const crop = e.crop ? [Math.round((e.crop.x * W0) / 2) * 2, Math.round((e.crop.y * H0) / 2) * 2, ev(e.crop.w * W0), ev(e.crop.h * H0)] : null;
     if (crop) { crop[2] = Math.min(crop[2], W0 - crop[0]); crop[3] = Math.min(crop[3], H0 - crop[1]); }
+    // A shape picked from the presets is kept exact (9:16 stays 9:16 in whole even pixels), so a resize gives 1080 × 1920.
+    if (crop && /^\d+:\d+$/.test(e.aspect)) {
+      const [p, q] = e.aspect.split(':').map(Number);
+      let k = Math.floor(Math.min(crop[2] / p, crop[3] / q));
+      while (k > 1 && ((p * k) % 2 || (q * k) % 2)) k--;
+      if (k > 0) { const w = p * k, hh = q * k; crop[0] = clamp(Math.round((crop[0] + (crop[2] - w) / 2) / 2) * 2, 0, W0 - w); crop[1] = clamp(Math.round((crop[1] + (crop[3] - hh) / 2) / 2) * 2, 0, H0 - hh); crop[2] = w; crop[3] = hh; }
+    }
     const cw = crop ? crop[2] : W0, ch = crop ? crop[3] : H0;
     let W = ev(cw), H = ev(ch);
     if (e.size && Math.min(cw, ch) !== e.size) { const k = e.size / Math.min(cw, ch); W = ev(cw * k); H = ev(ch * k); }
@@ -1176,7 +1183,7 @@ export function openEditor(view, { file }, ctx) {
       sec('Scene edit detection', note('FilmCraft looks for the cuts between shots. Each one becomes a split, so you can keep or cut shots in Trim.'),
         slider('Sensitivity', () => st.sens ?? 50, (x, v) => { st.sens = v; }, { min: 1, max: 100, fmt: (v) => String(v), local: true }),
         can ? button('Find scenes', findScenes, { primary: true, iconName: 'scenes' }) : note('FilmCraft isn’t in this build of Lime.'));
-      if (can) sec('Save each scene', note('FilmCraft saves every shot of the original file as a clip of its own, in a folder beside it.'), button('Save scenes…', saveScenes, { iconName: 'save' }));
+      if (can) sec('Save each scene', note('FilmCraft saves every shot of the original file as a clip of its own, in a folder beside it.'), button('Save scenes', saveScenes, { iconName: 'save' }));
     },
     stabilise() {
       const e = E(), can = st.s.can.stabilise;
@@ -1455,6 +1462,8 @@ export function openEditor(view, { file }, ctx) {
 
   // ── Wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────
   root.addEventListener('click', (ev2) => {
+    // Space plays and pauses, so it mustn't also press the button last clicked.
+    if (ev2.target.closest('.toolbar, .me-transport, .topbar')) ev2.target.closest('button')?.blur();
     const t = ev2.target.closest('[data-tool]');
     if (t) { selectTool(t.dataset.tool); return; }
     const a = ev2.target.closest('[data-a]')?.dataset.a;
