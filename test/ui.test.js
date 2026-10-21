@@ -1076,6 +1076,146 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return `${path.relative(OUT, out)}: Aurora_Timelapse gone from V1 and A1, ${v1.length} clips left on V1`;
   });
 
+  // The image editor: open, edit through its panels, save, and measure what was written.
+  const sharp = require('sharp');
+  const openImage = async (src) => {
+    openEditor(src, 'image');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+    const idle = () => wait('(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()');
+    if (!(await idle())) throw new Error('the editor did not show the image');
+    const slide = (key, v) => ejs(`(() => { const r = document.querySelector('.props [data-k="${key}"] input'); r.value = ${v}; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    const press = (fx_, fy, to) => ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(), p = (x, y) => ({ bubbles: true, button: 0, clientX: b.left + b.width * x, clientY: b.top + b.height * y }); m.dispatchEvent(new PointerEvent('pointerdown', p(${fx_}, ${fy}))); ${to ? `window.dispatchEvent(new PointerEvent('pointermove', p(${to[0]}, ${to[1]})));` : ''} window.dispatchEvent(new PointerEvent('pointerup', p(${(to || [fx_])[0]}, ${(to || [0, fy])[1]}))); })()`);
+    const saved = async (p, ms = 30000) => { const t = Date.now(); while (!fs.existsSync(p) && Date.now() - t < ms) await sleep(200); if (!fs.existsSync(p)) throw new Error(`Save wrote nothing at ${path.basename(p)}`); await sleep(500); return p; };
+    return { win, ejs, wait, idle, slide, press, saved };
+  };
+  const statsOf = async (p) => {
+    const { data, info } = await sharp(p).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    let lum = 0, sat = 0, red = 0;
+    for (let i = 0; i < data.length; i += info.channels) {
+      const [r, g, b] = [data[i], data[i + 1], data[i + 2]], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      lum += 0.2126 * r + 0.7152 * g + 0.0722 * b; sat += mx ? (mx - mn) / mx : 0;
+      if (r > 150 && g < 90 && b < 90) red++;
+    }
+    const n = data.length / info.channels;
+    return { w: info.width, h: info.height, lum: lum / n, sat: sat / n, red };
+  };
+
+  const ie = { name: 'edit image · crop, rotate, adjust, text, save', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'editimg.jpg');
+    fs.copyFileSync(fx('photo.jpg'), src);
+    const { win, ejs, wait, idle, slide, press, saved } = await openImage(src);
+    // Crop to 4:5, then turn it a quarter right: 853 × 1067 of the 1600 × 1067 photo, lying on its side.
+    await ejs('document.querySelector(\'[data-tool="crop"]\').click()');
+    await ejs('document.querySelector(\'.props [data-r="4:5"]\').click()');
+    await ejs('document.querySelector(\'.props [data-o="right"]\').click()');
+    await ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
+    await slide('light.exposure', 0.8);
+    await slide('color.saturation', 40);
+    await idle();
+    await ejs('document.querySelector(\'[data-tool="text"]\').click()');
+    await ejs('document.querySelector(\'.props .swatches [data-c="#d13438"]\').click()');
+    await ejs('document.querySelector(\'.props [data-ts="plain"]\').click()');
+    await press(0.2, 0.3);
+    if (!(await wait('!!document.querySelector(".tedit")', 3000))) throw new Error('no text box to type in');
+    await ejs(`(() => { const el = document.querySelector('.tedit'); el.textContent = 'LIME'; el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); })()`);
+    if (!(await wait('!document.querySelector(".tedit")', 3000))) throw new Error('the text stayed in editing');
+    const hist = await ejs('document.querySelector(".imged").__imged.st.hist.map((x) => x.label).join(", ")');
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = await saved(path.join(OUT, 'editimg (edited).jpg'));
+    const a = await statsOf(fx('photo.jpg')), b = await statsOf(out), meta = await sharp(out).metadata();
+    if (Math.abs(b.w - 1067) > 2 || Math.abs(b.h - 853) > 2) throw new Error(`saved ${b.w}×${b.h}, wanted about 1067×853 (cropped 4:5 and turned)`);
+    if (!(b.lum > a.lum + 12)) throw new Error(`not brighter: luminance ${a.lum.toFixed(1)} → ${b.lum.toFixed(1)}`);
+    if (!(b.sat > a.sat + 0.03)) throw new Error(`not more saturated: ${a.sat.toFixed(3)} → ${b.sat.toFixed(3)}`);
+    if (b.red < 400 || a.red > 50) throw new Error(`text: ${b.red} red pixels (the photo had ${a.red})`);
+    if (!meta.exif || (meta.orientation && meta.orientation !== 1)) throw new Error(`Exif ${meta.exif ? `kept but orientation ${meta.orientation}` : 'lost'}`);
+    // Save as… PNG, through the format choice.
+    asked = [];
+    await ejs('document.querySelector(\'[data-a="saveas"]\').click()');
+    if (!(await wait('!!document.querySelector(".scrim [data-f=png]")', 3000))) throw new Error('no format choice for Save as');
+    await ejs('document.querySelector(".scrim [data-f=png]").click(); document.querySelector(".scrim [data-a=ok]").click()');
+    const t = Date.now();
+    let png = null;
+    while (!png && Date.now() - t < 30000) { png = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editimg.png')).find((p) => fs.existsSync(p)); await sleep(200); }
+    if (!png) throw new Error('Save as PNG wrote nothing');
+    await sleep(500);
+    const pm = await sharp(png).metadata();
+    if (pm.format !== 'png' || pm.width !== b.w || pm.height !== b.h) throw new Error(`Save as wrote ${pm.format} ${pm.width}×${pm.height}`);
+    // Undo goes back through the steps.
+    const before = await ejs('document.querySelector(".imged").__imged.st.at');
+    await ejs('document.querySelector(\'[data-a="undo"]\').click()');
+    const after = await ejs('document.querySelector(".imged").__imged.st.at');
+    if (after !== before - 1) throw new Error(`undo moved from step ${before} to ${after}`);
+    ie.detail = `${b.w}×${b.h}, luminance ${a.lum.toFixed(0)} → ${b.lum.toFixed(0)}, saturation ${a.sat.toFixed(2)} → ${b.sat.toFixed(2)}, ${b.red} red text pixels, Exif kept, PNG too (${hist})`;
+    win.destroy();
+  } catch (e) { ie.status = 'FAIL'; ie.detail = e.message; }
+  console.log(`${ie.status} ${ie.name.padEnd(44)}        ${ie.detail}`);
+  results.push(ie);
+
+  const ir = { name: 'edit image · RAW, heal, look and PhotoCraft', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'editraw.dng');
+    fs.copyFileSync(fx('raw.dng'), src);
+    const { win, ejs, wait, idle, slide, press, saved } = await openImage(src);
+    await slide('light.exposure', 1);
+    await idle();
+    await ejs('document.querySelector(\'[data-tool="heal"]\').click()');
+    await press(0.5, 0.5);
+    if (!(await wait('document.querySelector(".imged").__imged.st.dev.spots.length === 1 && document.querySelector(".imged").__imged.idle()', 15000))) throw new Error('no healing spot was added');
+    const src0 = await ejs('JSON.stringify(document.querySelector(".imged").__imged.st.dev.spots[0].source_offset)');
+    if (!src0 || src0 === 'null') throw new Error('the spot has no source');
+    await ejs('document.querySelector(\'[data-tool="looks"]\').click()');
+    if (!(await wait('!!document.querySelector(\'.look[data-l="lc.bw-high-contrast"]\')', 15000))) throw new Error('no looks');
+    await ejs('document.querySelector(\'.look[data-l="lc.bw-high-contrast"]\').click()');
+    if (!(await wait('document.querySelector(".imged").__imged.st.dev.treatment === "bw"', 15000))) throw new Error('the B&W look did not apply');
+    await ejs('document.querySelector(\'[data-tool="enhance"]\').click()');
+    await ejs('document.querySelector(\'.props [data-e="sharpen"]\').click()');
+    if (!(await wait('document.querySelector(".imged").__imged.st.base === 1 && document.querySelector(".imged").__imged.idle()', 60000))) throw new Error('PhotoCraft sharpen did not make a new step');
+    await idle();
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = await saved(path.join(OUT, 'editraw (edited).jpg'), 60000);
+    const b = await statsOf(out);
+    if (b.w !== 1800 || b.h !== 1200) throw new Error(`saved ${b.w}×${b.h}`);
+    if (b.sat > 0.03) throw new Error(`not black and white: saturation ${b.sat.toFixed(3)}`);
+    ir.detail = `RAW developed +1 EV, a healed spot (source ${src0}), High Contrast B&W, PhotoCraft sharpen → ${path.basename(out)} ${b.w}×${b.h}, saturation ${b.sat.toFixed(3)}`;
+    win.destroy();
+  } catch (e) { ir.status = 'FAIL'; ir.detail = e.message; }
+  console.log(`${ir.status} ${ir.name.padEnd(44)}        ${ir.detail}`);
+  results.push(ir);
+
+  const im = { name: 'edit image · mask, resize, canvas, transparency', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'editalpha.png');
+    fs.copyFileSync(fx('alpha.png'), src);
+    const { win, ejs, wait, idle, slide, press, saved } = await openImage(src);
+    // A linear gradient darkens the top of the green disc and fades out above its middle.
+    await ejs('document.querySelector(\'[data-tool="mask"]\').click()');
+    await press(0.5, 0.02, [0.5, 0.42]);
+    if (!(await wait('document.querySelector(".imged").__imged.st.dev.masks.length === 1', 3000))) throw new Error('no mask was added');
+    await slide('mask.exposure', -2);
+    await idle();
+    await ejs('document.querySelector(\'[data-tool="resize"]\').click()');
+    await ejs(`(() => { const i = document.querySelector('.props [data-d="pct"]'); i.value = 50; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await ejs('document.querySelector(\'.props [data-q="5"]\').click()');
+    await ejs('document.querySelector(\'.props .swatches [data-c="transparent"]\').click()');
+    await idle();
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = await saved(path.join(OUT, 'editalpha (edited).png'));
+    const { data, info } = await sharp(out).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    if (info.width !== 330 || info.height !== 330) throw new Error(`saved ${info.width}×${info.height}, wanted 330×330 (half size, then 15 px of canvas around)`);
+    const px = (x, y) => data.subarray((y * info.width + x) * 4, (y * info.width + x) * 4 + 4);
+    if (px(3, 3)[3] !== 0 || px(165, 8)[3] !== 0) throw new Error('the canvas and the clear corners are not transparent');
+    const band = (y0, y1) => { let s = 0, n = 0; for (let y = y0; y < y1; y++) for (let x = 120; x < 210; x++) { const p = px(x, y); if (p[3] > 250) { s += 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]; n++; } } return n ? s / n : NaN; };
+    const top = band(60, 90), bottom = band(240, 270);
+    if (!(top < bottom - 20)) throw new Error(`the mask did not darken the top: ${top.toFixed(0)} against ${bottom.toFixed(0)} below`);
+    im.detail = `330×330 with a clear canvas, top of the disc ${top.toFixed(0)} against ${bottom.toFixed(0)} below the gradient`;
+    win.destroy();
+  } catch (e) { im.status = 'FAIL'; im.detail = e.message; }
+  console.log(`${im.status} ${im.name.padEnd(44)}        ${im.detail}`);
+  results.push(im);
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);

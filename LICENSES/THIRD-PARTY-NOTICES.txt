@@ -36,6 +36,8 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
   The wheel's slice hysteresis, one-slice-per-notch scrolling, time-based easing, ranked search and middle-shortened
   names are ported from PhotoCraft, PdfCraft, FilmCraft and LightCraft (crates/ui-egui), MIT OR Apache-2.0:
   Copyright (c) ArtCraft Team and the PhotoCraft, PdfCraft, FilmCraft and LightCraft contributors.
+  The image editor's crop limits for a straightened photo (move the crop towards the middle, then shrink it) and its
+  relative white-balance scale follow LightCraft (crates/geom, crates/ui-egui), MIT OR Apache-2.0, same copyright.
 
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil

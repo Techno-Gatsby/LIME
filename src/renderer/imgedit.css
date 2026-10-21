@@ -1,0 +1,134 @@
+/* The image editor: the photo in the middle, the tool's panel on the right (editor.css has the shared pieces). */
+.imged .ed-body { grid-template-columns: minmax(0, 1fr) 300px; }
+.imged .ed-body.no-props { grid-template-columns: minmax(0, 1fr) 0; }
+@media (max-width: 900px) { .imged .ed-body { grid-template-columns: minmax(0, 1fr) 260px !important; } }
+.imged .stage { position: relative; overflow: auto; background: var(--bg); outline: none; }
+.imged .stage .pad { display: flex; align-items: center; justify-content: center; min-width: 100%; min-height: 100%; width: max-content; height: max-content; padding: 28px; box-sizing: border-box; }
+.imged .sheet { position: relative; flex: none; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .12), 0 10px 30px -10px rgba(0, 0, 0, .35); }
+.imged .sheet.alpha, .imged .canvasbg.alpha { background: repeating-conic-gradient(#d9dbe0 0% 25%, #f4f5f7 0% 50%) 0 0 / 16px 16px; }
+.imged .sheet .photo { position: absolute; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.imged .sheet .ink, .imged .sheet .marks { position: absolute; inset: 0; }
+.imged .sheet .ink { pointer-events: none; }
+.imged .sheet .clip { position: absolute; overflow: hidden; }
+.imged .stage.t-text .marks { cursor: text; }
+.imged .stage.t-draw .marks, .imged .stage.t-rect .marks, .imged .stage.t-ellipse .marks, .imged .stage.t-arrow .marks, .imged .stage.t-line .marks { cursor: crosshair; }
+.imged .stage.t-heal .marks, .imged .stage.t-redeye .marks { cursor: none; }
+.imged .stage.panning, .imged .stage.panning * { cursor: grab !important; }
+.imged .stage.grabbing, .imged .stage.grabbing * { cursor: grabbing !important; }
+.imged .loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); font-size: 12px; }
+
+/* Selection around text and shapes, with the dot that resizes them. */
+.imged .selbox { position: absolute; outline: 1.5px solid var(--accent); outline-offset: 3px; pointer-events: none; }
+.imged .selbox .handle { position: absolute; right: -10px; bottom: -10px; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); cursor: nwse-resize; pointer-events: auto; }
+.imged .tedit { position: absolute; white-space: pre; outline: none; min-width: 6px; -webkit-user-select: text; user-select: text; cursor: text; caret-color: currentColor; }
+.imged .tedit:empty::before { content: "Type here"; opacity: .45; }
+
+/* Crop: the frame, darkened outside the crop, with thirds and handles. */
+.imged .frame { position: absolute; inset: 0; overflow: hidden; }
+.imged .frame .photo { transform-origin: 50% 50%; }
+.imged .cropbox { position: absolute; outline: 1px solid rgba(255, 255, 255, .9); cursor: move; }
+.imged .cropbox .third { position: absolute; background: rgba(255, 255, 255, .45); pointer-events: none; opacity: 0; transition: opacity .15s; }
+.imged .cropbox.live .third { opacity: 1; }
+.imged .cropbox .third.v { top: 0; bottom: 0; width: 1px; }
+.imged .cropbox .third.h { left: 0; right: 0; height: 1px; }
+.imged .cropbox.fine .third { background: rgba(255, 255, 255, .28); }
+.imged .cropbox .hd { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; }
+.imged .cropbox .hd::after { content: ""; position: absolute; inset: 7px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .4), 0 1px 3px rgba(0, 0, 0, .4); }
+.imged .cropbox .hd.e, .imged .cropbox .hd.w { margin-top: -11px; }
+.imged .cropbox .hd.nw, .imged .cropbox .hd.se { cursor: nwse-resize; }
+.imged .cropbox .hd.ne, .imged .cropbox .hd.sw { cursor: nesw-resize; }
+.imged .cropbox .hd.n, .imged .cropbox .hd.s { cursor: ns-resize; }
+.imged .cropbox .hd.e, .imged .cropbox .hd.w { cursor: ew-resize; }
+.imged .cropsize { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
+
+/* Heal and red eye: the brush, each spot and where it takes from. */
+.imged .brush { position: absolute; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), inset 0 0 0 1px rgba(0, 0, 0, .25); pointer-events: none; transform: translate(-50%, -50%); }
+.imged .spot { position: absolute; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, .85); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); transform: translate(-50%, -50%); cursor: pointer; }
+.imged .spot.src { border-style: dashed; cursor: move; }
+.imged .spot.sel { border-color: var(--lime-300); box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), 0 0 0 3px rgba(168, 217, 85, .35); }
+.imged .spotline { position: absolute; height: 1.5px; background: rgba(255, 255, 255, .85); transform-origin: 0 50%; pointer-events: none; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .35); }
+.imged .eye { position: absolute; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, .9); box-shadow: 0 0 0 1px rgba(0, 0, 0, .4); transform: translate(-50%, -50%); cursor: pointer; }
+.imged .eye.sel { border-color: var(--lime-300); }
+
+/* The panel. */
+.imged .props { gap: 12px; padding: 14px 14px 40px; }
+.imged .props .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.imged .props .head .btn { height: 26px; padding: 0 10px; font-size: 12px; }
+.imged .props .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.imged .props .row > .btn { flex: 1; }
+.imged .hist { width: 100%; height: 76px; border-radius: 8px; background: var(--surface-3); display: block; }
+.imged .histinfo { display: flex; justify-content: space-between; margin-top: -6px; color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.imged details.sec { border-top: .5px solid var(--line-2); padding-top: 10px; display: grid; gap: 9px; }
+.imged details.sec > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; cursor: pointer; font: 650 12.5px/1.2 var(--font-display); color: var(--ink); }
+.imged details.sec > summary::-webkit-details-marker { display: none; }
+.imged details.sec > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--ink-3); border-bottom: 1.5px solid var(--ink-3); transform: rotate(-45deg); transition: transform .15s; margin-right: 4px; }
+.imged details.sec[open] > summary::after { transform: rotate(45deg); }
+.imged details.sec > summary .reset { margin-left: auto; margin-right: 8px; font: 500 11px var(--font); color: var(--ink-3); background: none; border: 0; padding: 0 2px; visibility: hidden; }
+.imged details.sec[open] > summary .reset { visibility: visible; }
+.imged details.sec > summary .reset:hover { color: var(--accent-strong); }
+.imged .sl { display: grid; grid-template-columns: 78px minmax(0, 1fr) 44px; align-items: center; gap: 8px; }
+.imged .sl label { font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imged .sl output { text-align: right; font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.imged .sl.changed label, .imged .sl.changed output { color: var(--ink); font-weight: 560; }
+.imged .sl input[type=range] { min-width: 0; }
+/* Two-sided sliders fill from the middle; coloured tracks show what they do. */
+.imged .sl.mid input[type=range]::-webkit-slider-runnable-track { background: linear-gradient(90deg, var(--surface-3) min(50%, var(--p, 50%)), var(--green-2) min(50%, var(--p, 50%)) max(50%, var(--p, 50%)), var(--surface-3) max(50%, var(--p, 50%))); }
+.imged .sl.track input[type=range]::-webkit-slider-runnable-track { background: var(--track); height: 5px; }
+.imged .chips.aspects .chip { height: 26px; padding: 0 9px; font-size: 12px; }
+.imged .dots { display: flex; justify-content: space-between; }
+.imged .dots button { width: 22px; height: 22px; border-radius: 50%; border: 0; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .25); }
+.imged .dots button[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+.imged .looks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.imged .look { display: grid; gap: 4px; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 11px; text-align: center; min-width: 0; }
+.imged .look .tn { aspect-ratio: 4 / 3; border-radius: 7px; background: var(--surface-3) center / cover no-repeat; box-shadow: inset 0 0 0 .5px var(--line-2); }
+.imged .look span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.imged .look:hover .tn { box-shadow: inset 0 0 0 .5px var(--line-2), 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+.imged .look[aria-pressed="true"] { color: var(--accent-strong); font-weight: 600; }
+.imged .look[aria-pressed="true"] .tn { box-shadow: 0 0 0 2px var(--accent); }
+.imged .actions { display: grid; gap: 2px; }
+.imged .act { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: none; text-align: left; color: var(--ink); }
+.imged .act:hover { background: var(--hover); }
+.imged .act:disabled { opacity: .45; }
+.imged .act .ic { width: 30px; height: 30px; padding: 5px; border-radius: 8px; background: var(--surface-3); color: var(--accent-strong); }
+.imged .act b { display: block; font-size: 12.5px; font-weight: 560; }
+.imged .act small { display: block; color: var(--ink-3); font-size: 11px; line-height: 14px; }
+.imged .anchor { display: grid; grid-template-columns: repeat(3, 22px); gap: 3px; }
+.imged .anchor button { width: 22px; height: 22px; border-radius: 5px; border: 0; background: var(--surface-3); }
+.imged .anchor button[aria-pressed="true"] { background: var(--accent); }
+.imged .dims { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: end; }
+.imged .dims .field { gap: 4px; }
+.imged .dims .tb.icon { margin-bottom: 0; }
+.imged .curve { width: 100%; aspect-ratio: 1.3; border-radius: 8px; background: var(--surface-3); display: block; touch-action: none; cursor: crosshair; }
+.imged .note { color: var(--ink-3); font-size: 11.5px; line-height: 15px; }
+.imged .spin { display: inline-block; width: 12px; height: 12px; margin-right: 7px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent); vertical-align: -2px; animation: imged-spin .8s linear infinite; }
+@keyframes imged-spin { to { transform: rotate(360deg); } }
+.imged .histmenu { position: absolute; z-index: 20; min-width: 220px; max-height: 360px; overflow: auto; padding: 4px; border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-lg); }
+.imged .histmenu button { display: flex; width: 100%; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--ink-2); font-size: 12.5px; text-align: left; }
+.imged .histmenu button:hover { background: var(--hover); color: var(--ink); }
+.imged .histmenu button.cur { color: var(--accent-strong); font-weight: 600; }
+.imged .histmenu button.ahead { opacity: .5; }
+.imged .compare[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-strong); }
+.imged .badge { position: absolute; left: 12px; top: 12px; padding: 3px 9px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: .02em; pointer-events: none; z-index: 4; }
+.imged .fmt { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.imged .fmt .chip { height: 32px; }
+.imged > .ed-status { left: calc(50% - 150px); }
+.imged .shade { position: absolute; background: rgba(12, 14, 10, .58); pointer-events: none; }
+.imged .props .row.nowrap { flex-wrap: nowrap; }
+.imged .props .row > .btn.fixed { flex: none; }
+.imged .props .seg.full.text .tb { height: 28px; flex-direction: row; }
+.imged .props > *, .imged details.sec > * { min-width: 0; }
+.imged .props canvas { max-width: 100%; }
+.imged .swatches button[data-c="transparent"] { background: repeating-conic-gradient(#c8cbd1 0% 25%, #fff 0% 50%) 0 0 / 8px 8px !important; }
+.imged .props { overflow-x: hidden; }
+.imged .spotpath { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.imged .spotpath polyline { fill: none; stroke: rgba(255, 255, 255, .22); stroke-linecap: round; stroke-linejoin: round; }
+.imged .stage.t-mask .marks { cursor: crosshair; }
+.imged .mdot { position: absolute; width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, .45); transform: translate(-50%, -50%); cursor: move; z-index: 2; }
+.imged .mpin { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, .85); box-shadow: 0 0 0 1px rgba(0, 0, 0, .45); transform: translate(-50%, -50%); cursor: pointer; }
+.imged .mline { position: absolute; width: 4000px; height: 0; border-top: 1.5px solid rgba(255, 255, 255, .9); box-shadow: 0 0 0 .5px rgba(0, 0, 0, .3); transform-origin: 50% 0; pointer-events: none; }
+.imged .mline.none { border-top-style: dashed; }
+.imged .mspan { position: absolute; height: 0; border-top: 1px dashed rgba(255, 255, 255, .6); transform-origin: 0 0; pointer-events: none; }
+.imged .mell { position: absolute; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, .9); box-shadow: 0 0 0 .5px rgba(0, 0, 0, .35), inset 0 0 0 .5px rgba(0, 0, 0, .35); pointer-events: none; }
+.imged .mpaint polyline { stroke: rgba(214, 64, 64, .42); }
+.imged .mpaint polyline.erase { stroke: rgba(255, 255, 255, .5); }
+.imged .mclip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
