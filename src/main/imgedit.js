@@ -111,7 +111,9 @@ async function addBase(s, file, { raw = false } = {}) {
     }
     if (alpha || !LC_READS.has(U.ext(file)) || m.space === 'cmyk') {
       pathRgb = path.join(s.dir, `${tag}.tif`);
-      await sharp()(file, { failOn: 'none' }).keepIccProfile().removeAlpha().tiff({ compression: 'none' }).toFile(pathRgb);
+      // CMYK is turned into RGB through its own profile; anything else keeps its colour space.
+      const pipe = sharp()(file, { failOn: 'none' }).removeAlpha();
+      await (m.space === 'cmyk' ? pipe.toColourspace('srgb') : pipe.keepIccProfile()).tiff({ compression: 'none' }).toFile(pathRgb);
     }
   }
   const info = (await lightRun(s, pathRgb, [['photo.inspect']]))[0];
