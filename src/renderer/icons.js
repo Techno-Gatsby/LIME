@@ -88,6 +88,9 @@ const P = {
   indent: 'M4 6h16M10 10h10M10 14h10M4 18h16M4 9.5l3 2.5-3 2.5',
   outdent: 'M4 6h16M10 10h10M10 14h10M4 18h16M7 9.5L4 12l3 2.5',
   replace: 'M4 5h9v9H4zM11 19h9v-9M15 8l2-2 2 2M17 6v4',
+  compass: 'M12 3v2M12 5a2 2 0 100 4 2 2 0 000-4zM10.8 8.6L6 20M13.2 8.6L18 20M7.6 16h8.8',
+  wave: 'M3 12h1.5M7 9v6M11 5v14M15 8v8M19 10.5v3',
+  present: 'M3 4h18M5 4v11h14V4M12 15v3M8 21l4-3 4 3',
 };
 export function icon(name, size = '') {
   const d = P[name] || P.doc;

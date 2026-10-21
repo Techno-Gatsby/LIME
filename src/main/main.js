@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, nativeTheme, Tray, Menu, globalShortcut, screen, clipboard, Notification, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, nativeTheme, Tray, Menu, globalShortcut, screen, clipboard, Notification, nativeImage, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -16,8 +16,9 @@ const RENDERER = path.join(__dirname, '..', 'renderer');
 const RES = app.isPackaged ? process.resourcesPath : path.join(ROOT, 'vendor');
 const BIN = app.isPackaged ? path.join(RES, 'bin') : path.join(ROOT, 'vendor', 'bin', `${process.platform}-${process.arch}`);
 const DATA = path.join(RES, 'data');
-const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
+const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : process.env.LIME_CRAFTS || path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
 const APPS = app.isPackaged ? path.join(RES, 'apps') : path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
+const WEB = app.isPackaged ? path.join(RES, 'web') : process.env.LIME_WEB || path.join(ROOT, 'vendor', 'web');
 const HELPERS = app.isPackaged ? path.join(RES, 'helpers') : path.join(ROOT, 'vendor', 'helpers', `${process.platform}-${process.arch}`);
 const helperRoot = () => path.join(app.getPath('userData'), 'helpers');
 const asset = (n) => path.join(ROOT, 'build', n);
@@ -29,6 +30,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
   { scheme: 'media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } },
+  { scheme: 'craft', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
 ]);
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
@@ -48,7 +50,7 @@ const log = (err) => { try { fs.appendFileSync(path.join(app.getPath('userData')
 process.on('uncaughtException', log);
 
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, welcomed: false, recent: [], signatures: [] };
+const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, welcomed: false, recent: [], signatures: [], rings: { first: ['pdfcraft', 'photocraft', 'designcraft', 'webcraft', 'cadcraft', 'soundcraft', 'filmcraft'], second: ['vectorcraft', 'lightcraft', 'effectcraft', 'deckcraft', 'gridcraft', 'wordcraft'] } };
 let settings = { ...DEFAULTS };
 let saveT = null;
 const loadSettings = () => {
@@ -56,7 +58,20 @@ const loadSettings = () => {
   if (!settings.outFolder) settings.outFolder = path.join(app.getPath('downloads'), 'Lime');
 };
 const saveSettings = () => { clearTimeout(saveT); saveT = setTimeout(() => fsp.writeFile(SETTINGS(), JSON.stringify(settings, null, 1)).catch(() => {}), 200); };
-const publicSettings = () => { const { recent, ...rest } = settings; return { ...rest, platform: process.platform }; };
+const publicSettings = () => { const { recent, ...rest } = settings; return { ...rest, rings: homeRings(), platform: process.platform }; };
+const RING_MAX = { first: 9, second: 10 };
+function homeRings(r = settings.rings) {
+  const known = Object.keys(crafts.APPS), seen = new Set(), def = DEFAULTS.rings;
+  const src = r && (Array.isArray(r.first) || Array.isArray(r.second)) ? r : def;
+  const take = (list, max) => (Array.isArray(list) ? list : []).filter((id) => known.includes(id) && !seen.has(id) && seen.add(id)).slice(0, max);
+  const first = take(src.first, RING_MAX.first), second = take(src.second, RING_MAX.second);
+  for (const id of [...def.second, ...def.first, ...known]) {
+    if (seen.has(id) || !known.includes(id)) continue;
+    seen.add(id);
+    (second.length < RING_MAX.second ? second : first).push(id);
+  }
+  return { first, second };
+}
 function addRecent(paths, kind) {
   const at = Date.now();
   settings.recent = [...paths.map((p) => ({ path: p, kind, at })), ...settings.recent.filter((r) => !paths.includes(r.path))].slice(0, 30);
@@ -64,7 +79,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -469,6 +484,69 @@ function openEditor(file, mode) {
   return true;
 }
 
+const craftWins = new Set(), craftSites = new Map();
+let craftSes = null;
+const craftOf = (wc) => BrowserWindow.fromWebContents(wc)?.craftWeb || null;
+function craftSavePath(cw, name) {
+  const dir = cw.file ? path.dirname(cw.file) : app.getPath('documents');
+  const clean = path.basename(String(name || 'Untitled')).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 200) || 'Untitled';
+  const ext = path.extname(clean), stem = cw.file && path.resolve(dir, clean) === path.resolve(cw.file) ? `${path.basename(clean, ext)} (edited)` : path.basename(clean, ext);
+  let target = path.join(dir, `${stem}${ext}`);
+  if (cw.saved.has(target)) return target;
+  for (let i = 2; fs.existsSync(target); i++) target = path.join(dir, `${stem} ${i}${ext}`);
+  cw.saved.add(target);
+  return target;
+}
+function craftSession() {
+  if (craftSes) return craftSes;
+  craftSes = session.fromPartition('persist:crafts');
+  craftSes.protocol.handle('craft', (req) => {
+    const u = new URL(req.url), rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+    if (!rel || ['craftweb.js', 'craftweb.css'].includes(rel)) return net.fetch(pathToFileURL(path.join(RENDERER, rel || 'craftweb.html')).href);
+    const site = craftSites.get(u.host);
+    if (!site || !rel.startsWith('app/')) return new Response('Not found', { status: 404 });
+    const file = path.normalize(path.join(site, rel.slice(4)));
+    if (!file.startsWith(site + path.sep) || !fs.existsSync(file)) return new Response('Not found', { status: 404 });
+    if (file.endsWith('.wasm')) return new Response(require('stream').Readable.toWeb(fs.createReadStream(file)), { headers: { 'Content-Type': 'application/wasm', 'Content-Length': String(fs.statSync(file).size) } });
+    return net.fetch(pathToFileURL(file).href);
+  });
+  craftSes.on('will-download', (e, item, wc) => {
+    const cw = craftOf(wc);
+    if (!cw) return;
+    const to = craftSavePath(cw, item.getFilename());
+    item.setSavePath(to);
+    item.once('done', (ev, state) => { if (!wc.isDestroyed()) wc.send('craftweb:saved', state === 'completed' ? { path: to } : { error: `Couldn’t save ${path.basename(to)}` }); });
+  });
+  return craftSes;
+}
+async function openCraftWeb(id, file) {
+  const a = crafts.APPS[id];
+  const site = a && (await crafts.webApp(id));
+  if (!site) throw new Error(`${a?.name || 'This app'} can’t open in a Lime window in this build.`);
+  craftSites.set(id, path.resolve(site));
+  craftSession();
+  const area = screen.getPrimaryDisplay().workAreaSize;
+  const win = new BrowserWindow({
+    width: Math.min(1320, area.width - 60), height: Math.min(880, area.height - 40), minWidth: 720, minHeight: 480, show: false, title: file ? `${path.basename(file)} — ${a.name}` : a.name,
+    ...(isMac ? {} : { autoHideMenuBar: true }), backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2', icon: asset('icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'craftweb-preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'persist:crafts' },
+  });
+  win.craftWeb = { id, name: a.name, file: file || null, saved: new Set(), dirty: false, ...crafts.WEB[id] };
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(`craft://${id}/`)) e.preventDefault(); });
+  win.on('close', (e) => {
+    if (!win.craftWeb.dirty || win.forceClose) return;
+    e.preventDefault();
+    const pick = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Close without saving', 'Cancel'], defaultId: 1, cancelId: 1, message: `Close ${a.name}?`, detail: 'Changes you haven’t saved will be lost.' });
+    if (pick === 0) { win.forceClose = true; win.close(); }
+  });
+  craftWins.add(win);
+  win.on('closed', () => craftWins.delete(win));
+  win.once('ready-to-show', () => win.show());
+  await win.loadURL(`craft://${id}/`);
+  return win;
+}
+
 function pickCells(file, value) {
   return new Promise((resolve) => {
     const area = screen.getPrimaryDisplay().workAreaSize;
@@ -557,6 +635,10 @@ async function doAction(item, files) {
       crafts.openApp(item.app, files).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
       return `Opening ${crafts.APPS[item.app].name}…`;
     }
+    case 'craftweb': {
+      openCraftWeb(item.app, files[0]).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
+      return `Opening ${crafts.APPS[item.app]?.name || 'the app'}…`;
+    }
     case 'quicklook': execFile('qlmanage', ['-p', ...files.slice(0, 10)], () => {}); return null;
     case 'trash': for (const f of files) await shell.trashItem(f); return `Moved ${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} to the Trash`;
     case 'reveal': shell.showItemInFolder(files[0]); return null;
@@ -564,13 +646,14 @@ async function doAction(item, files) {
   }
 }
 
-const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'] };
+const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'], soundcraft: ['edit-audio'] };
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
   const full = { action: 'craft', app: id, label: 'Full app', hint: 'Own window', desc: ok ? `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${a.name}, with every tool` : `${a.name} isn’t in this build of Lime`, ...(ok ? {} : { off: true }) };
   const edit = (EDIT_IN[id] || []).map((t) => tools.get(t)).find((t) => t && (!files.length || tools.accepts(t, files)));
-  const ring = edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
+  const web = crafts.hasWeb(id) && files.length <= 1;
+  const ring = web ? [{ action: 'craftweb', app: id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${files.length ? `${path.basename(files[0])} in ` : ''}${a.name}, in a Lime window` }, full] : edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
@@ -596,6 +679,7 @@ async function setSettings(patch) {
   if ('anchor' in patch || 'hidden' in patch) sendGeo();
   if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
+  if ('rings' in patch) settings.rings = homeRings(patch.rings);
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
   if (['soffice', 'pandoc', ...Object.keys(crafts.APPS)].some((k) => k in patch && patch[k] !== before[k])) { require('./engines/util').configure(engineCfg()); [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() })); }
   buildTray();
@@ -608,7 +692,7 @@ function registerIpc() {
   h('app:info', () => ({ version: app.getVersion(), platform: process.platform, dark: nativeTheme.shouldUseDarkColors, home: os.homedir() }));
   h('catalog', () => tools.catalog());
   h('wheel:items', (files) => itemsFor(files));
-  h('wheel:home', () => Object.keys(crafts.APPS).map((id) => appRing(id, [])));
+  h('wheel:home', () => { const r = homeRings(); return [...r.first.map((id) => ({ ...appRing(id, []), place: 1 })), ...r.second.map((id) => ({ ...appRing(id, []), place: 2 }))]; });
   h('wheel:action', (item, files) => doAction(item, files));
   h('wheel:layout', ({ mode: m, at, h }) => {
     if (h) openH = h;
@@ -746,6 +830,11 @@ function registerIpc() {
   });
   h('helpers:cancel', (id) => require('./helpers').cancel(id));
   h('apps:open', async (id, files) => { await crafts.openApp(id, Array.isArray(files) ? files : []); return true; });
+  hE('craftweb:info', (e) => { const cw = craftOf(e.sender); return cw && { id: cw.id, name: cw.name, file: cw.file, fileName: cw.file && path.basename(cw.file), bridge: !!cw.bridge, empty: !!cw.empty, dark: nativeTheme.shouldUseDarkColors }; });
+  hE('craftweb:read', async (e) => { const cw = craftOf(e.sender); return cw?.file ? fsp.readFile(cw.file) : null; });
+  hE('craftweb:save', async (e, name, bytes) => { const cw = craftOf(e.sender); if (!cw) return null; const to = craftSavePath(cw, name); await fsp.writeFile(to, Buffer.from(bytes)); return { path: to }; });
+  hE('craftweb:dirty', (e, dirty) => { const cw = craftOf(e.sender); if (cw) cw.dirty = !!dirty; return true; });
+  hE('craftweb:show', (e, p) => { const cw = craftOf(e.sender); if (cw && cw.saved.has(p)) shell.showItemInFolder(p); return true; });
   h('recent:list', () => settings.recent.filter((r) => fs.existsSync(r.path)));
 }
 
@@ -813,7 +902,7 @@ app.whenReady().then(async () => {
   screen.on('display-added', placeSensor);
   const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
   harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
-  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen });
+  harness('LIME_UI', 'ui.test', { openCraftWeb, wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen });
   harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, openWelcome, welcome: () => welcomeWin, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
 });
 app.on('activate', () => showWheel());

@@ -217,11 +217,47 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       await js('window.__lime.collapse()');
       await sleep(400);
     }
+    if (want('rings')) {
+      const shots = [];
+      for (const theme of ['light', 'dark']) {
+        await js(`window.lime.invoke("settings:set", { theme: "${theme}" })`);
+        await js('window.__lime.fold()');
+        await sleep(900);
+        await js('window.__lime.expand("click"); window.__lime.loadHome()');
+        await sleep(1200);
+        await shot(`38-home-${theme}`);
+        shots.push(`38-home-${theme}`);
+        await js('window.__lime.pick(window.__lime.S.ring.find((x) => x.homeMore))');
+        await shot(`39-more-apps-${theme}`);
+        shots.push(`39-more-apps-${theme}`);
+        await js('window.__lime.back()');
+      }
+      const sharp = require('sharp'), files = shots.map((n) => path.join(dir, `${n}.png`)), metas = await Promise.all(files.map((f) => sharp(f).metadata()));
+      const cw = Math.max(...metas.map((m) => m.width)), ch = Math.max(...metas.map((m) => m.height));
+      await sharp({ create: { width: cw * 2, height: ch * 2, channels: 4, background: '#808080' } }).composite(files.map((f, i) => ({ input: f, left: (i % 2) * cw, top: Math.floor(i / 2) * ch }))).png().toFile(path.join(dir, '40-rings-composite.png'));
+      console.log('shot', '40-rings-composite');
+      await js('window.lime.invoke("settings:set", { theme: "light" })');
+      await js('window.__lime.fold()');
+      await sleep(600);
+    }
+    if (want('craftweb')) {
+      for (const [id, f] of [['cadcraft', 'test.dxf'], ['gridcraft', 'book.xlsx'], ['wordcraft', 'doc.docx'], ['soundcraft', 'song.mp3']]) {
+        await js(`window.lime.invoke('wheel:action', { action: 'craftweb', app: '${id}' }, [${JSON.stringify(path.join(samples, f))}])`);
+        let win = null;
+        for (let t = 0; t < 80 && !win; t++) { await sleep(250); win = BrowserWindow.getAllWindows().find((x) => x.craftWeb?.id === id && !x.webContents.isLoading()); }
+        if (!win) { console.log('no window for', id); continue; }
+        await sleep(9000);
+        await shot(`41-craftweb-${id}`, win);
+        win.craftWeb.dirty = false;
+        win.destroy();
+      }
+    }
     if (want('prefs')) {
       openPrefs();
       await sleep(2500);
       const p = BrowserWindow.getAllWindows().find((x) => x.getTitle() === 'Lime Settings');
       if (p) await shot('14-prefs', p);
+      if (p) { await p.webContents.executeJavaScript('document.querySelector(".wheel-apps")?.scrollIntoView({ block: "start" })'); await sleep(400); await shot('14b-prefs-wheel-apps', p); }
       if (p) { await p.webContents.executeJavaScript('document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)'); await sleep(400); await shot('15-prefs-helpers', p); }
     }
     if (want('welcome')) {

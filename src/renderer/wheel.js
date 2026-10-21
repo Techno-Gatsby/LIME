@@ -6,14 +6,14 @@ const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 4
 const TAB = 76, PAD_L = 10, PAD_B = 20, OPEN = { w: 330, h: 416, cx: 165, cy: 194 };
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
-const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], pdfcraft: ['pdf', '#d93b3b'] };
+const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], cadcraft: ['compass', '#2563eb'], soundcraft: ['wave', '#e11d74'], wordcraft: ['doc', '#2b579a'], gridcraft: ['grid', '#1d7a45'], deckcraft: ['present', '#c2410c'], pdfcraft: ['pdf', '#d93b3b'] };
 const isMac = api.platform === 'darwin';
 const stage = $('#stage'), wheelEl = $('.wheel'), svg = $('.dial'), petalsG = $('.petals'), center = $('.center'), pill = $('.pill'), card = $('.card');
 const capName = $('.caption .name'), capMeta = $('.caption .meta');
 
 let settings = await applyTheme();
 const catalog = Object.fromEntries((await api.invoke('catalog')).map((t) => [t.id, t]));
-const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, over: false, peek: null, baseMode: 'convert', modKey: null, app: null, home: null, homeOn: false };
+const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, over: false, peek: null, baseMode: 'convert', modKey: null, app: null, home: null, homeOn: false, homeMore: false };
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null, origin = { x: 0, y: 0 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -103,6 +103,7 @@ function toIdle(keepJob) {
   S.dragSummon = false;
   S.peek = null;
   S.app = null;
+  S.homeMore = false;
   S.homeOn = false;
   peekSeq++;
   dwellOn(null);
@@ -119,6 +120,7 @@ function expand(why, at, peek) {
   S.peek = null;
   S.items = null;
   S.app = null;
+  S.homeMore = false;
   S.homeOn = !S.dragSummon;
   setState('ready');
   S.hot = -1;
@@ -179,9 +181,13 @@ const loadHome = () => (homeP ||= api.invoke('wheel:home').then((list) => { S.ho
 const appsList = () => (S.items ? S.items.apps || [] : S.home || []);
 const appName = (id) => appsList().find((a) => a.id === id)?.name || S.home?.find((a) => a.id === id)?.name || 'That app';
 const drillItem = (a) => ({ drill: a.id, label: a.name, hint: a.short, desc: `${a.role} · ${a.ring.length > 1 ? `${a.ring.length - 1} one-click action${a.ring.length === 2 ? '' : 's'}` : 'open the app'}` });
+const RECENT = { recent: true, label: 'Recent', hint: 'Results', desc: 'What Lime made lately' };
 function homeRing() {
   const a = S.home?.find((x) => x.id === S.app);
-  return a ? a.ring : [...(S.home || []).map(drillItem), { recent: true, label: 'Recent', hint: 'Results', desc: 'What Lime made lately' }];
+  if (a) return a.ring;
+  const list = S.home || [], first = list.filter((x) => x.place !== 2), second = list.filter((x) => x.place === 2);
+  if (S.homeMore && second.length) return [...second.map(drillItem), RECENT, { homeBack: true, label: 'Back', hint: 'First ring', desc: `Back to ${first.map((x) => x.name).slice(0, 3).join(', ')} and the rest` }];
+  return [...first.map(drillItem), second.length ? { homeMore: true, label: 'More apps', hint: `${second.length} apps`, desc: second.map((x) => x.name).join(', ') } : RECENT];
 }
 function currentApp() {
   if (atHome()) return S.home?.find((a) => a.id === S.app) || null;
@@ -189,8 +195,9 @@ function currentApp() {
   const list = S.items.apps || [];
   return list.find((a) => a.id === S.app) || (list.length === 1 ? list[0] : null);
 }
-const canBack = () => !!S.app && (atHome() || (S.mode === 'apps' && appsList().length > 1));
-function back() { S.app = null; S.hot = -1; redraw(); }
+const canBack = () => (!!S.app && (atHome() || (S.mode === 'apps' && appsList().length > 1))) || (atHome() && S.homeMore);
+function back() { if (S.app) S.app = null; else S.homeMore = false; S.hot = -1; redraw(); }
+function homePage(more) { S.homeMore = more; S.app = null; S.hot = -1; redraw(); }
 function redraw() {
   marks();
   drawPill();
@@ -385,7 +392,7 @@ function modHint() {
   return bits.length ? ` · hold ${bits.join(', ')}` : '';
 }
 function drawPill() {
-  if (atHome()) { pill.innerHTML = S.app ? `<button data-a="home" title="All apps (Esc)">${icon('back', 'sm')}All apps</button>` : ''; return; }
+  if (atHome()) { pill.innerHTML = S.app || S.homeMore ? `<button data-a="home" title="Back (Esc)">${icon('back', 'sm')}${S.app ? (S.homeMore ? 'More apps' : 'All apps') : 'First ring'}</button>` : ''; return; }
   const modes = S.state === 'open' ? MODES.filter(([m]) => m !== 'apps' || ringFor(m).length) : S.state === 'ready' && S.peek ? MODES.filter(([m]) => ringFor(m).length) : [];
   const label = (id, l) => (id === 'apps' && S.mode === 'apps' && canBack() ? `${icon('back', 'sm')}${esc(appName(S.app))}` : l);
   pill.innerHTML = modes.map(([id, l]) => `<button role="tab" data-m="${id}" aria-selected="${S.mode === id}">${label(id, l)}</button>`).join('');
@@ -442,6 +449,7 @@ async function pick(it, { options = false } = {}) {
   if (S.ring.indexOf(it) === S.hot) flick($('.petal.hot', petalsG), 'picked', 400);
   if (S.state === 'done' || S.state === 'failed') return doneAction(it);
   if (it.drill) { S.app = it.drill; S.hot = -1; redraw(); return; }
+  if (it.homeMore || it.homeBack) return homePage(!!it.homeMore);
   if (it.recent) return showRecent();
   if (it.appAll) return showAll({ app: it.appAll });
   if (it.off) { flash(it.desc || `${appName(it.app)} isn’t in this build of Lime`); return; }
@@ -743,7 +751,7 @@ function orderList(tool, changed) {
   return box;
 }
 const CATS = [['pdf', 'PDF'], ['image', 'Images'], ['media', 'Video & audio'], ['docs', 'Documents'], ['cad', 'CAD & vector'], ['archive', 'Archives'], ['utility', 'Utilities']];
-const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft' };
+const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft', cadcraft: 'CADCraft', soundcraft: 'SoundCraft', wordcraft: 'WordCraft', gridcraft: 'GridCraft', deckcraft: 'DeckCraft' };
 function fuzzy(q, text) {
   const t = text.toLowerCase();
   let score = 0, ti = 0, last = -2;
@@ -1013,11 +1021,12 @@ window.addEventListener('dragenter', (e) => {
 });
 let drillWait = null, drillT = null;
 function drillOn(it) {
-  const id = it?.drill || null;
+  const id = it?.drill || (it?.homeMore ? ':more' : it?.homeBack ? ':back' : null);
   if (id === drillWait) return;
   clearTimeout(drillT);
   drillWait = id;
-  if (id) drillT = setTimeout(() => { if (S.ring[S.hot]?.drill === id) { S.app = id; S.hot = -1; redraw(); } drillWait = null; }, DWELL);
+  const same = (x) => (x?.drill || (x?.homeMore ? ':more' : x?.homeBack ? ':back' : null)) === id;
+  if (id) drillT = setTimeout(() => { if (same(S.ring[S.hot])) { if (id === ':more' || id === ':back') homePage(id === ':more'); else { S.app = id; S.hot = -1; redraw(); } } drillWait = null; }, DWELL);
 }
 window.addEventListener('dragover', (e) => {
   if (!isFiles(e)) return;
@@ -1083,7 +1092,7 @@ api.on('wheel:dragEnded', () => {
 });
 api.on('wheel:flash', (msg) => flash(msg));
 api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
-api.on('settings', (s) => { if ((s.icon || null) !== (settings.icon || null)) { setIcon(s.icon); settings = s; iconChanged(); } settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
+api.on('settings', (s) => { if (JSON.stringify(s.rings) !== JSON.stringify(settings.rings)) { homeP = null; loadHome().then(() => { if (atHome() && !S.peek) { if (S.app && !S.home?.some((a) => a.id === S.app)) S.app = null; redraw(); } }); } if ((s.icon || null) !== (settings.icon || null)) { setIcon(s.icon); settings = s; iconChanged(); } settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
 
 const LENS = { bevel: 0.15, depth: 7, aberration: 0.08 }, DRIFT_R = 180, DRIFT_S = 14, NUDGE = 3, TILT = 2.5;
 const glass = { ptr: null, light: { x: -80, y: -150, ax: -80, ay: -150 }, drift: -2.1, nudge: { el: null, x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0 }, tilt: { x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0 }, raf: 0, last: 0, frame: 0, slow: 0, still: matchMedia('(prefers-reduced-motion: reduce)') };

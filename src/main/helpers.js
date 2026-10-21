@@ -74,10 +74,12 @@ const HELPERS = {
     },
   },
 };
-for (const id of ['photocraft', 'lightcraft', 'vectorcraft', 'designcraft', 'effectcraft', 'filmcraft', 'pdfcraft']) HELPERS[id] = {
-  name: `${id[0].toUpperCase()}${id.slice(1, -5)}Craft`, size: 90,
-  latest: (signal) => ghLatest(`storytold/${id}`, signal),
-  url: (v) => `https://github.com/storytold/${id}/releases/download/v${v}/${id}-${v}-${isWin ? `windows-${process.arch}-portable.zip` : isMac ? 'macos-universal.dmg' : `linux-${arm ? 'aarch64' : 'x86_64'}.tar.gz`}`,
+const CRAFT_NAMES = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft', cadcraft: 'CADCraft', soundcraft: 'SoundCraft', wordcraft: 'WordCraft', gridcraft: 'GridCraft', deckcraft: 'DeckCraft' };
+const CRAFT_REPO = { gridcraft: 'sheetcraft', deckcraft: 'slidecraft' };
+for (const [id, name] of Object.entries(CRAFT_NAMES)) HELPERS[id] = {
+  name, size: 90,
+  latest: (signal) => ghLatest(`storytold/${CRAFT_REPO[id] || id}`, signal),
+  url: (v) => `https://github.com/storytold/${CRAFT_REPO[id] || id}/releases/download/v${v}/${id}-${v}-${isWin ? `windows-${process.arch}-portable.zip` : isMac ? 'macos-universal.dmg' : `linux-${arm ? 'aarch64' : 'x86_64'}.tar.gz`}`,
   async unpack(file, dir) {
     if (isMac) return dmg(file, dir);
     await run(isWin ? sys32('tar.exe') : '/usr/bin/tar', ['-xf', file, '-C', dir]);

@@ -1560,6 +1560,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'compare-docs': [['v1.docx', 'v2.docx']], 'track-changes': [['tracked.docx']], 'mail-merge': [['letter.docx'], { data: fx('merge.csv') }], 'split-doc': [['chapters.docx']], 'watermark-doc': [['doc.docx']],
     'replace-text': [['doc.docx'], { find: 'lime', replace: 'Kiwi' }], 'clean-office': [['tracked.docx']], 'office-media': [['doc.docx']], 'compress-office': [['big.docx']], 'sheet-values': [['book.xlsx']], 'unhide-sheet': [['book.xlsx']],
     'split-sheets': [['book.xlsx']], 'tidy-sheet': [['book.xlsx']], 'sheet-formulas': [['book.xlsx']], 'slide-notes': [['notes.pptx']], 'merge-slides': [['deck.pptx', 'deck2.pptx']], 'pick-slides': [['notes.pptx'], { slides: '3, 1-2' }],
+    'cad-compare': [['test.dxf', 'lines.dxf']], 'mix-tracks': [['tone.wav', 'song.mp3']], 'doc-markup': [['tracked.docx']], 'doc-contents': [['chapters.docx']], 'doc-password': [['doc.docx'], { password: 'lime123' }], 'doc-fields': [['doc.docx']], 'doc-upgrade': [['doc.rtf']], 'doc-pages': [['letter.docx']], 'sheet-chart': [['sheet.xlsx']], 'sheet-table': [['sheet.xlsx']], 'sheet-recalc': [['book.xlsx']], 'sheet-check': [['book.xlsx']], 'make-slides': [['doc.md']], 'slides-gif': [['deck.pptx']], 'slide-graphics': [['deck.pptx']], 'session-mix': [['session.scraft']], 'session-stems': [['session.scraft']],
     'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
   };
   const SWEEP_REFUSE = { 'replace-text matchCase=true': /found no “lime”/, 'convert-document to=docx': /already DOCX/, 'model-drawing scale=5': /don’t fit on A3/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
@@ -1589,6 +1590,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(b.length, `${name} is empty`);
     if (MAGIC[e]) ok(MAGIC[e].test(head), `${name} is not ${e.toUpperCase()} inside: ${JSON.stringify(head.slice(0, 8))}`);
     if (e === 'pdf' || (e === 'ai' && head.startsWith('%PDF'))) return ok((await E('pdf').pageCount(o, opts.userPassword || opts.password)) >= 1, `${name} has no pages`);
+    if (e === 'docx' && opts.password && b.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1') return;
     if (ZIP_MAIN[e]) { const z = require('fflate').unzipSync(new Uint8Array(b)); ok(z[ZIP_MAIN[e]], `${name} lacks ${ZIP_MAIN[e]}`); if (e === 'xlsx' || e === 'ods') ok(XLSX.read(b).SheetNames.length, `${name} has no sheets`); return; }
     if (e === 'cbz') { const z = require('fflate').unzipSync(new Uint8Array(b)), pics = Object.keys(z).filter((k) => /\.(png|jpe?g|webp|gif)$/i.test(k)); ok(pics.length, `${name} has no pictures`); return ok((await sharp(Buffer.from(z[pics[0]])).metadata()).width > 0, `${pics[0]} does not decode`); }
     if (['zip', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(e)) return ok(/Everything is Ok/.test(sevenZip(['t', o]).toString()), `${name} fails the archive test`);
@@ -1624,6 +1626,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     }
     if (e === 'eps' || e === 'ai') return ok(head.startsWith('%!PS') || b.readUInt32BE(0) === 0xc5d0d3c6, `${name} is not PostScript`);
     if (e === 'emf') return ok(b.readUInt32LE(0) === 1 && head.slice(40, 44) === ' EMF', `${name} is not an EMF`);
+    if (e === 'dwg') return ok(/^AC10\d\d/.test(head), `${name} is not a DWG`);
     if (e === 'dng') return ok(/^(II\*\0|MM\0\*)/.test(head), `${name} is not a DNG`);
     if (e === 'fdf') return ok(head.startsWith('%FDF-'), `${name} is not an FDF`);
     if (e === 'xls' || e === 'aaf') { ok(b.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1', `${name} is not a compound file`); return ok(e !== 'xls' || XLSX.read(b).SheetNames.length, `${name} has no sheets`); }
@@ -1644,7 +1647,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
         return sha(parts.join('\n'));
       } catch (_) {}
     }
-    if (ZIP_MAIN[e] || e === 'cbz') { const z = require('fflate').unzipSync(new Uint8Array(b)); return sha(Object.keys(z).sort().map((k) => `${k}:${textSig(Buffer.from(z[k]))}`).join('\n')); }
+    if ((ZIP_MAIN[e] || e === 'cbz') && b.toString('latin1', 0, 2) === 'PK') { const z = require('fflate').unzipSync(new Uint8Array(b)); return sha(Object.keys(z).sort().map((k) => `${k}:${textSig(Buffer.from(z[k]))}`).join('\n')); }
     return textSig(b);
   };
   const sigOf = async (outs, results, opts) => sha([JSON.stringify(results.map((r) => [r.note, r.text])), ...(await Promise.all(outs.flatMap((o) => deep(o).map(async (f) => `${path.basename(o)}/${path.relative(o, f)}:${await sigOne(f, opts)}`))))].join('\n'));
@@ -1661,6 +1664,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     for (const o of outs) if (id === 'email-attachments') ok(deep(o).length && deep(o).every((f) => fs.statSync(f).size > 0), `${path.basename(o)} holds empty files`); else await valid(o, opts);
     sweepSig.set(`${id} ${label}`, await sigOf(outs, results, opts));
   };
+  const craftEngines = new Set(E('crafts').status().filter((c) => c.bundled).map((c) => c.id));
   for (const t of tools.catalog()) {
     if (t.editor || t.noFiles) continue;
     const base = defaults(t), runs = new Map([[JSON.stringify(base), 'defaults']]), pairs = [];
@@ -1677,7 +1681,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       }
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
-    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map(fx), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)) });
+    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : undefined;
+    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map(fx), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
     const opts = { ...defaults(tools.get(id)), ...more }, check = sweepCheck(id, 'batch', opts);
@@ -1877,7 +1882,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^convert-slides paper=(letter|a4)$/, 'Automatic picks the local paper size'], [/^pages-per-sheet orientation=portrait$/, 'four portrait pages fit best on a portrait sheet'],
     [/^pdf-page-size orientation=portrait$/, 'the pages are portrait already'], [/^overlay-pdf scale=actual$/, 'the overlay is the same size as the pages'],
     [/^export-layers hidden=true$/, 'the PSD has no hidden layers'], [/^split-scenes sensitivity=(1|100)$/, 'hard cuts are found at any sensitivity, as FilmCraft’s own tests expect'],
-    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'],
+    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^doc-contents levels=[234]$/, 'the document has headings on two levels only'],
     [/^replace-text (regex=true|everywhere=false)$/, 'a plain word reads the same as a pattern, and the document has no headers or notes'], [/^clean-office notes=true$/, 'a Word document has no speaker notes'],
     [/^office-media what=(pictures|all)$/, 'the document holds only a picture'], [/^tidy-sheet header=false$/, 'no row repeats the header row'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
     [/^convert-model (repair=true|keep=1)$/, 'the box is a clean mesh of 12 triangles, the fewest Simplify keeps'], [/^model-drawing scale=2$/, 'the stepped block fits at 2:1, the largest scale that fits'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
@@ -1896,6 +1901,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     return `${quiet.length} of ${sweepPairs.filter(([a, b]) => sweepSig.has(a) && sweepSig.has(b)).length} option values match their default run${odd.length ? `; unexplained: ${odd.join(', ')}` : ', all explained'}`;
   });
   results.push(...(await require('./accuracy.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./apps2.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));
