@@ -11,4 +11,7 @@ document.title = nameOf(data.file);
 const MODULES = { image: './imgedit.js', media: './mediaedit.js', studio: './studio.js' };
 const kind = String(data.mode || '').split(':')[0];
 const open = MODULES[kind] ? (await import(MODULES[kind])).openEditor : openEditor;
-open($('#view'), data, { icon, toast, api, go: () => window.close(), settings: () => settings });
+let askClose = null, closing = false;
+const go = () => { closing = true; api.invoke('editor:closeNow'); };
+open($('#view'), data, { icon, toast, api, go, settings: () => settings, onClose: (fn) => { askClose = fn; } });
+api.on('editor:close', async () => { closing = false; if (askClose) await askClose(); else go(); if (!closing) api.invoke('editor:closeCancel'); });

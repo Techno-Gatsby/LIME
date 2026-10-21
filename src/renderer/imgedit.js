@@ -69,6 +69,7 @@ const BUSY = { autoTone: 'Balancing tones', autoContrast: 'Stretching contrast',
 
 export function openEditor(view, { file }, ctx) {
   const { icon, toast, api, go } = ctx;
+  ctx.onClose?.(close);
   const call = (m, ...a) => api.invoke('edit:call', 'image', m, ...a);
   if (!document.querySelector('link[href="imgedit.css"]')) document.head.append(h('<link rel="stylesheet" href="imgedit.css">'));
   const st = {

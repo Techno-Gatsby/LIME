@@ -243,6 +243,7 @@ function flatView(canvas) {
 
 export function openEditor(view, { file }, ctx) {
   const { icon, toast, api, go } = ctx;
+  ctx.onClose?.(close);
   const call = (m, ...a) => api.invoke('edit:call', 'media', m, ...a);
   const ic = (n, size) => (IC[n] ? icon('doc', size).replace(/<path d="[^"]*"/, `<path d="${IC[n]}"`) : icon(n, size));
   if (!document.querySelector('link[href="mediaedit.css"]')) document.head.append(h('<link rel="stylesheet" href="mediaedit.css">'));

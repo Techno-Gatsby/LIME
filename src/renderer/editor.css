@@ -76,6 +76,7 @@ html, body, #view { height: 100%; overflow: hidden; }
 .tool-select .pdfpage:hover .pobj:not(:hover):not(.sel) { outline: 1px dashed color-mix(in srgb, var(--accent) 38%, transparent); outline-offset: 1px; }
 .pobj:hover { outline: 1.5px dashed var(--accent); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .pobj.sel { outline: 2px solid var(--accent); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.marquee { position: absolute; border: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; z-index: 6; }
 .obj.erase { background: transparent no-repeat 0 0 / 100% 100%; }
 .obj.erase .handle { display: none !important; }
 .obj.erase.sel { outline-style: dashed; }

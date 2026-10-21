@@ -676,6 +676,7 @@ async function bundledApp(id) {
           tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
           pipeline(unbrotli(), tar.stdin).catch(no);
         });
+        await new Promise((r) => { const x = spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', part], { stdio: 'ignore' }); x.on('error', r); x.on('close', r); });
       }
       if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
       await settle(() => fsp.rm(dir, { recursive: true, force: true }));
@@ -690,9 +691,16 @@ async function openApp(id, files = []) {
   if (!APPS[id]) throw new Error('Unknown app.');
   const app = installedApp(id) || (await bundledApp(id));
   if (!app) throw new Error(`${APPS[id].name} isn’t in this build of Lime.`);
-  const child = process.platform === 'darwin' ? spawn('open', ['-a', app, ...files], { detached: true, stdio: 'ignore' }) : spawn(app, files, { detached: true, stdio: 'ignore', cwd: path.dirname(app) });
-  child.on('error', () => {});
-  child.unref();
+  // A launch that dies at once (blocked, quarantined, a missing runtime) says so instead of silently doing nothing.
+  const launch = (cmd, args, opts) => new Promise((done) => {
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', ...opts });
+    child.on('error', (e) => done(e.code || e.message));
+    child.on('exit', (code, sig) => done(code || sig ? `exited with ${sig || code}` : null));
+    setTimeout(() => { done(null); child.unref(); }, 800);
+  });
+  let why = process.platform === 'darwin' ? await launch('open', ['-a', app, ...files]) : await launch(app, files, { cwd: path.dirname(app) });
+  if (why && U.isWin) { try { why = (await require('electron').shell.openPath(app)) || null; } catch (_) {} }
+  if (why) throw new Error(`${APPS[id].name} didn’t start (${why}).`);
   return app;
 }
 function status() {

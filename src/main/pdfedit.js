@@ -157,7 +157,8 @@ async function search(id, needle) {
 
 function pushUndo(s) {
   s.undo.push(s.bytes);
-  if (s.undo.length > 30) s.undo.shift();
+  // Thirty steps back, or fewer for big files: the copies kept for undo stay under 256 MB.
+  for (let n = 0, i = s.undo.length - 1; i >= 0; i--) { n += s.undo[i].length; if (i && (n > 256e6 || s.undo.length - i >= 30)) { s.undo.splice(0, i); break; } }
   s.redo = [];
   s.dirty = true;
 }
@@ -190,42 +191,51 @@ const FONT_DIRS = () => (process.platform === 'darwin' ? ['/System/Library/Fonts
   : process.platform === 'win32' ? [path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts'), process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Fonts')].filter(Boolean)
     : ['/usr/share/fonts', '/usr/local/share/fonts', path.join(U.os.homedir(), '.fonts'), path.join(U.os.homedir(), '.local', 'share', 'fonts')]);
 const utf16 = (b) => { let t = ''; for (let i = 0; i + 1 < b.length; i += 2) t += String.fromCharCode(b.readUInt16BE(i)); return t; };
+// The faces in a font file: one, or several in a collection (.ttc, which is what most of macOS's own fonts are).
 function fontNames(file) {
   const fd = U.fs.openSync(file, 'r');
   try {
     const read = (len, at) => { const b = Buffer.alloc(len); U.fs.readSync(fd, b, 0, len, at); return b; };
-    const head = read(12, 0), sig = head.readUInt32BE(0);
-    if (![0x00010000, 0x4f54544f, 0x74727565].includes(sig)) return null;
-    const n = head.readUInt16BE(4), dir = read(16 * n, 12), table = {};
-    for (let i = 0; i < n; i++) table[dir.toString('latin1', i * 16, i * 16 + 4)] = [dir.readUInt32BE(i * 16 + 8), dir.readUInt32BE(i * 16 + 12)];
-    if (table['OS/2'] && (read(2, table['OS/2'][0] + 8).readUInt16BE(0) & 0x000f) === 0x0002) return null;
-    if (!table.name || table.name[1] > 1 << 20) return null;
-    const t = read(table.name[1], table.name[0]), count = t.readUInt16BE(2), base = t.readUInt16BE(4), got = {};
-    for (let i = 0; i < count; i++) {
-      const r = 6 + i * 12, plat = t.readUInt16BE(r), enc = t.readUInt16BE(r + 2), lang = t.readUInt16BE(r + 4), id = t.readUInt16BE(r + 6), raw = t.subarray(base + t.readUInt16BE(r + 10), base + t.readUInt16BE(r + 10) + t.readUInt16BE(r + 8));
-      if (id !== 1 && id !== 2) continue;
-      const v = plat === 3 || plat === 0 ? utf16(raw) : plat === 1 && enc === 0 ? raw.toString('latin1') : null, rank = plat === 3 && lang === 0x409 ? 3 : plat === 1 ? 1 : 2;
-      if (v && (!got[id] || got[id].rank < rank)) got[id] = { v: v.trim(), rank };
-    }
-    return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular' } : null;
+    const face = (at) => {
+      const head = read(12, at), sig = head.readUInt32BE(0);
+      if (![0x00010000, 0x4f54544f, 0x74727565].includes(sig)) return null;
+      const n = head.readUInt16BE(4), dir = read(16 * n, at + 12), table = {};
+      for (let i = 0; i < n; i++) table[dir.toString('latin1', i * 16, i * 16 + 4)] = [dir.readUInt32BE(i * 16 + 8), dir.readUInt32BE(i * 16 + 12)];
+      if (table['OS/2'] && (read(2, table['OS/2'][0] + 8).readUInt16BE(0) & 0x000f) === 0x0002) return null;
+      if (!table.name || table.name[1] > 1 << 20) return null;
+      const t = read(table.name[1], table.name[0]), count = t.readUInt16BE(2), base = t.readUInt16BE(4), got = {};
+      for (let i = 0; i < count; i++) {
+        const r = 6 + i * 12, plat = t.readUInt16BE(r), enc = t.readUInt16BE(r + 2), lang = t.readUInt16BE(r + 4), id = t.readUInt16BE(r + 6), raw = t.subarray(base + t.readUInt16BE(r + 10), base + t.readUInt16BE(r + 10) + t.readUInt16BE(r + 8));
+        if (id !== 1 && id !== 2) continue;
+        const v = plat === 3 || plat === 0 ? utf16(raw) : plat === 1 && enc === 0 ? raw.toString('latin1') : null, rank = plat === 3 && lang === 0x409 ? 3 : plat === 1 ? 1 : 2;
+        if (v && (!got[id] || got[id].rank < rank)) got[id] = { v: v.trim(), rank };
+      }
+      return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular' } : null;
+    };
+    if (read(4, 0).readUInt32BE(0) !== 0x74746366) { const f = face(0); return f ? [{ ...f, at: file }] : []; }
+    const n = Math.min(read(4, 8).readUInt32BE(0), 64), offs = read(4 * n, 12), out = [];
+    for (let i = 0; i < n; i++) { const f = face(offs.readUInt32BE(4 * i)); if (f) out.push({ ...f, at: `${file}#${i}` }); }
+    return out;
   } finally { U.fs.closeSync(fd); }
 }
 let installed = null;
 async function fonts() {
   if (installed) return installed.list;
   const files = [];
-  const walk = (d, depth) => { let ents = []; try { ents = U.fs.readdirSync(d, { withFileTypes: true }); } catch (_) {} for (const e of ents) { const f = path.join(d, e.name); if (e.isDirectory() && depth < 3) walk(f, depth + 1); else if (/\.(ttf|otf)$/i.test(e.name)) files.push(f); } };
+  const walk = (d, depth) => { let ents = []; try { ents = U.fs.readdirSync(d, { withFileTypes: true }); } catch (_) {} for (const e of ents) { const f = path.join(d, e.name); if (e.isDirectory() && depth < 3) walk(f, depth + 1); else if (/\.(ttf|otf|ttc)$/i.test(e.name)) files.push(f); } };
   FONT_DIRS().forEach((d) => walk(d, 0));
   const map = new Map();
   for (const f of files.slice(0, 4000)) {
-    let n = null;
-    try { n = fontNames(f); } catch (_) {}
-    if (!n || n.family.startsWith('.')) continue;
-    const st = n.style.toLowerCase(), bold = /bold|black|heavy/.test(st), italic = /italic|oblique/.test(st);
-    const slot = bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : /^(regular|normal|book|roman|medium|plain)$/.test(st) ? 'regular' : null;
-    if (!slot) continue;
-    if (!map.has(n.family)) map.set(n.family, {});
-    map.get(n.family)[slot] ||= f;
+    let faces = [];
+    try { faces = fontNames(f); } catch (_) {}
+    for (const n of faces) {
+      if (n.family.startsWith('.')) continue;
+      const st = n.style.toLowerCase(), bold = /bold|black|heavy/.test(st), italic = /italic|oblique/.test(st);
+      const slot = bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : /^(regular|normal|book|roman|medium|plain)$/.test(st) ? 'regular' : null;
+      if (!slot) continue;
+      if (!map.has(n.family)) map.set(n.family, {});
+      map.get(n.family)[slot] ||= n.at;
+    }
   }
   const list = [...map.entries()].filter(([, v]) => v.regular).map(([family, v]) => ({ family, bold: !!v.bold, italic: !!v.italic })).sort((a, b) => a.family.localeCompare(b.family));
   installed = { map, list };

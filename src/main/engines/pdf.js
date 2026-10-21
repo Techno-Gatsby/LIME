@@ -78,6 +78,20 @@ const STD = {
 };
 const WINANSI = /^[\x20-\x7e\u00a0-\u00ff\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178\n\r\t]*$/;
 
+// One face of a TrueType collection as a font of its own: its table directory, then the tables it points at.
+function ttcFace(buf, i) {
+  if (buf.readUInt32BE(0) !== 0x74746366) return buf;
+  const at = buf.readUInt32BE(12 + 4 * Math.min(i, buf.readUInt32BE(8) - 1)), n = buf.readUInt16BE(at + 4);
+  const head = Buffer.from(buf.subarray(at, at + 12 + 16 * n)), parts = [head];
+  let off = head.length;
+  for (let t = 0; t < n; t++) {
+    const r = 12 + 16 * t, src = head.readUInt32BE(r + 8), len = head.readUInt32BE(r + 12), pad = (4 - (len % 4)) % 4;
+    head.writeUInt32BE(off, r + 8);
+    parts.push(buf.subarray(src, src + len), Buffer.alloc(pad));
+    off += len + pad;
+  }
+  return Buffer.concat(parts);
+}
 function fontCache(doc) {
   const cache = new Map();
   let fkReady = false;
@@ -92,7 +106,7 @@ function fontCache(doc) {
     else {
       if (!fkReady) { doc.registerFontkit(fontkit); fkReady = true; }
       const file = key.startsWith('file:') ? key.slice(5) : path.join(U.cfg.data, 'fonts', FONT_FILES[key] || FONT_FILES[key.split('-')[0]] || FONT_FILES.sans);
-      const bytes = await fsp.readFile(file);
+      const face = /^(.*\.ttc)#(\d+)$/i.exec(file), bytes = face ? ttcFace(await fsp.readFile(face[1]), +face[2]) : await fsp.readFile(file);
       // Cutting a font down to the letters used breaks some fonts' glyphs (Carlito's, and who knows which installed ones),
       // so only the Noto fonts, which are known to survive it, and very large fonts are cut down.
       const subset = /[\\/]Noto[^\\/]*$/.test(file) || bytes.length > 3e6;

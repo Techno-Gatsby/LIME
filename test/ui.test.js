@@ -807,6 +807,15 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ejs('document.querySelector(\'[data-tool="select"]\').click()');
     if (!(await wait('document.querySelectorAll(".pobj").length >= 3'))) throw new Error(`Select shows ${await ejs('document.querySelectorAll(".pobj").length')} things on the page`);
     const kinds = await ejs('[...document.querySelectorAll(".pobj")].map((x) => x.title.split(":")[0])');
+    // A box dragged across the table and the picture picks both; Escape lets go of them.
+    const rect = (want) => ejs(`(() => { const r = document.querySelector('.pobj[title^="${want}"]').getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; })()`);
+    const tb = await rect('Table'), pc = await rect('Picture'), from = { x: Math.round(tb.l - 12), y: Math.round(tb.b - 6) }, to = { x: Math.round(pc.l + 60), y: Math.round(pc.b + 10) };
+    wc.sendInputEvent({ type: 'mouseDown', x: from.x, y: from.y, button: 'left', clickCount: 1 });
+    for (let n = 1; n <= 6; n++) { wc.sendInputEvent({ type: 'mouseMove', x: Math.round(from.x + ((to.x - from.x) * n) / 6), y: Math.round(from.y + ((to.y - from.y) * n) / 6), modifiers: ['leftButtonDown'] }); await sleep(30); }
+    wc.sendInputEvent({ type: 'mouseUp', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+    if (!(await wait('document.querySelectorAll(".pobj.sel").length >= 2 && /objects/.test(document.querySelector(".props h3")?.textContent || "")', 4000))) throw new Error(`a box across the table and the picture picked ${await ejs('document.querySelectorAll(".pobj.sel").length')}: ${await ejs('document.querySelector(".props h3")?.textContent')}`);
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    if (!(await wait('!document.querySelector(".pobj.sel")', 3000))) throw new Error('Escape did not let go of the picked objects');
     for (const want of ['Table', 'Picture']) {
       await ejs(`document.querySelector('.pobj[title^="${want}"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`);
       if (!(await wait(`document.querySelector('.props h3')?.textContent === '${want}'`, 3000))) throw new Error(`picking the ${want.toLowerCase()} did not select it`);

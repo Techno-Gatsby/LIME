@@ -53,6 +53,7 @@ const LIST_MARK = /^(• |\d+\. )/;
 
 export function openEditor(view, { file, mode }, ctx) {
   const { icon, toast, api, go } = ctx;
+  ctx.onClose?.(close);
   const call = (m, ...a) => api.invoke('editor:call', m, ...a);
   const pref = ctx.settings() || {};
   const st = {
@@ -178,7 +179,7 @@ export function openEditor(view, { file, mode }, ctx) {
     drawMarks(i);
   }
   // Zoom presets in the toolbar menu; the current zoom shows first when it isn't one of them.
-  const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+  const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8];
   function zoomMenu() {
     const z = Math.round(st.zoom * 100), sel = $('.zoom', root);
     sel.innerHTML = `${ZOOMS.includes(z / 100) ? '' : `<option value="${st.zoom}">${z}%</option>`}${ZOOMS.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}<option value="width">Fit width</option><option value="page">Fit page</option>`;
@@ -202,7 +203,7 @@ export function openEditor(view, { file, mode }, ctx) {
     decorate();
   }
   async function renderPage(p, i) {
-    const scale = Math.min(4, k() * (window.devicePixelRatio || 1));
+    const scale = Math.min(6, k() * (window.devicePixelRatio || 1));
     const have = st.renders.get(i);
     if (have && !have.stale && Math.abs(have.scale - scale) < 0.01) return;
     if (p.rendering === scale && !have?.stale) return;
@@ -229,8 +230,9 @@ export function openEditor(view, { file, mode }, ctx) {
   let rerenderT = null;
   // Zooming keeps the spot under the pointer (or the middle of the view) where it is, so the page doesn't jump away;
   // the pages are drawn sharp again once it settles.
-  function setZoom(z, at) {
-    const old = st.zoom, nz = Math.min(5, Math.max(0.2, z));
+  function setZoom(z, at, fit = null) {
+    st.fit = fit;
+    const old = st.zoom, nz = Math.min(8, Math.max(0.2, z));
     if (Math.abs(nz - old) < 1e-4 || !st.pages.length) return;
     const r = pagesEl.getBoundingClientRect(), ax = at ? at.x : r.left + pagesEl.clientWidth / 2, ay = at ? at.y : r.top + pagesEl.clientHeight / 2;
     const page = st.pages.find((p) => { const b = p.el.getBoundingClientRect(); return ay >= b.top - 12 && ay <= b.bottom + 12; }) || st.pages.find((p) => p.visible) || st.pages[0];
@@ -246,12 +248,12 @@ export function openEditor(view, { file, mode }, ctx) {
   function fitWidth() {
     const avail = pagesEl.clientWidth - 96;
     const w = Math.max(...st.pages.map((p) => p.w));
-    setZoom(Math.min(3, avail / (w * PT)));
+    setZoom(Math.min(3, avail / (w * PT)), undefined, 'width');
   }
   function fitPage() {
     const p = st.pages.find((x) => x.visible) || st.pages[0];
     if (!p) return;
-    setZoom(Math.min((pagesEl.clientWidth - 96) / (p.w * PT), (pagesEl.clientHeight - 56) / (p.h * PT)));
+    setZoom(Math.min((pagesEl.clientWidth - 96) / (p.w * PT), (pagesEl.clientHeight - 56) / (p.h * PT)), undefined, 'page');
     p.el.scrollIntoView({ block: 'center' });
   }
   // Scrolls to a page, or to a box on it, which flashes so the eye finds it.
@@ -413,32 +415,58 @@ export function openEditor(view, { file, mode }, ctx) {
     const list = await st.objs.get(i);
     if (st.tool !== 'select' || disposed) return;
     p.layer.querySelectorAll('.pobj').forEach((x) => x.remove());
-    const kk = k(), gone = new Set(st.pending.filter((o) => o.type === 'erase' && o.page === i).map((o) => o.objId));
+    const kk = k(), gone = new Set(st.pending.filter((o) => o.type === 'erase' && o.page === i).map((o) => o.objId)), picked = new Set(pickedObjs().map((x) => x.id));
     const under = p.layer.firstChild;
     for (const it of list) {
       if (gone.has(it.id)) continue;
       const [x0, y0, x1, y1] = it.bbox;
-      const el = h(`<div class="pobj${st.pick?.obj.id === it.id ? ' sel' : ''}" data-id="${it.id}" title="${KIND[it.kind]}: click to select, then Delete" style="left:${x0 * kk}px;top:${y0 * kk}px;width:${(x1 - x0) * kk}px;height:${(y1 - y0) * kk}px"></div>`);
-      el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); pickObj(i, it); });
+      const el = h(`<div class="pobj${picked.has(it.id) ? ' sel' : ''}" data-id="${it.id}" title="${KIND[it.kind]}: click to select (Shift adds), then Delete" style="left:${x0 * kk}px;top:${y0 * kk}px;width:${(x1 - x0) * kk}px;height:${(y1 - y0) * kk}px"></div>`);
+      el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); pickObj(i, it, e.shiftKey); });
       p.layer.insertBefore(el, under);
     }
   }
   function hideObjects() { pagesEl.querySelectorAll('.pobj').forEach((x) => x.remove()); st.pick = null; }
-  function pickObj(i, it) {
+  const pickedObjs = () => (st.pick ? [st.pick.obj, ...(st.pick.more || [])] : []);
+  // Shift adds to what's picked (and takes it out again), so a table drawn as many pieces goes in one Delete.
+  function pickObj(i, it, add) {
     commitEditing();
     st.sel = null;
     st.annSel = null;
     st.pending.forEach((x) => x.el?.classList.remove('sel'));
-    st.pick = { page: i, obj: it };
-    pagesEl.querySelectorAll('.pobj').forEach((x) => x.classList.toggle('sel', x.dataset.id === it.id));
+    let all = [it];
+    if (add && st.pick?.page === i) { const had = pickedObjs(); all = had.some((x) => x.id === it.id) ? had.filter((x) => x.id !== it.id) : [...had, it]; }
+    st.pick = all.length ? { page: i, obj: all[0], more: all.slice(1) } : null;
+    const ids = new Set(all.map((x) => x.id));
+    pagesEl.querySelectorAll('.pobj').forEach((x) => x.classList.toggle('sel', ids.has(x.dataset.id)));
     marksChanged();
     renderProps();
   }
+  // Dragging a box in Select picks every page object it touches.
+  function marquee(e, i, x0, y0) {
+    const p = st.pages[i], box = h('<div class="marquee"></div>');
+    let r = null;
+    const mv = (ev) => {
+      const [x1, y1] = ptOf(ev, i), kk = k();
+      if (!box.isConnected) { if (Math.hypot(x1 - x0, y1 - y0) * kk < 6) return; p.layer.append(box); }
+      r = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+      Object.assign(box.style, { left: `${r[0] * kk}px`, top: `${r[1] * kk}px`, width: `${(r[2] - r[0]) * kk}px`, height: `${(r[3] - r[1]) * kk}px` });
+    };
+    const up = async () => {
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up);
+      box.remove();
+      if (!r || !st.objs.has(i)) return;
+      const gone = new Set(st.pending.filter((o) => o.type === 'erase' && o.page === i).map((o) => o.objId));
+      const hit = (await st.objs.get(i)).filter((it) => !gone.has(it.id) && it.bbox[0] < r[2] && it.bbox[2] > r[0] && it.bbox[1] < r[3] && it.bbox[3] > r[1]);
+      if (hit.length && st.tool === 'select') { st.pick = null; hit.forEach((it, n) => pickObj(i, it, n > 0)); }
+    };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  }
   function erasePicked() {
-    const { page, obj } = st.pick;
+    const { page } = st.pick, objs = pickedObjs();
     st.pick = null;
-    const [x0, y0, x1, y1] = obj.bbox;
-    const o = addObj({ type: 'erase', page, rect: [x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2], bbox: obj.bbox, kind: obj.kind, objId: obj.id });
+    let o = null;
+    for (const obj of objs) { const [x0, y0, x1, y1] = obj.bbox; o = addObj({ type: 'erase', page, rect: [x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2], bbox: obj.bbox, kind: obj.kind, objId: obj.id }); }
     showObjects(page);
     select(o);
     return o;
@@ -819,7 +847,7 @@ export function openEditor(view, { file, mode }, ctx) {
     const s = st.style;
     const [x0, y0] = ptOf(e, i);
     st.selPages = new Set([i]);
-    if (st.tool === 'select' || st.tool === 'edittext') { select(null); if (st.annSel) { st.annSel = null; side.draw(); marksChanged(); } return; }
+    if (st.tool === 'select' || st.tool === 'edittext') { select(null); if (st.annSel) { st.annSel = null; side.draw(); marksChanged(); } if (st.tool === 'select') marquee(e, i, x0, y0); return; }
     if (st.tool === 'addtext') {
       e.preventDefault();
       const o = addObj({ type: 'text', page: i, x: x0, y: y0 + s.size * 0.86, text: '', size: s.size, font: s.font, bold: s.bold, italic: s.italic, color: s.color, underline: s.underline, strike: s.strike, bg: s.bg, border: s.border, align: s.align, lineHeight: s.lineHeight, spacing: s.spacing, opacity: s.opacity });
@@ -1166,8 +1194,8 @@ export function openEditor(view, { file, mode }, ctx) {
     const button = (html, fn, cls = 'btn') => { const b = h(`<button class="${cls}">${html}</button>`); b.addEventListener('click', fn); return b; };
     const kinds = (list, val, fn) => { const el = h(`<div class="seg full">${list.map(([id, ic, label]) => `<button class="tb" data-k="${id}" aria-pressed="${val === id}" title="${label}">${icon(ic)}<span class="lbl">${label}</span></button>`).join('')}</div>`); el.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) { fn(b.dataset.k); renderProps(); } }); return el; };
     if (!o && st.pick) {
-      const it = st.pick.obj;
-      head(KIND[it.kind]);
+      const it = st.pick.obj, n = pickedObjs().length;
+      head(n > 1 ? `${n} objects` : KIND[it.kind]);
       if (it.text) props.append(h(`<p class="tip">“${esc(it.text)}${it.text.length >= 80 ? '…' : ''}”</p>`));
       props.append(h(`<p class="tip">Delete takes it out of the file when you save: ${it.kind === 'table' ? 'its lines, shading and text' : it.kind === 'image' ? 'the picture' : it.kind === 'drawing' ? 'the lines and shapes' : 'the text'}, leaving what is around it as it is.</p>`));
       const row = h(`<div class="cmrow"></div>`);
@@ -1658,6 +1686,7 @@ export function openEditor(view, { file, mode }, ctx) {
       layout(false);
       return true;
     });
+    if (ok && as) { document.title = nameOf(target); const b = $('.doc b', root); if (b) { b.textContent = nameOf(target); b.title = target; } }
     if (ok) toast(`Saved ${nameOf(target)}${redactions ? `, with ${redactions} redaction${redactions === 1 ? '' : 's'} applied` : ''}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', target) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', target) }] });
     updateChrome();
     return !!ok;
@@ -1672,7 +1701,7 @@ export function openEditor(view, { file, mode }, ctx) {
   async function redo() { if (st.sess.canRedo) await busy('Redoing…', async () => { st.sess = await call('redo', st.sess.id); layout(true); }); }
   async function close() {
     commitEditing();
-    const dirty = st.pending.some((o) => serialize(o)) || st.sess?.dirty || Object.keys(st.fieldVals).length > 0;
+    const dirty = st.pending.some((o) => serialize(o)) || st.sess?.dirty || Object.keys(st.fieldVals).length > 0 || st.saveOpts.protect !== undefined;
     if (dirty) {
       const choice = await confirm3(`Save changes to ${nameOf(file)}?`, 'Your edits will be lost if you don’t save them.');
       if (choice === 'cancel') return;
@@ -1825,12 +1854,13 @@ export function openEditor(view, { file, mode }, ctx) {
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', up);
   }, true);
-  const ro = new ResizeObserver(() => {});
+  let fitT = null;
+  const ro = new ResizeObserver(() => { if (st.fit) { clearTimeout(fitT); fitT = setTimeout(() => (st.fit === 'page' ? fitPage() : fitWidth()), 80); } });
   ro.observe(pagesEl);
 
   load();
 
-  return () => {
+  const dispose = () => {
     disposed = true;
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('keydown', onSpace);
@@ -1840,4 +1870,6 @@ export function openEditor(view, { file, mode }, ctx) {
     document.querySelector('.popmenu')?.remove();
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
+  window.addEventListener('pagehide', dispose, { once: true });
+  return dispose;
 }

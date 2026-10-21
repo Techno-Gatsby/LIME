@@ -99,8 +99,8 @@ async function doFold({ keepJob = false } = {}) {
     requestAnimationFrame(show);
     setTimeout(show, 60);
   }
-  // Files dragged over it while it folded: open again for them.
-  if (S.over && S.state === 'idle') expand('edge');
+  // Files dragged over it while it folded, or a Shift-drag that arrived meanwhile: open again for them.
+  if (pendingShift && S.state === 'idle') { const p = pendingShift; pendingShift = null; expand('shift', p.at, p.peek); } else if (S.over && S.state === 'idle') expand('edge');
 }
 function toIdle(keepJob) {
   closeCard(true);
@@ -962,10 +962,19 @@ function dragMods(e) {
 // under the pointer (a slice that is replaced never reports its leave), and once the count was off, dragging onto the
 // lime stopped opening the wheel. Moving between parts of the wheel fires an enter just before its leave, so a leave
 // with no enter in the same moment is the drag leaving the window.
-let entering = false;
+let entering = false, overT = null, pendingShift = null;
 function dragOver(on) {
   S.over = on;
   stage.classList.toggle('over', on);
+  clearTimeout(overT);
+  // Drag events can stop without a leave (a drop taken elsewhere, a drag that ended): a quiet moment means it's gone.
+  if (on) overT = setTimeout(dragLeft, 1500);
+}
+function dragLeft() {
+  if (!S.over) return;
+  dragOver(false);
+  dwellOn(null);
+  if (S.state === 'ready') { setHot(-1); armFold(1400, { drag: true }); }
 }
 window.addEventListener('dragenter', (e) => {
   if (!isFiles(e)) return;
@@ -992,6 +1001,7 @@ window.addEventListener('dragover', (e) => {
   if (!isFiles(e)) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
+  if (S.over) { clearTimeout(overT); overT = setTimeout(dragLeft, 1500); }
   if (S.state !== 'ready' || !(S.peek || atHome())) return;
   if (S.peek) dragMods(e);
   const tab = e.target.closest?.('.pill button[data-m]');
@@ -999,12 +1009,7 @@ window.addEventListener('dragover', (e) => {
   setHot(tab ? -1 : ringIndexAt(e.clientX, e.clientY));
   drillOn(tab ? null : S.ring[S.hot]);
 });
-window.addEventListener('dragleave', () => {
-  if (entering || !S.over) return;
-  dragOver(false);
-  dwellOn(null);
-  if (S.state === 'ready') { setHot(-1); armFold(1400, { drag: true }); }
-});
+window.addEventListener('dragleave', () => { if (!entering) dragLeft(); });
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   dragOver(false);
@@ -1036,11 +1041,22 @@ api.on('wheel:files', (files) => openWith(files));
 api.on('wheel:summon', ({ why, at, peek, tab }) => {
   // The window is tucked at the edge but the page thinks it's open (a fold that never finished): start over from the lime.
   if (tab && !folding && ['ready', 'open', 'done', 'failed'].includes(S.state)) { toIdle(); stage.classList.remove('folding', 'tucking'); }
-  if (S.state === 'idle') expand(why, at, peek); else if (why === 'show') window.focus(); else if (S.state === 'ready' && peek?.length) setPeek(peek);
+  if (why === 'shift') {
+    // Mid-fold, the wheel opens beside the file once the lime is back; over a result, it starts over for the new file.
+    if (folding) { pendingShift = { at, peek }; return; }
+    if (['done', 'failed'].includes(S.state)) toIdle();
+  }
+  if (S.state === 'idle') expand(why, at, peek);
+  else if (why === 'show') window.focus();
+  else if (S.state === 'ready') {
+    if (why === 'shift') { S.dragSummon = true; clearTimeout(foldT); }
+    if (peek?.length) setPeek(peek); else if (why === 'shift' && !S.peek) api.invoke('wheel:peek').then((p) => p?.length && setPeek(p)).catch(() => {});
+  }
 });
 api.on('wheel:peek', (files) => { if (S.state === 'ready') setPeek(files); });
 api.on('wheel:dragEnded', () => {
   // The system says the drag is over, so nothing is over the wheel any more, whatever its events said.
+  pendingShift = null;
   dragOver(false);
   dwellOn(null);
   if (S.state === 'ready' && S.dragSummon) setTimeout(() => { if (S.state === 'ready' && !S.over && !S.dropping) fold(); }, 260);

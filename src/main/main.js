@@ -340,7 +340,6 @@ function startWatcher() {
     },
     onShift: () => {
       if (settings.shiftDrag === false) return true;
-      if (mode !== 'tab') return false;
       shiftSummon(screen.getCursorScreenPoint());
       return true;
     },
@@ -365,6 +364,7 @@ function rebuildWheel(why) {
   wheel = null;
   placed = null; mode = 'tab'; bloomAt = null; catching = false; moving = false;
   follow(false);
+  try { old?.hide(); } catch (_) {}
   try { old?.destroy(); } catch (_) {}
   createWheel();
 }
@@ -471,6 +471,14 @@ function openEditor(file, mode) {
   win.once('ready-to-show', () => win.show());
   editors.add(win);
   win.on('closed', () => editors.delete(win));
+  // Closing from the title bar, or quitting, asks the editor first so unsaved edits get their prompt.
+  win.on('close', (e) => {
+    if (win.closing || win.webContents.isCrashed()) return;
+    e.preventDefault();
+    win.quitAfter = !!app.isQuitting;
+    app.isQuitting = false;
+    win.webContents.send('editor:close');
+  });
   return true;
 }
 
@@ -692,6 +700,8 @@ function registerIpc() {
   h('jobs:list', () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt));
   h('editor:open', (file, mode) => openEditor(file, mode));
   hE('editor:data', (e) => BrowserWindow.fromWebContents(e.sender)?.editorData || null);
+  hE('editor:closeNow', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (!w || w.isDestroyed()) return false; w.closing = true; w.close(); if (w.quitAfter) { app.isQuitting = true; app.quit(); } return true; });
+  hE('editor:closeCancel', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w?.quitAfter && !wheel) createWheel(); if (w) w.quitAfter = false; return true; });
   h('cells:pick', (file, value) => (file ? pickCells(file, value || '') : null));
   hE('picker:data', async (e) => { const d = BrowserWindow.fromWebContents(e.sender)?.pickerData; return d ? { ...d, ...(await call('sheetPreview', d.file)) } : null; });
   hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });

@@ -71,6 +71,7 @@ const mediaUrl = (p) => `media://file/${encodeURIComponent(p)}`;
 
 export function openEditor(view, { file, mode }, ctx) {
   const { toast, api, go } = ctx;
+  ctx.onClose?.(close);
   const app = String(mode || '').split(':')[1];
   const icon = (n, size = '') => (MORE[n] ? svg(MORE[n], size) : ctx.icon(n, size));
   const call = (m, ...a) => api.invoke('edit:call', 'studio', m, ...a);

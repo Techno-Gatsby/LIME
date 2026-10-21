@@ -1867,7 +1867,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const bad = [];
     for (const t of tools.TOOLS.filter((x) => x.run && !x.noFiles)) {
       const ins = sweepIn(t).map(fx), base = defaults(t);
-      for (const o of [null, ...(t.options || []).filter((x) => ['to', 'format'].includes(x.key))]) for (const v of o ? o.choices.map(([x]) => x) : [null]) {
+      for (const o of [null, ...(t.options || []).filter((x) => ['to', 'format'].includes(x.key) && x.choices)]) for (const v of o ? o.choices.map(([x]) => x) : [null]) {
         const opts = o ? { ...base, [o.key]: v } : base, s = tools.suggest(t.id, ins, opts), e = typeof t.ext === 'function' ? t.ext(opts, ins) : t.ext, at = `${t.id}${o ? ` ${o.key}=${v}` : ''}`;
         if (t.ext !== undefined && !(typeof e === 'string' && /^[a-z0-9]+(\.[a-z0-9]+)?$/.test(e))) bad.push(`${at} has extension ${JSON.stringify(e)}`);
         if (s.kind === 'file' && !(s.ext && s.name.endsWith(`.${s.ext}`) && s.name.length > s.ext.length + 1)) bad.push(`${at} suggests ${s.name}`);
