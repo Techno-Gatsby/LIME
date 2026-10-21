@@ -1,6 +1,6 @@
 'use strict';
 
-const { PDFDocument, rgb, degrees, BlendMode, LineCapStyle } = require('pdf-lib');
+const { PDFDocument, rgb, degrees, BlendMode, LineCapStyle, setCharacterSpacing } = require('pdf-lib');
 const P = require('./engines/pdf');
 const U = require('./engines/util');
 const { fsp, path } = U;
@@ -14,6 +14,7 @@ async function loadState(s, bytes) {
   s.doc = m.Document.openDocument(bytes, 'application/pdf');
   if (s.password && s.doc.needsPassword()) s.doc.authenticatePassword(s.password);
   s.textCache = new Map();
+  s.objCache = new Map();
 }
 function info(s) {
   const pages = [];
@@ -50,6 +51,87 @@ async function render(id, index, scale) {
   const pix = page.toPixmap(m.Matrix.scale(scale, scale), m.ColorSpace.DeviceRGB, false, true);
   return Buffer.from(pix.asPNG());
 }
+// The page under one line, drawn without its text. The editor shows this where a line is being edited, so cell
+// shading, rules and pictures behind it stay exactly as they are; saving removes only the text too.
+// With mode 'erase' it shows what removing everything in the box leaves, as saving does it: drawings wholly inside
+// go, and text and pictures lose what is inside the box.
+const boundPath = (m, path, stroke, ctm) => { try { return path.getBounds(stroke || null, ctm); } catch (_) { return path.getBounds(new m.StrokeState(), ctm); } };
+async function patch(id, index, bbox, scale, mode = 'text') {
+  const s = get(id);
+  const m = await P.mupdf();
+  const page = s.doc.loadPage(index), area = page.getBounds(), erase = mode === 'erase';
+  const [x0, y0, x1, y1] = [bbox[0] - 1, bbox[1] - 1, bbox[2] + 1, bbox[3] + 1];
+  const pix = new m.Pixmap(m.ColorSpace.DeviceRGB, [0, 0, Math.max(1, Math.ceil((x1 - x0) * scale)), Math.max(1, Math.ceil((y1 - y0) * scale))], false);
+  pix.clear(255);
+  const dev = new m.DrawDevice(m.Matrix.concat(m.Matrix.translate(-x0, -y0), m.Matrix.scale(scale, scale)), pix);
+  const covered = (r) => r[0] >= x0 && r[1] >= y0 && r[2] <= x1 && r[3] <= y1;
+  const hole = new m.Path();
+  hole.rect(area[0], area[1], area[2], area[3]);
+  hole.rect(x0, y0, x1, y1);
+  const outside = (draw) => { dev.clipPath(hole, true, m.Matrix.identity); draw(); dev.popClip(); };
+  page.run(new m.Device({
+    fillPath: (p, eo, t, ...a) => { if (!(erase && covered(boundPath(m, p, null, t)))) dev.fillPath(p, eo, t, ...a); },
+    strokePath: (p, st, t, ...a) => { if (!(erase && covered(boundPath(m, p, st, t)))) dev.strokePath(p, st, t, ...a); },
+    clipPath: (...a) => dev.clipPath(...a), clipStrokePath: (...a) => dev.clipStrokePath(...a),
+    fillText: (...a) => { if (erase) outside(() => dev.fillText(...a)); }, strokeText: (...a) => { if (erase) outside(() => dev.strokeText(...a)); },
+    clipText: (...a) => dev.clipText(...a), clipStrokeText: (...a) => dev.clipStrokeText(...a), ignoreText: (...a) => dev.ignoreText(...a),
+    fillShade: (...a) => dev.fillShade(...a), clipImageMask: (...a) => dev.clipImageMask(...a), popClip: () => dev.popClip(),
+    fillImage: (...a) => (erase ? outside(() => dev.fillImage(...a)) : dev.fillImage(...a)), fillImageMask: (...a) => (erase ? outside(() => dev.fillImageMask(...a)) : dev.fillImageMask(...a)),
+    beginMask: (...a) => dev.beginMask(...a), endMask: () => dev.endMask(), beginGroup: (...a) => dev.beginGroup(...a), endGroup: () => dev.endGroup(),
+    beginTile: (...a) => dev.beginTile(...a), endTile: () => dev.endTile(), beginLayer: (...a) => dev.beginLayer(...a), endLayer: () => dev.endLayer(),
+  }), m.Matrix.identity);
+  dev.close();
+  return Buffer.from(pix.asPNG());
+}
+// The page's own content as things to pick in the editor: each picture, each drawing (paths that touch are one
+// drawing, so a table's rules and cell fills come together, with the text inside them), and each block of text.
+// Page-filling backgrounds are left out, so a click never picks the whole page.
+async function objects(id, index) {
+  const s = get(id);
+  if (s.objCache.has(index)) return s.objCache.get(index);
+  const m = await P.mupdf();
+  const page = s.doc.loadPage(index), area = page.getBounds(), whole = (area[2] - area[0]) * (area[3] - area[1]);
+  const size = (r) => Math.max(0, r[2] - r[0]) * Math.max(0, r[3] - r[1]);
+  const clip = (r) => [Math.max(r[0], area[0]), Math.max(r[1], area[1]), Math.min(r[2], area[2]), Math.min(r[3], area[3])];
+  const paths = [], images = [];
+  const keep = (list, r) => { if (!r.every(Number.isFinite)) return; const c = clip(r); if (c[2] - c[0] < 0.5 && c[3] - c[1] < 0.5) return; if (size(c) > whole * 0.85) return; list.push(c); };
+  page.run(new m.Device({
+    fillPath: (p, eo, t) => keep(paths, boundPath(m, p, null, t)),
+    strokePath: (p, st, t) => keep(paths, boundPath(m, p, st, t)),
+    fillImage: (img, t) => keep(images, m.Rect.transform([0, 0, 1, 1], t)),
+    fillImageMask: (img, t) => keep(images, m.Rect.transform([0, 0, 1, 1], t)),
+  }), m.Matrix.identity);
+  // Paths within 2 pt of each other join one drawing (sorted by left edge, so only neighbours are compared).
+  const near = (a, b, g = 2) => a[0] - g <= b[2] && b[0] - g <= a[2] && a[1] - g <= b[3] && b[1] - g <= a[3];
+  const groups = [];
+  for (const r of paths.sort((a, b) => a[0] - b[0])) {
+    const hit = groups.filter((g) => near(g.bbox, r));
+    if (!hit.length) { groups.push({ bbox: [...r], n: 1 }); continue; }
+    const [g, ...rest] = hit;
+    for (const o of [r, ...rest.map((x) => x.bbox)]) g.bbox = [Math.min(g.bbox[0], o[0]), Math.min(g.bbox[1], o[1]), Math.max(g.bbox[2], o[2]), Math.max(g.bbox[3], o[3])];
+    g.n += 1 + rest.reduce((t, x) => t + x.n, 0);
+    for (const x of rest) groups.splice(groups.indexOf(x), 1);
+  }
+  const blocks = [];
+  let cur = null;
+  page.toStructuredText('preserve-whitespace').walk({
+    beginTextBlock(bbox) { cur = { bbox: [...bbox], text: '' }; },
+    onChar(c) { if (cur) cur.text += c; },
+    endTextBlock() { if (cur && cur.text.trim()) blocks.push(cur); cur = null; },
+  });
+  const within = (a, b) => a[0] >= b[0] - 2 && a[1] >= b[1] - 2 && a[2] <= b[2] + 2 && a[3] <= b[3] + 2;
+  const items = [];
+  for (const g of groups) {
+    const inside = blocks.filter((b) => within(b.bbox, g.bbox));
+    items.push({ kind: inside.length && g.n >= 4 ? 'table' : 'drawing', bbox: g.bbox, text: inside.map((b) => b.text.trim()).join(' ').slice(0, 80) });
+  }
+  for (const b of blocks) if (!items.some((it) => it.kind === 'table' && within(b.bbox, it.bbox))) items.push({ kind: 'text', bbox: clip(b.bbox), text: b.text.trim().slice(0, 80) });
+  for (const r of images) items.push({ kind: 'image', bbox: r });
+  // Largest first, so smaller things drawn later sit on top and a click inside a table can still pick a picture in it.
+  const out = items.filter((it) => size(it.bbox) > 1).sort((a, b) => size(b.bbox) - size(a.bbox)).map((it, i) => ({ id: `${index}:o${i}`, ...it }));
+  s.objCache.set(index, out);
+  return out;
+}
 async function text(id, index) {
   const s = get(id);
   if (s.textCache.has(index)) return s.textCache.get(index);
@@ -81,7 +163,66 @@ function pushUndo(s) {
 async function undo(id) { const s = get(id); if (!s.undo.length) return info(s); s.redo.push(s.bytes); await loadState(s, s.undo.pop()); s.dirty = true; return info(s); }
 async function redo(id) { const s = get(id); if (!s.redo.length) return info(s); s.undo.push(s.bytes); await loadState(s, s.redo.pop()); s.dirty = true; return info(s); }
 
-const fontKey = (e) => `${e.font === 'serif' ? 'serif' : e.font === 'mono' ? 'mono' : e.font === 'caveat' || e.font === 'dancing' ? e.font : 'sans'}${e.font === 'caveat' || e.font === 'dancing' ? '' : `${e.bold ? '-bold' : ''}${e.italic ? (e.bold ? 'italic' : '-italic') : ''}`}`;
+const BUILT_IN = ['sans', 'serif', 'mono', 'carlito', 'helvetica', 'times', 'courier', 'caveat', 'dancing'];
+function fontKey(e) {
+  const style = `${e.bold ? '-bold' : ''}${e.italic ? (e.bold ? 'italic' : '-italic') : ''}`;
+  if (String(e.font).startsWith('sys:')) {
+    const fam = installed?.map.get(e.font.slice(4));
+    const file = fam && (fam[e.bold && e.italic ? 'bolditalic' : e.bold ? 'bold' : e.italic ? 'italic' : 'regular'] || fam.regular);
+    if (file) return `file:${file}`;
+    return `sans${style}`;
+  }
+  const f = BUILT_IN.includes(e.font) ? e.font : 'sans';
+  return f === 'caveat' || f === 'dancing' ? f : `${f}${style}`;
+}
+
+// Fonts installed on this computer, grouped by family with a file per style. Only each file's name and OS/2 tables are
+// read, so a few hundred fonts take a moment; fonts whose licence forbids embedding are left out.
+const FONT_DIRS = () => (process.platform === 'darwin' ? ['/System/Library/Fonts', '/System/Library/Fonts/Supplemental', '/Library/Fonts', path.join(U.os.homedir(), 'Library', 'Fonts')]
+  : process.platform === 'win32' ? [path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts'), process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Fonts')].filter(Boolean)
+    : ['/usr/share/fonts', '/usr/local/share/fonts', path.join(U.os.homedir(), '.fonts'), path.join(U.os.homedir(), '.local', 'share', 'fonts')]);
+const utf16 = (b) => { let t = ''; for (let i = 0; i + 1 < b.length; i += 2) t += String.fromCharCode(b.readUInt16BE(i)); return t; };
+function fontNames(file) {
+  const fd = U.fs.openSync(file, 'r');
+  try {
+    const read = (len, at) => { const b = Buffer.alloc(len); U.fs.readSync(fd, b, 0, len, at); return b; };
+    const head = read(12, 0), sig = head.readUInt32BE(0);
+    if (![0x00010000, 0x4f54544f, 0x74727565].includes(sig)) return null;
+    const n = head.readUInt16BE(4), dir = read(16 * n, 12), table = {};
+    for (let i = 0; i < n; i++) table[dir.toString('latin1', i * 16, i * 16 + 4)] = [dir.readUInt32BE(i * 16 + 8), dir.readUInt32BE(i * 16 + 12)];
+    if (table['OS/2'] && (read(2, table['OS/2'][0] + 8).readUInt16BE(0) & 0x000f) === 0x0002) return null;
+    if (!table.name || table.name[1] > 1 << 20) return null;
+    const t = read(table.name[1], table.name[0]), count = t.readUInt16BE(2), base = t.readUInt16BE(4), got = {};
+    for (let i = 0; i < count; i++) {
+      const r = 6 + i * 12, plat = t.readUInt16BE(r), enc = t.readUInt16BE(r + 2), lang = t.readUInt16BE(r + 4), id = t.readUInt16BE(r + 6), raw = t.subarray(base + t.readUInt16BE(r + 10), base + t.readUInt16BE(r + 10) + t.readUInt16BE(r + 8));
+      if (id !== 1 && id !== 2) continue;
+      const v = plat === 3 || plat === 0 ? utf16(raw) : plat === 1 && enc === 0 ? raw.toString('latin1') : null, rank = plat === 3 && lang === 0x409 ? 3 : plat === 1 ? 1 : 2;
+      if (v && (!got[id] || got[id].rank < rank)) got[id] = { v: v.trim(), rank };
+    }
+    return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular' } : null;
+  } finally { U.fs.closeSync(fd); }
+}
+let installed = null;
+async function fonts() {
+  if (installed) return installed.list;
+  const files = [];
+  const walk = (d, depth) => { let ents = []; try { ents = U.fs.readdirSync(d, { withFileTypes: true }); } catch (_) {} for (const e of ents) { const f = path.join(d, e.name); if (e.isDirectory() && depth < 3) walk(f, depth + 1); else if (/\.(ttf|otf)$/i.test(e.name)) files.push(f); } };
+  FONT_DIRS().forEach((d) => walk(d, 0));
+  const map = new Map();
+  for (const f of files.slice(0, 4000)) {
+    let n = null;
+    try { n = fontNames(f); } catch (_) {}
+    if (!n || n.family.startsWith('.')) continue;
+    const st = n.style.toLowerCase(), bold = /bold|black|heavy/.test(st), italic = /italic|oblique/.test(st);
+    const slot = bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : /^(regular|normal|book|roman|medium|plain)$/.test(st) ? 'regular' : null;
+    if (!slot) continue;
+    if (!map.has(n.family)) map.set(n.family, {});
+    map.get(n.family)[slot] ||= f;
+  }
+  const list = [...map.entries()].filter(([, v]) => v.regular).map(([family, v]) => ({ family, bold: !!v.bold, italic: !!v.italic })).sort((a, b) => a.family.localeCompare(b.family));
+  installed = { map, list };
+  return list;
+}
 
 async function apply(id, edits) {
   const s = get(id);
@@ -95,6 +236,14 @@ async function apply(id, edits) {
   for (const [pi, list] of byPage) {
     const page = work.loadPage(pi);
     transforms.set(pi, m.Matrix.invert(page.getTransform()));
+    // Removing a picture, table, drawing or text block from the page: everything wholly inside the box goes, pictures
+    // lose their pixels inside it, and text inside it is taken out. Done first, on its own, because text edits below
+    // keep every drawing and picture.
+    const erase = list.filter((e) => e.type === 'erase');
+    if (erase.length) {
+      for (const e of erase) { const a = page.createAnnotation('Redact'); a.setRect([e.rect[0] - 1, e.rect[1] - 1, e.rect[0] + e.rect[2] + 1, e.rect[1] + e.rect[3] + 1]); }
+      page.applyRedactions(false, 2, 1, 0);
+    }
     const rects = [];
     for (const e of list) {
       if (e.type === 'replace' || e.type === 'deleteText') rects.push(e.bbox);
@@ -109,7 +258,7 @@ async function apply(id, edits) {
   const redacted = Buffer.from(work.saveToBuffer('garbage=compact').asUint8Array());
 
   const doc = await PDFDocument.load(redacted, { updateMetadata: false });
-  const fonts = P.fontCache(doc);
+  const fonts_ = P.fontCache(doc);
   for (const [pi, list] of byPage) {
     const page = doc.getPage(pi);
     const inv = transforms.get(pi);
@@ -123,19 +272,27 @@ async function apply(id, edits) {
         case 'replace': case 'text': {
           const str = String(e.text ?? '');
           if (!str.trim()) break;
-          const font = await fonts(fontKey(e), str);
+          if (String(e.font).startsWith('sys:')) await fonts();
+          const font = await fonts_(fontKey(e), str);
           const size = Number(e.size) || 12;
-          const lh = size * (e.lineHeight || 1.2);
-          str.split(/\r?\n/).forEach((ln, i) => {
-            const [x, y] = map(e.x, e.y + i * lh);
+          const lh = size * (Number(e.lineHeight) || 1.2), sp = Number(e.spacing) || 0;
+          const lines = str.split(/\r?\n/), widthOf = (ln) => font.widthOfTextAtSize(ln, size) + sp * Math.max(0, [...ln].length - 1);
+          const boxW = Math.max(...lines.map(widthOf)), shift = { center: 0.5, right: 1 }[e.align] || 0;
+          // A background colour behind the words, a little wider and taller than them.
+          if (e.bg && e.bg !== 'none') {
+            const pad = size * 0.18, [bx, by] = map(e.x - pad, e.y + (lines.length - 1) * lh + size * 0.28 + pad);
+            page.drawRectangle({ x: bx, y: by, width: boxW + pad * 2, height: (lines.length - 1) * lh + size * 1.14 + pad * 2, color: P.hex(e.bg), opacity, rotate: rot });
+          }
+          if (sp) page.pushOperators(setCharacterSpacing(sp));
+          lines.forEach((ln, i) => {
+            const w = widthOf(ln), x0 = e.x + (boxW - w) * shift, base = e.y + i * lh;
+            const [x, y] = map(x0, base);
             page.drawText(ln, { x, y, size, font, color, opacity, rotate: rot });
-            if (e.underline) {
-              const w = font.widthOfTextAtSize(ln, size);
-              const [x1, y1] = map(e.x, e.y + i * lh + size * 0.12);
-              const [x2, y2] = map(e.x + w, e.y + i * lh + size * 0.12);
-              page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: size / 16, color, opacity });
-            }
+            const rule = (dy) => { const [x1, y1] = map(x0, base + dy), [x2, y2] = map(x0 + w, base + dy); page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: size / 16, color, opacity }); };
+            if (e.underline) rule(size * 0.12);
+            if (e.strike) rule(-size * 0.3);
           });
+          if (sp) page.pushOperators(setCharacterSpacing(0));
           break;
         }
         case 'whiteout': {
@@ -270,4 +427,4 @@ async function exportPages(id, pages, outPath) {
 }
 function close(id) { sessions.delete(id); return true; }
 
-module.exports = { open, render, text, search, apply, pageOp, undo, redo, save, exportPages, close };
+module.exports = { open, render, patch, objects, fonts, text, search, apply, pageOp, undo, redo, save, exportPages, close };

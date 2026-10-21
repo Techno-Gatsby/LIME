@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
+module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -125,17 +125,145 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
     if (b.x > a.x + 120 || b.y + b.height < a.y + a.height - 120) throw new Error(`wheel not near the corner: ${JSON.stringify(b)}`);
     return `wheel at ${b.x},${b.y}`;
   });
-  await check('Shift-drag summons the wheel at the pointer', async () => {
-    const a = wa(), at = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
-    summon('shift', at);
-    if (!(await until('return L.S.state === "ready"'))) throw new Error('did not open');
-    await sleep(900);
-    const b = wheel().getBounds(), g = await lime('return L.geo();');
-    const cx = b.x + 165, cy = b.y + 194;
-    if (Math.abs(cx - at.x) > 2 || Math.abs(cy - at.y) > 2) throw new Error(`centre ${cx},${cy} vs pointer ${at.x},${at.y}`);
-    wheel().webContents.send('wheel:dragEnded');
-    if (!(await until('return L.S.state === "idle"', 3000))) throw new Error('did not fold when the drag ended');
-    return `centred on ${at.x},${at.y}; folded on drag end${g ? '' : ''}`;
+  await check('Shift-drag opens the wheel beside the file and it follows the drag', async () => {
+    const a = wa(), cur = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
+    setCursor(() => ({ ...cur }));
+    try {
+      shiftSummon({ ...cur });
+      if (!(await until('return L.S.state === "ready"'))) throw new Error('did not open');
+      await sleep(900);
+      const centre = () => { const b = wheel().getBounds(); return { x: b.x + 165, y: b.y + 194 }; };
+      const c0 = centre(), d0 = Math.hypot(cur.x - c0.x, cur.y - c0.y);
+      // Beside the pointer, outside the ring (radius 147), so neither the file nor what is under it is covered.
+      if (d0 < 150 || d0 > 200) throw new Error(`pointer ${Math.round(d0)} px from the centre`);
+      // Dragging on pulls it along on its leash…
+      const away = Math.sign(cur.x - c0.x) || 1;
+      cur.x += away * 260; cur.y += 40;
+      await sleep(700);
+      const c1 = centre(), d1 = Math.hypot(cur.x - c1.x, cur.y - c1.y);
+      if (Math.hypot(c1.x - c0.x, c1.y - c0.y) < 200) throw new Error(`moved only ${Math.round(Math.hypot(c1.x - c0.x, c1.y - c0.y))} px`);
+      if (Math.abs(d1 - d0) > 6) throw new Error(`leash ${Math.round(d0)} → ${Math.round(d1)} px`);
+      // …and moving toward it leaves it still, so a slice is a short move in.
+      cur.x = Math.round(c1.x + (cur.x - c1.x) * 0.45); cur.y = Math.round(c1.y + (cur.y - c1.y) * 0.45);
+      await sleep(500);
+      const c2 = centre();
+      if (Math.hypot(c2.x - c1.x, c2.y - c1.y) > 1) throw new Error('it moved away from the pointer coming toward it');
+      wheel().webContents.send('wheel:dragEnded');
+      if (!(await until('return L.S.state === "idle"', 3000))) throw new Error('did not fold when the drag ended');
+      return `opened ${Math.round(d0)} px beside the pointer; followed ${Math.round(Math.hypot(c1.x - c0.x, c1.y - c0.y))} px; held still when approached`;
+    } finally { setCursor(() => screen.getCursorScreenPoint()); }
+  });
+  await check('the wheel moves when dragged anywhere, with or without files', async () => {
+    const cur = { x: 0, y: 0 };
+    setCursor(() => ({ ...cur }));
+    const drag = async (sel) => {
+      const r = await js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) }; })()`);
+      const wc = wheel().webContents, b0 = wheel().getBounds();
+      Object.assign(cur, { x: b0.x + r.x, y: b0.y + r.y });
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
+      wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+      await sleep(40);
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x + 12, y: r.y + 8, modifiers: ['leftButtonDown'] });
+      await sleep(80);
+      cur.x -= 70; cur.y -= 45;
+      await sleep(250);
+      wc.sendInputEvent({ type: 'mouseUp', x: r.x + 12, y: r.y + 8, button: 'left', clickCount: 1 });
+      await sleep(200);
+      const b1 = wheel().getBounds();
+      return { dx: b1.x - b0.x, dy: b1.y - b0.y };
+    };
+    try {
+      await lime('L.expand("click");');
+      if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 4000))) throw new Error('no apps around the lime');
+      await sleep(800);
+      const a = await drag('.petal[data-i="2"] text.l');
+      const still = await lime('return { state: L.S.state, app: L.S.app };');
+      if (Math.abs(a.dx + 70) > 2 || Math.abs(a.dy + 45) > 2) throw new Error(`empty wheel moved ${a.dx},${a.dy}`);
+      if (still.app) throw new Error('the drag also picked the slice under it');
+      await lime(`await L.openWith(${JSON.stringify([fx('doc.pdf')])});`);
+      await sleep(700);
+      const b = await drag('.petal[data-i="0"] text.l');
+      const s2 = await lime('return { state: L.S.state, job: !!L.S.job, card: !document.querySelector(".card").hidden };');
+      if (Math.abs(b.dx + 70) > 2 || Math.abs(b.dy + 45) > 2) throw new Error(`wheel with a file moved ${b.dx},${b.dy}`);
+      if (s2.state !== 'open' || s2.job || s2.card) throw new Error(`the drag also ran the slice: ${JSON.stringify(s2)}`);
+      return `moved ${a.dx},${a.dy} empty and ${b.dx},${b.dy} with a PDF; nothing picked`;
+    } finally { setCursor(() => screen.getCursorScreenPoint()); }
+  });
+  await check('click opens the seven apps; each opens its own ring', async () => {
+    await lime('L.expand("click");');
+    if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 4000))) throw new Error('no apps around the lime');
+    await sleep(700);
+    const home = await lime('return { labels: L.S.ring.map((x) => x.label), shown: [...document.querySelectorAll(".petal text.l")].filter((t) => getComputedStyle(t).display !== "none").length };');
+    for (const n of ['PhotoCraft', 'LightCraft', 'VectorCraft', 'DesignCraft', 'EffectCraft', 'FilmCraft', 'PdfCraft', 'Recent']) if (!home.labels.includes(n)) throw new Error(`no ${n}: ${home.labels}`);
+    if (home.shown !== 8) throw new Error(`${home.shown} of 8 labels visible`);
+    const i = home.labels.indexOf('PdfCraft');
+    await click(`.petal[data-i="${i}"] text.l`);
+    if (!(await until('return L.S.app === "pdfcraft" && L.S.ring[0]?.label === "Open"', 3000))) throw new Error('PdfCraft did not open its ring');
+    const ring = await lime('return { labels: L.S.ring.map((x) => x.label), back: document.querySelector(".pill [data-a=home]")?.textContent, cap: document.querySelector(".center .cap").textContent };');
+    if (!ring.labels.includes('Optimize')) throw new Error(`PdfCraft ring ${ring.labels}`);
+    if (!/All apps/.test(ring.back || '')) throw new Error('no way back to the apps');
+    wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    if (!(await until('return !L.S.app && L.S.ring.length === 8', 2000))) throw new Error('Esc did not go back to the apps');
+    return `${home.labels.join(', ')} · PdfCraft: ${ring.labels.join(', ')}`;
+  });
+  if (fs.existsSync(fx('photo.jpg'))) await check('hovering and progress update the middle in place', async () => {
+    await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
+    if (!(await until('return !!document.querySelector(".center img.thumb")', 6000))) throw new Error('no thumbnail');
+    const r = await lime(`
+      const img = document.querySelector('.center img.thumb'), cap = document.querySelector('.center .cap');
+      const frames = []; let last = performance.now(), on = true;
+      const tick = (t) => { frames.push(t - last); last = t; if (on) requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+      const n = L.S.ring.length;
+      for (let i = 0; i < n * 4; i++) { L.setHot(i % n); await new Promise((res) => setTimeout(res, 16)); }
+      L.setHot(-1);
+      const sameImg = document.querySelector('.center img.thumb') === img;
+      // Progress ticks while a job runs change the words only: no new capsule, no restarted animation.
+      L.S.state = 'busy'; L.S.job = { status: 'running', progress: 0 }; L.drawCenter();
+      const busyCap = document.querySelector('.center .cap'), anims = new Set();
+      for (let p = 1; p <= 40; p++) { L.S.job.progress = p / 40; L.drawCenter(); busyCap.getAnimations().forEach((a) => anims.add(a)); await new Promise((res) => setTimeout(res, 16)); }
+      const text = busyCap.textContent;
+      L.S.state = 'open'; L.S.job = null; L.drawCenter();
+      on = false;
+      frames.splice(0, 2);
+      return { sameImg, sameCap: busyCap === cap, restarted: anims.size, text, worst: Math.round(Math.max(...frames)), frames: frames.length };`);
+    if (!r.sameImg) throw new Error('the thumbnail was rebuilt while hovering');
+    if (!r.sameCap) throw new Error('the capsule was rebuilt');
+    if (r.restarted > 1) throw new Error(`the capsule re-animated on ${r.restarted} progress ticks`);
+    if (!/100%/.test(r.text)) throw new Error(`progress shows ${r.text}`);
+    return `thumbnail and capsule kept; worst frame ${r.worst} ms over ${r.frames} frames`;
+  });
+  await check('the ✕ at the top right folds the wheel back to the lime', async () => {
+    const out = [];
+    for (const [name, open] of [['apps', 'L.expand("click");'], ['a PDF', `await L.openWith(${JSON.stringify([fx('doc.pdf')])});`], ['a drag', 'L.expand("edge");']]) {
+      await lime(open);
+      if (!(await until('return L.S.state !== "idle"', 3000))) throw new Error(`${name}: did not open`);
+      await sleep(700);
+      const r = await js(`(() => { const c = document.querySelector('.close'), b = c.getBoundingClientRect(), p = document.querySelector('.pill').getBoundingClientRect(); return { shown: getComputedStyle(c).display !== 'none', inside: b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight, overPill: p.width > 0 && b.left < p.right && b.right > p.left && b.top < p.bottom && b.bottom > p.top }; })()`);
+      if (!r.shown) throw new Error(`${name}: no ✕`);
+      if (!r.inside) throw new Error(`${name}: the ✕ is outside the window`);
+      if (r.overPill) throw new Error(`${name}: the ✕ covers the tabs`);
+      await click('.close');
+      if (!(await until('return L.S.state === "idle" && !L.folding()', 3000))) throw new Error(`${name}: the ✕ did not fold the wheel`);
+      await sleep(500);
+      out.push(name);
+    }
+    return `folds from ${out.join(', ')}`;
+  });
+  if (fs.existsSync(fx('doc.pdf'))) await check('a dropped PDF has an Apps tab with PdfCraft', async () => {
+    await lime(`await L.openWith(${JSON.stringify([fx('doc.pdf')])});`);
+    await sleep(600);
+    const tabs = await js('[...document.querySelectorAll(".pill button[data-m]")].map((b) => b.textContent)');
+    if (!tabs.includes('Apps')) throw new Error(`tabs ${tabs}`);
+    await click('.pill button[data-m="apps"]');
+    await sleep(500);
+    const list = await lime('return L.S.ring.map((x) => x.label);');
+    if (list[0] !== 'PdfCraft') throw new Error(`apps for a PDF: ${list}`);
+    await click('.petal[data-i="0"] text.l');
+    if (!(await until('return L.S.app === "pdfcraft"', 2000))) throw new Error('PdfCraft did not open');
+    const r = await lime('return { labels: L.S.ring.map((x) => x.label), tab: document.querySelector(".pill button[data-m=apps]").textContent };');
+    if (!r.labels.includes('PDF/A') || r.tab !== 'PdfCraft') throw new Error(JSON.stringify(r));
+    return `apps: ${list.join(', ')} · PdfCraft: ${r.labels.join(', ')}`;
   });
   await check('system mouse and Shift readings', async () => {
     if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('only on Mac and Windows'), { skip: true });
@@ -227,6 +355,118 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
       return 'open with photo.jpg';
     });
   }
+  // Stress: the wheel must always come back to one lime at the edge that opens again, whatever order things happen in.
+  const wheels = () => BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.isWheel).length;
+  const healthy = async (label) => {
+    if (!(await until('return L.S.state === "idle" && !L.folding()', 8000))) throw new Error(`${label}: stuck in ${await lime('return L.S.state;')}`);
+    await sleep(900);
+    const b = wheel().getBounds(), a = wa();
+    const r = await lime('const t = document.querySelector(".tab"), cs = getComputedStyle(t); return { shown: cs.display !== "none" && cs.visibility !== "hidden", over: L.S.over, cls: document.querySelector("#stage").className };');
+    if (wheels() !== 1) throw new Error(`${label}: ${wheels()} wheel windows`);
+    if (b.width > 90 || b.height > 90 || Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`${label}: the lime is ${b.width}×${b.height} at ${b.x},${b.y}, not at the edge`);
+    if (!r.shown) throw new Error(`${label}: the lime is hidden (${r.cls})`);
+    if (r.over) throw new Error(`${label}: still thinks files are over it`);
+    // And it still opens, by a drag and by a click.
+    await dragIn(wheel().webContents);
+    if (!(await until('return L.S.state === "ready"', 3000))) throw new Error(`${label}: a drag onto the lime didn't open the wheel`);
+    await sleep(700);
+    if (wheel().getBounds().width < 300) throw new Error(`${label}: opened but the window stayed small: ${JSON.stringify({ bounds: wheel().getBounds(), main: debug(), page: await lime('return { state: L.S.state, cls: document.querySelector("#stage").className, geo: L.geo() };') })}`);
+    await dragIn(wheel().webContents, 'dragleave');
+    if (!(await until('return L.S.state === "idle" && !L.folding()', 5000))) throw new Error(`${label}: didn't fold after the drag left`);
+    await sleep(600);
+    await click('.tab');
+    if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 3000))) throw new Error(`${label}: a click on the lime didn't open the apps`);
+    wheel().webContents.sendInputEvent({ type: 'mouseLeave', x: -20, y: -20 });
+    await lime('await L.fold();');
+    await until('return L.S.state === "idle" && !L.folding()', 3000);
+  };
+  await check('stress · 400 random opens, folds, drags, drops, keys and moves', async () => {
+    const errs = [];
+    const onMsg = (e, level, message) => { const lv = e?.level ?? level, msg = e?.message ?? message; if (lv === 3 || lv === 'error') errs.push(String(msg).slice(0, 160)); };
+    wheel().webContents.on('console-message', onMsg);
+    const files = [fx('photo.jpg'), fx('doc.pdf')].filter((f) => fs.existsSync(f));
+    let seed = 20261021;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const a = wa(), mid = { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) };
+    const key = (k) => wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: k });
+    const acts = [
+      () => lime('L.expand("click");'),
+      () => lime('L.fold();'),
+      () => dragIn(wheel().webContents),
+      () => dragIn(wheel().webContents, 'dragleave'),
+      () => dragAt('dragenter', '.petal[data-i="1"]'),
+      () => dragAt('dragover', '.petal[data-i="2"]', { altKey: rnd() > 0.5 }),
+      () => { peek([files[0]]); return lime(`L.setPeek(${JSON.stringify([files[0]])});`); },
+      () => lime(`L.openWith(${JSON.stringify([files[Math.floor(rnd() * files.length)]])});`),
+      () => lime(`L.setMode(${JSON.stringify(['convert', 'tools', 'apps', 'more'][Math.floor(rnd() * 4)])});`),
+      () => wheel().webContents.send('wheel:dragEnded'),
+      () => shiftSummon({ x: mid.x + Math.round((rnd() - 0.5) * 600), y: mid.y + Math.round((rnd() - 0.5) * 400) }),
+      () => summon('corner', { x: a.x + 200, y: a.y + a.height - 240 }),
+      () => lime('if (L.S.ring.length) L.setHot(Math.floor(Math.random() * L.S.ring.length));'),
+      () => lime('L.collapse();'),
+      () => lime('if (L.atHome()) { L.S.app = ["pdfcraft", "photocraft", null][Math.floor(Math.random() * 3)]; L.redraw(); }'),
+      () => key('Escape'),
+      () => key('Tab'),
+      () => key('Right'),
+      () => wheel().webContents.send('settings', { theme: 'light', size: ['s', 'm', 'l'][Math.floor(rnd() * 3)] }),
+    ];
+    const counts = new Array(acts.length).fill(0);
+    for (let i = 0; i < 400; i++) {
+      const n = Math.floor(rnd() * acts.length);
+      counts[n]++;
+      await Promise.resolve(acts[n]()).catch(() => {});
+      await sleep(Math.floor(rnd() * 90));
+    }
+    wheel().webContents.send('settings', { theme: 'light', size: 'm' });
+    wheel().webContents.send('wheel:dragEnded');
+    await lime('await L.collapse();').catch(() => {});
+    await healthy('after 400 random steps');
+    wheel().webContents.off('console-message', onMsg);
+    if (errs.length) throw new Error(`${errs.length} page errors: ${[...new Set(errs)].slice(0, 3).join(' · ')}`);
+    return `400 steps (${counts.join('/')}), then one lime at the edge that opens by drag and click`;
+  });
+  await check('stress · dragging across redrawn slices never stops the lime opening', async () => {
+    for (let round = 0; round < 25; round++) {
+      await dragIn(wheel().webContents);
+      if (!(await until('return L.S.state === "ready"', 3000))) throw new Error(`round ${round}: the drag didn't open the wheel`);
+      if (fs.existsSync(fx('photo.jpg'))) { peek([fx('photo.jpg')]); await lime(`await L.setPeek(${JSON.stringify([fx('photo.jpg')])});`); }
+      // Enter a slice, then redraw the ring under the pointer (switching rings, as Alt or Ctrl do): the old slice is
+      // gone without ever reporting a leave. Then the drag leaves the window.
+      await dragAt('dragenter', '.petal[data-i="0"]');
+      await dragAt('dragover', '.petal[data-i="0"]', { altKey: round % 2 === 0, ctrlKey: round % 3 === 0 });
+      await dragAt('dragenter', '.petal[data-i="1"]');
+      await dragAt('dragleave', '.petal[data-i="1"]');
+      if (!(await until('return L.S.state === "idle" && !L.folding()', 4000))) throw new Error(`round ${round}: didn't fold after the drag left (over=${await lime('return L.S.over;')})`);
+    }
+    await healthy('after 25 drags');
+    return '25 drags across redrawn slices; it folded every time and still opens';
+  });
+  await check('stress · 60 quick open-and-leave cycles at random speeds', async () => {
+    let seed = 99;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 60; i++) {
+      await dragIn(wheel().webContents);
+      await sleep(Math.floor(rnd() * 400));
+      await dragIn(wheel().webContents, 'dragleave');
+      await sleep(Math.floor(rnd() * 1800));
+      // Whatever moment it is caught in, the page and the window agree.
+      const st = await lime('return { s: L.S.state, f: L.folding() };'), w = wheel().getBounds().width;
+      if (st.s === 'idle' && !st.f && w > 90) { await sleep(400); if (wheel().getBounds().width > 90 && (await lime('return L.S.state === "idle" && !L.folding();'))) throw new Error(`cycle ${i}: idle but the window is ${w} wide`); }
+      if (wheels() !== 1) throw new Error(`cycle ${i}: ${wheels()} wheel windows`);
+    }
+    await healthy('after 60 cycles');
+    return '60 cycles; page and window always agreed; one lime';
+  });
+  await check('a crashed wheel comes back by itself', async () => {
+    const before = wheel();
+    before.webContents.forcefullyCrashRenderer();
+    const t = Date.now();
+    while (Date.now() - t < 10000 && (wheel() === before || !wheel() || wheel().webContents.isLoading())) await sleep(200);
+    if (wheel() === before) throw new Error('the crashed wheel was not replaced');
+    await sleep(1800);
+    await healthy('after the crash');
+    return `replaced in ${Date.now() - t} ms; works`;
+  });
   await check('reads the files being dragged from the system', async () => {
     const w = watcher();
     if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('only on Mac and Windows'), { skip: true });
@@ -411,9 +651,11 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
       await sleep(250);
       await lime(`await L.openWith(${JSON.stringify(files)});`);
       await sleep(700);
-      for (const mode of ['convert', 'tools', 'more']) {
+      const appIds = await lime('return (L.S.items?.apps || []).map((a) => a.id);');
+      for (const mode of ['convert', 'tools', 'apps', ...appIds.map((id) => `apps:${id}`), 'more']) {
         const r = await lime(`
-          L.setMode(${JSON.stringify(mode)});
+          L.S.app = ${JSON.stringify(mode.split(':')[1] || null)};
+          L.setMode(${JSON.stringify(mode.split(':')[0])});
           await new Promise((res) => setTimeout(res, 450));
           const out = [], name = ${JSON.stringify(files.map((f) => path.basename(f)).join('+'))} + ' · ' + ${JSON.stringify(mode)};
           const petals = [...document.querySelectorAll('.petal[data-i]')];
@@ -432,6 +674,24 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
         if (r.n) rings++;
         bad.push(...r.out);
       }
+    }
+    // The apps around the lime, and each app's own ring.
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    await sleep(250);
+    await lime('L.expand("click"); await L.loadHome();');
+    await sleep(700);
+    for (const id of [null, 'photocraft', 'lightcraft', 'vectorcraft', 'designcraft', 'effectcraft', 'filmcraft', 'pdfcraft']) {
+      const r = await lime(`
+        L.S.app = ${JSON.stringify(id)}; L.redraw();
+        await new Promise((res) => setTimeout(res, 450));
+        const out = [], name = 'home · ' + ${JSON.stringify(id || 'apps')};
+        for (const g of document.querySelectorAll('.petal[data-i]')) {
+          const glass = g.querySelector('path.glass');
+          for (const t of g.querySelectorAll('text')) { const b = t.getBBox(), i = 0.6; if (b.width && [[b.x + i, b.y + i], [b.x + b.width - i, b.y + i], [b.x + i, b.y + b.height - i], [b.x + b.width - i, b.y + b.height - i]].some(([x, y]) => !glass.isPointInFill(new DOMPoint(x, y)))) out.push(name + ': "' + t.textContent + '" spills out of its slice'); }
+        }
+        return { n: document.querySelectorAll('.petal[data-i]').length, out };`);
+      if (r.n) rings++;
+      bad.push(...r.out);
     }
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
     if (bad.length) throw new Error(`${bad.length} problems: ${[...new Set(bad)].slice(0, 6).join(' · ')}`);
@@ -515,6 +775,140 @@ module.exports = async ({ wheel, sensor, watcher, summon, dialog, BrowserWindow,
   } catch (e) { ed.status = 'FAIL'; ed.detail = e.message; }
   console.log(`${ed.status} ${ed.name.padEnd(44)}        ${ed.detail}`);
   results.push(ed);
+
+  const sel = { name: 'edit pdf · select and remove a table and a picture', status: 'PASS', detail: '' };
+  try {
+    const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+    const sharp = require('sharp');
+    const doc = await PDFDocument.create(), page = doc.addPage([400, 500]), f = await doc.embedFont(StandardFonts.Helvetica);
+    page.drawText('A paragraph of free text above the table.', { x: 30, y: 460, size: 11, font: f });
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 2; c++) {
+      page.drawRectangle({ x: 30 + c * 120, y: 380 - r * 24, width: 120, height: 24, color: r === 1 ? rgb(0.85, 0.93, 0.8) : rgb(1, 1, 1), borderColor: rgb(0.3, 0.3, 0.3), borderWidth: 0.8 });
+      page.drawText(`R${r}C${c} $${(r + 1) * 1000 + c}`, { x: 36 + c * 120, y: 388 - r * 24, size: 10, font: f });
+    }
+    page.drawImage(await doc.embedPng(await sharp(fx('photo.jpg')).resize(120, 80).png().toBuffer()), { x: 30, y: 180, width: 120, height: 80 });
+    const src = path.join(OUT, 'objects.pdf');
+    fs.writeFileSync(src, await doc.save());
+    openEditor(src, 'edit');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!document.querySelector(\'[data-tool="select"]\') && !!document.querySelector(".pdfpage img.r[src]")'))) throw new Error('editor did not load');
+    // Edit a line in the shaded row: what hides the old words must be the green cell, not a white box.
+    await ejs('document.querySelector(\'[data-tool="edittext"]\').click()');
+    if (!(await wait('[...document.querySelectorAll(".tline")].length > 3'))) throw new Error('no editable lines');
+    await ejs(`(() => { const rows = [...document.querySelectorAll('.tline:not(.mask)')].sort((a, b) => a.offsetTop - b.offsetTop); const el = rows[3]; el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); })()`);
+    if (!(await wait('!!document.querySelector(".tline.mask.ready")', 6000))) throw new Error('the edited line has no page-coloured mask');
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await sleep(300);
+    await ejs('document.querySelector(\'[data-tool="select"]\').click()');
+    if (!(await wait('document.querySelectorAll(".pobj").length >= 3'))) throw new Error(`Select shows ${await ejs('document.querySelectorAll(".pobj").length')} things on the page`);
+    const kinds = await ejs('[...document.querySelectorAll(".pobj")].map((x) => x.title.split(":")[0])');
+    for (const want of ['Table', 'Picture']) {
+      await ejs(`document.querySelector('.pobj[title^="${want}"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`);
+      if (!(await wait(`document.querySelector('.props h3')?.textContent === '${want}'`, 3000))) throw new Error(`picking the ${want.toLowerCase()} did not select it`);
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'Delete' });
+      if (!(await wait(`!document.querySelector('.pobj[title^="${want}"]') && document.querySelectorAll('.obj.erase').length === ${want === 'Table' ? 1 : 2}`, 3000))) throw new Error(`Delete did not remove the ${want.toLowerCase()}`);
+    }
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = path.join(OUT, 'objects (edited).pdf');
+    const t2 = Date.now();
+    while (!fs.existsSync(out) && Date.now() - t2 < 20000) await sleep(200);
+    if (!fs.existsSync(out)) throw new Error('Save wrote nothing');
+    await sleep(500);
+    const E = require('../src/main/pdfedit');
+    const s2 = await E.open(out), left = await E.objects(s2.id, 0), text = (await E.text(s2.id, 0)).map((l) => l.text).join(' | ');
+    if (/R\dC\d/.test(text)) throw new Error(`the table's text is still there: ${text}`);
+    if (left.some((o) => o.kind === 'image' || o.kind === 'table')) throw new Error(`still on the page: ${left.map((o) => o.kind)}`);
+    if (!/free text/.test(text)) throw new Error('the paragraph went too');
+    sel.detail = `found ${kinds.join(', ')}; removed the table and the picture, kept the paragraph`;
+    win.destroy();
+  } catch (e) { sel.status = 'FAIL'; sel.detail = e.message; }
+  console.log(`${sel.status} ${sel.name.padEnd(44)}        ${sel.detail}`);
+  results.push(sel);
+
+  const sty = { name: 'edit pdf · zoom at the pointer, fonts and text styles', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'styles.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    openEditor(src, 'edit');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!document.querySelector(".pdfpage img.r[src]")'))) throw new Error('editor did not load');
+    await sleep(600);
+    // A pinch (Ctrl + wheel) at a spot on the page keeps that spot under the pointer.
+    const spot = await ejs(`(() => { const b = document.querySelector('.pdfpage').getBoundingClientRect(); return { x: Math.round(b.left + b.width * 0.5), y: Math.round(b.top + Math.min(b.height, innerHeight - b.top) * 0.4) }; })()`);
+    const at = (pt) => ejs(`(() => { const b = document.querySelector('.pdfpage').getBoundingClientRect(); return { fx: (${pt.x} - b.left) / b.width, fy: (${pt.y} - b.top) / b.height, w: b.width, h: b.height }; })()`);
+    const before = await at(spot);
+    for (let i = 0; i < 8; i++) { await ejs(`document.querySelector('.pages').dispatchEvent(new WheelEvent('wheel', { deltaY: -12, ctrlKey: true, clientX: ${spot.x}, clientY: ${spot.y}, bubbles: true, cancelable: true }))`); await sleep(30); }
+    await sleep(300);
+    const after = await at(spot);
+    if (after.w < before.w * 1.4) throw new Error(`pinch zoomed only ${(after.w / before.w).toFixed(2)}×`);
+    const drift = Math.hypot((after.fx - before.fx) * after.w, (after.fy - before.fy) * after.h);
+    if (drift > 3) throw new Error(`the spot under the pointer moved ${drift.toFixed(1)} px`);
+    const zoomed = `${(after.w / before.w).toFixed(2)}× with ${drift.toFixed(1)} px drift`;
+    await ejs(`(() => { const z = document.querySelector('select.zoom'); z.value = 'width'; z.dispatchEvent(new Event('change')); })()`);
+    await sleep(400);
+    // Add text with a font and every style, and save.
+    await ejs('document.querySelector(\'[data-tool="addtext"]\').click()');
+    await ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(); l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + 60, clientY: b.top + b.height * 0.55 })); })()`);
+    if (!(await wait('!!document.querySelector(".obj.text[contenteditable]")', 3000))) throw new Error('no text box');
+    await ejs(`(() => { const el = document.querySelector('.obj.text[contenteditable]'); el.textContent = 'Styled Lime text'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    await ejs(`(() => { const f = document.querySelector('.props select[title="Font"]'); f.value = 'carlito'; f.dispatchEvent(new Event('change')); })()`);
+    for (const sel of ['[data-s="bold"]', '[data-s="underline"]', '[data-s="strike"]', '[data-al="center"]', '.swatches [data-c="#fff4ce"]']) { await ejs(`document.querySelector('.props ${sel}').click()`); await sleep(80); }
+    const look = await ejs(`(() => { const s = getComputedStyle(document.querySelector('.obj.text')); return { deco: s.textDecorationLine, weight: s.fontWeight, bg: s.backgroundColor, font: s.fontFamily }; })()`);
+    if (!/underline/.test(look.deco) || !/line-through/.test(look.deco) || Number(look.weight) < 600 || !/255, 244, 206/.test(look.bg) || !/Carlito/.test(look.font)) throw new Error(`preview ${JSON.stringify(look)}`);
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await sleep(300);
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = path.join(OUT, 'styles (edited).pdf');
+    const t2 = Date.now();
+    while (!fs.existsSync(out) && Date.now() - t2 < 20000) await sleep(200);
+    if (!fs.existsSync(out)) throw new Error('Save wrote nothing');
+    await sleep(500);
+    const E = require('../src/main/pdfedit');
+    const s2 = await E.open(out), line = (await E.text(s2.id, 0)).find((l) => /Styled Lime text/.test(l.text));
+    if (!line) throw new Error('the new text is not in the file');
+    if (!/Carlito-Bold/.test(line.font)) throw new Error(`saved in ${line.font}`);
+    const png = await E.render(s2.id, 0, 1), { data, info } = await require('sharp')(png).raw().toBuffer({ resolveWithObject: true });
+    const [x0, y0, x1] = line.bbox, px = (x, y) => { const i = (Math.round(y) * info.width + Math.round(x)) * info.channels; return [data[i], data[i + 1], data[i + 2]]; };
+    const bg = px(x0 - 2, y0 + 1);
+    if (Math.abs(bg[0] - 255) > 6 || Math.abs(bg[1] - 244) > 8 || Math.abs(bg[2] - 206) > 10) throw new Error(`no background colour behind the text: ${bg}`);
+    sty.detail = `pinch ${zoomed}; saved in ${line.font} with underline, strike, centre and background`;
+    win.destroy();
+  } catch (e) { sty.status = 'FAIL'; sty.detail = e.message; }
+  console.log(`${sty.status} ${sty.name.padEnd(44)}        ${sty.detail}`);
+  results.push(sty);
+
+  const rep = { name: 'edit pdf · find and replace across pages', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'replace.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    openEditor(src, 'edit');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!document.querySelector(".pdfpage img.r[src]")'))) throw new Error('editor did not load');
+    await ejs('document.querySelector(\'[data-a="replace"]\').click()');
+    if (!(await wait('!!document.querySelector(".scrim [data-f=q]")', 3000))) throw new Error('no replace dialog');
+    await ejs(`(() => { const d = document.querySelector('.scrim'); d.querySelector('[data-f=q]').value = 'Page'; d.querySelector('[data-f=r]').value = 'Sheet'; d.querySelector('[data-a=ok]').click(); })()`);
+    if (!(await wait('document.querySelectorAll(".obj.text").length >= 3', 8000))) throw new Error(`${await ejs('document.querySelectorAll(".obj.text").length')} lines replaced`);
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = path.join(OUT, 'replace (edited).pdf');
+    const t2 = Date.now();
+    while (!fs.existsSync(out) && Date.now() - t2 < 20000) await sleep(200);
+    if (!fs.existsSync(out)) throw new Error('Save wrote nothing');
+    await sleep(500);
+    const E = require('../src/main/pdfedit'), s2 = await E.open(out);
+    let all = '';
+    for (let i = 0; i < 3; i++) all += (await E.text(s2.id, i)).map((l) => l.text).join(' ') + ' ';
+    if (/Page \d/.test(all) || !/Sheet 2/.test(all)) throw new Error(`saved text: ${all.slice(0, 160)}`);
+    rep.detail = 'every “Page” became “Sheet” on all 3 pages';
+    win.destroy();
+  } catch (e) { rep.status = 'FAIL'; rep.detail = e.message; }
+  console.log(`${rep.status} ${rep.name.padEnd(44)}        ${rep.detail}`);
+  results.push(rep);
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {

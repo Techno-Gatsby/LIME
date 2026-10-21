@@ -117,12 +117,36 @@ document.addEventListener('click', (e) => {
   if (a === 'use' && !useBtn.disabled) done(field.value.trim());
   if (a === 'used') { const p = sheet().used && parse(sheet().used); S.areas = p ? p.areas : []; paint(); }
 });
+// Ctrl or ⌘ with the wheel, a trackpad pinch, or Ctrl + − 0 zoom the sheet, keeping the cell under the pointer in place.
+let zoom = 1;
+function setZoom(z, at) {
+  const nz = Math.min(3, Math.max(0.4, z));
+  if (Math.abs(nz - zoom) < 1e-3) return;
+  const r = grid.getBoundingClientRect(), ax = at ? at.x - r.left : grid.clientWidth / 2, ay = at ? at.y - r.top : grid.clientHeight / 2;
+  const f = nz / zoom, px = grid.scrollLeft + ax, py = grid.scrollTop + ay;
+  zoom = nz;
+  sheetEl.style.zoom = String(zoom);
+  grid.scrollLeft = px * f - ax;
+  grid.scrollTop = py * f - ay;
+  measure();
+  paint(true);
+}
+grid.addEventListener('wheel', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  const d = Math.max(-60, Math.min(60, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+  setZoom(zoom * Math.exp(-d * 0.0065), { x: e.clientX, y: e.clientY });
+}, { passive: false });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') done(null);
   if (e.key === 'Enter' && !useBtn.disabled) done(field.value.trim());
+  const c = e.ctrlKey || e.metaKey;
+  if (c && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom(zoom * 1.2); }
+  if (c && e.key === '-') { e.preventDefault(); setZoom(zoom / 1.2); }
+  if (c && e.key === '0') { e.preventDefault(); setZoom(1); }
 });
 
 const start = data.value && parse(data.value);
 show(start ? start.sheetIndex : S.sheet);
 if (start) { S.areas = start.areas; requestAnimationFrame(() => requestAnimationFrame(() => paint())); }
-window.__picker = { S, paint, parse, text, show };
+window.__picker = { S, paint, parse, text, show, setZoom, zoom: () => zoom };

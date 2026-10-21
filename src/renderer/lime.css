@@ -104,5 +104,10 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 6px; box-s
 @font-face { font-family: "Noto Serif"; src: url("media://font/NotoSerif-Regular.ttf"); }
 @font-face { font-family: "Noto Serif"; src: url("media://font/NotoSerif-Bold.ttf"); font-weight: 700; }
 @font-face { font-family: "Noto Sans Mono"; src: url("media://font/NotoSansMono-Regular.ttf"); }
+@font-face { font-family: "Noto Sans"; src: url("media://font/NotoSans-BoldItalic.ttf"); font-weight: 700; font-style: italic; }
+@font-face { font-family: "Carlito"; src: url("media://font/Carlito-Regular.ttf"); }
+@font-face { font-family: "Carlito"; src: url("media://font/Carlito-Bold.ttf"); font-weight: 700; }
+@font-face { font-family: "Carlito"; src: url("media://font/Carlito-Italic.ttf"); font-style: italic; }
+@font-face { font-family: "Carlito"; src: url("media://font/Carlito-BoldItalic.ttf"); font-weight: 700; font-style: italic; }
 @font-face { font-family: "Caveat"; src: url("media://font/Caveat.ttf"); }
 @font-face { font-family: "Dancing Script"; src: url("media://font/DancingScript.ttf"); }

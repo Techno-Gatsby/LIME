@@ -2,7 +2,7 @@ import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 
 const PT = 96 / 72;
 const TOOLS = [
-  ['select', 'cursor', 'Select', 'Select, move and resize what you’ve added. Delete removes it.'],
+  ['select', 'cursor', 'Select', 'Select anything on the page (pictures, tables, drawings, text blocks) or what you’ve added. Delete removes it.'],
   ['edittext', 'textEdit', 'Edit text', 'Click any line of text to change it. Clear a line completely to delete it.'],
   ['addtext', 'textT', 'Add text', 'Click where you want to type.'],
   ['whiteout', 'whiteout', 'Erase', 'Drag over an area to erase it. Text underneath is removed for good.'],
@@ -15,14 +15,20 @@ const TOOLS = [
 ];
 const COLORS = ['#000000', '#3b3b3b', '#d13438', '#ca5010', '#ffb900', '#107c10', '#0f6cbd', '#5c2e91', '#ffffff'];
 const HL = ['#ffe14d', '#a6f0a0', '#9fd8ff', '#ffb3d9', '#ffc58a'];
+const TEXT_BG = ['none', '#fff4ce', '#dff6dd', '#cfe4fa', '#fde7e9', '#e8e0f5', '#ffffff', '#000000'];
+// Lime's own fonts, the standard PDF fonts (which add nothing to the file for plain text), then the computer's own.
+const BUILT_IN_FONTS = [['sans', 'Noto Sans', '"Noto Sans","Segoe UI",Arial,sans-serif'], ['serif', 'Noto Serif', '"Noto Serif","Times New Roman",serif'], ['carlito', 'Carlito (like Calibri)', 'Carlito,Calibri,sans-serif'],
+  ['helvetica', 'Helvetica (like Arial)', 'Helvetica,Arial,sans-serif'], ['times', 'Times', '"Times New Roman",Times,serif'], ['courier', 'Courier', '"Courier New",Courier,monospace'],
+  ['mono', 'Noto Sans Mono', '"Noto Sans Mono",Consolas,monospace'], ['caveat', 'Caveat (handwriting)', 'Caveat,cursive'], ['dancing', 'Dancing Script', '"Dancing Script",cursive']];
+const fontCss = (f) => (String(f).startsWith('sys:') ? `"${String(f).slice(4).replace(/["\\]/g, '')}","Noto Sans",sans-serif` : (BUILT_IN_FONTS.find((x) => x[0] === f) || BUILT_IN_FONTS[0])[2]);
 
 export function openEditor(view, { file, mode }, ctx) {
   const { icon, toast, api, go } = ctx;
   const call = (m, ...a) => api.invoke('editor:call', m, ...a);
   const st = {
     sess: null, file, savePath: null, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext',
-    pending: [], sel: null, pages: [], renders: new Map(), lines: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
-    style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff' },
+    pending: [], sel: null, pick: null, pages: [], renders: new Map(), lines: new Map(), objs: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
+    fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff' },
     seq: 0, busy: false,
   };
   const root = h(`<div class="editor">
@@ -37,9 +43,9 @@ export function openEditor(view, { file, mode }, ctx) {
       <button class="tb" data-a="image" title="Add image">${icon('imageAdd')}<span class="lbl opt">Image</span></button>
       <button class="tb" data-a="sign" title="Add signature">${icon('signature')}<span class="lbl">Sign</span></button>
       <div class="grow"></div>
-      <div class="search" style="width:200px;margin:0 6px">${icon('search', 'sm')}<input class="find" type="search" placeholder="Find" aria-label="Find in document"></div>
-      <button class="tb" data-a="zoomout" title="Zoom out">${icon('zoomOut')}</button><span class="zoom">100%</span><button class="tb" data-a="zoomin" title="Zoom in">${icon('zoomIn')}</button>
-      <button class="tb" data-a="fit" title="Fit width">${icon('fit')}</button>
+      <div class="search" style="width:200px;margin:0 6px">${icon('search', 'sm')}<input class="find" type="search" placeholder="Find" aria-label="Find in document"></div><button class="tb" data-a="replace" title="Find and replace (Ctrl H)">${icon('again')}</button>
+      <button class="tb" data-a="zoomout" title="Zoom out (Ctrl −)">${icon('zoomOut')}</button><select class="zoom" title="Zoom" aria-label="Zoom"></select><button class="tb" data-a="zoomin" title="Zoom in (Ctrl +)">${icon('zoomIn')}</button>
+      <button class="tb" data-a="fit" title="Fit width (Ctrl 0)">${icon('fit')}</button>
       <button class="tb" data-a="thumbs" title="Pages panel" aria-pressed="true">${icon('grid')}</button>
       <div class="sep"></div>
       <button class="btn" data-a="saveas">Save as…</button>
@@ -63,6 +69,7 @@ export function openEditor(view, { file, mode }, ctx) {
   let disposed = false;
   const k = () => st.zoom * PT;
 
+  call('fonts').then((list) => { st.fonts = list || []; if (st.sel?.type === 'text' || st.sel?.type === 'replace' || ['addtext', 'edittext'].includes(st.tool)) renderProps(); }).catch(() => {});
   async function load(password) {
     try {
       st.sess = await call('open', file, password);
@@ -90,6 +97,8 @@ export function openEditor(view, { file, mode }, ctx) {
     st.renders.forEach((r) => URL.revokeObjectURL(r.url));
     st.renders.clear();
     st.lines.clear();
+    st.objs.clear();
+    st.pick = null;
     st.pages = st.sess.pages.map((p, i) => {
       const el = h(`<div class="pdfpage" data-p="${i}"><img class="r" alt=""><span class="num">${i + 1}</span><div class="layer"></div></div>`);
       pagesEl.append(el);
@@ -100,7 +109,7 @@ export function openEditor(view, { file, mode }, ctx) {
         const p = st.pages[Number(en.target.dataset.p)];
         if (!p) continue;
         p.visible = en.isIntersecting;
-        if (en.isIntersecting) { renderPage(p, Number(en.target.dataset.p)); if (st.tool === 'edittext') showLines(Number(en.target.dataset.p)); }
+        if (en.isIntersecting) { renderPage(p, Number(en.target.dataset.p)); if (st.tool === 'edittext') showLines(Number(en.target.dataset.p)); if (st.tool === 'select') showObjects(Number(en.target.dataset.p)); }
       }
     }, { root: pagesEl, rootMargin: '600px 0px' });
     st.pages.forEach((p) => io.observe(p.el));
@@ -110,12 +119,28 @@ export function openEditor(view, { file, mode }, ctx) {
     if (rebuildThumbs) buildThumbs();
     updateChrome();
   }
-  function sizePages() {
+  // Zoom presets in the toolbar menu; the current zoom shows first when it isn't one of them.
+  const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+  function zoomMenu() {
+    const z = Math.round(st.zoom * 100), sel = $('.zoom', root);
+    sel.innerHTML = `${ZOOMS.includes(z / 100) ? '' : `<option value="${st.zoom}">${z}%</option>`}${ZOOMS.map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`).join('')}<option value="width">Fit width</option><option value="page">Fit page</option>`;
+    sel.value = String(ZOOMS.includes(z / 100) ? z / 100 : st.zoom);
+  }
+  let decorT = null;
+  function sizePages(quick) {
     for (const p of st.pages) { p.el.style.width = `${p.w * k()}px`; p.el.style.height = `${p.h * k()}px`; }
-    $('.zoom', root).textContent = `${Math.round(st.zoom * 100)}%`;
+    zoomMenu();
     st.pending.forEach(positionObj);
-    if (st.tool === 'edittext') st.pages.forEach((p, i) => p.visible && showLines(i));
-    drawHits();
+    // During a pinch only the pages and what's been added follow at once; the clickable lines and outlines are
+    // rebuilt when it settles.
+    const decorate = () => {
+      if (st.tool === 'edittext') st.pages.forEach((p, i) => p.visible && showLines(i));
+      if (st.tool === 'select') st.pages.forEach((p, i) => p.visible && showObjects(i));
+      drawHits();
+    };
+    clearTimeout(decorT);
+    if (quick) { pagesEl.querySelectorAll('.tline:not(.mask), .pobj').forEach((x) => x.remove()); decorT = setTimeout(decorate, 160); return; }
+    decorate();
   }
   async function renderPage(p, i) {
     const scale = Math.min(4, k() * (window.devicePixelRatio || 1));
@@ -133,16 +158,32 @@ export function openEditor(view, { file, mode }, ctx) {
     } catch (_) {} finally { if (p.rendering === scale) p.rendering = null; }
   }
   let rerenderT = null;
-  function setZoom(z) {
-    st.zoom = Math.min(4, Math.max(0.25, z));
-    sizePages();
+  // Zooming keeps the spot under the pointer (or the middle of the view) where it is, so the page doesn't jump away;
+  // the pages are drawn sharp again once it settles.
+  function setZoom(z, at) {
+    const old = st.zoom, nz = Math.min(5, Math.max(0.2, z));
+    if (Math.abs(nz - old) < 1e-4 || !st.pages.length) return;
+    const r = pagesEl.getBoundingClientRect(), ax = at ? at.x : r.left + pagesEl.clientWidth / 2, ay = at ? at.y : r.top + pagesEl.clientHeight / 2;
+    const page = st.pages.find((p) => { const b = p.el.getBoundingClientRect(); return ay >= b.top - 12 && ay <= b.bottom + 12; }) || st.pages.find((p) => p.visible) || st.pages[0];
+    const b0 = page.el.getBoundingClientRect(), fx = (ax - b0.left) / b0.width, fy = (ay - b0.top) / b0.height;
+    st.zoom = nz;
+    sizePages(true);
+    const b1 = page.el.getBoundingClientRect();
+    pagesEl.scrollLeft += b1.left + fx * b1.width - ax;
+    pagesEl.scrollTop += b1.top + fy * b1.height - ay;
     clearTimeout(rerenderT);
     rerenderT = setTimeout(() => st.pages.forEach((p, i) => p.visible && renderPage(p, i)), 180);
   }
   function fitWidth() {
     const avail = pagesEl.clientWidth - 96;
     const w = Math.max(...st.pages.map((p) => p.w));
-    setZoom(Math.min(2, avail / (w * PT)));
+    setZoom(Math.min(3, avail / (w * PT)));
+  }
+  function fitPage() {
+    const p = st.pages.find((x) => x.visible) || st.pages[0];
+    if (!p) return;
+    setZoom(Math.min((pagesEl.clientWidth - 96) / (p.w * PT), (pagesEl.clientHeight - 56) / (p.h * PT)));
+    p.el.scrollIntoView({ block: 'center' });
   }
 
   function buildThumbs() {
@@ -238,12 +279,64 @@ export function openEditor(view, { file, mode }, ctx) {
     }
   }
   function hideLines() { pagesEl.querySelectorAll('.tline:not(.mask)').forEach((x) => x.remove()); }
+  // In Select, the page's own pictures, tables, drawings and text blocks can be picked too, and removed from the file
+  // for good (not covered over) when it is saved.
+  const KIND = { image: 'Picture', table: 'Table', drawing: 'Drawing', text: 'Text block' };
+  async function showObjects(i) {
+    const p = st.pages[i];
+    if (!p) return;
+    if (!st.objs.has(i)) st.objs.set(i, call('objects', st.sess.id, i).catch(() => []));
+    const list = await st.objs.get(i);
+    if (st.tool !== 'select' || disposed) return;
+    p.layer.querySelectorAll('.pobj').forEach((x) => x.remove());
+    const kk = k(), gone = new Set(st.pending.filter((o) => o.type === 'erase' && o.page === i).map((o) => o.objId));
+    const under = p.layer.firstChild;
+    for (const it of list) {
+      if (gone.has(it.id)) continue;
+      const [x0, y0, x1, y1] = it.bbox;
+      const el = h(`<div class="pobj${st.pick?.obj.id === it.id ? ' sel' : ''}" data-id="${it.id}" title="${KIND[it.kind]}: click to select, then Delete" style="left:${x0 * kk}px;top:${y0 * kk}px;width:${(x1 - x0) * kk}px;height:${(y1 - y0) * kk}px"></div>`);
+      el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.stopPropagation(); e.preventDefault(); pickObj(i, it); });
+      p.layer.insertBefore(el, under);
+    }
+  }
+  function hideObjects() { pagesEl.querySelectorAll('.pobj').forEach((x) => x.remove()); st.pick = null; }
+  function pickObj(i, it) {
+    commitEditing();
+    st.sel = null;
+    st.pending.forEach((x) => x.el?.classList.remove('sel'));
+    st.pick = { page: i, obj: it };
+    pagesEl.querySelectorAll('.pobj').forEach((x) => x.classList.toggle('sel', x.dataset.id === it.id));
+    renderProps();
+  }
+  function erasePicked() {
+    const { page, obj } = st.pick;
+    st.pick = null;
+    const [x0, y0, x1, y1] = obj.bbox;
+    const o = addObj({ type: 'erase', page, rect: [x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2], bbox: obj.bbox, kind: obj.kind, objId: obj.id });
+    showObjects(page);
+    select(o);
+  }
+  // The closest font for an edited line: the same font if it's installed, a look-alike if not (Carlito for Calibri,
+  // Helvetica for Arial, Times for Times New Roman), else serif, sans or mono as the original was.
+  function matchFont(l) {
+    const norm = (n) => String(n || '').replace(/^[A-Z]{6}\+/, '').replace(/[-,_ ]?(Bold|Italic|Oblique|Regular|Roman|Medium|Semibold|SemiBold|Light|Black|BoldItalic|BoldOblique|BdIt|Bd|It)+$/i, '').replace(/(MT|PS|Std|Pro)$/, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const base = norm(l.font);
+    if (base) {
+      const hit = st.fonts.find((f) => norm(f.family) === base);
+      if (hit) return `sys:${hit.family}`;
+      if (/calibri/.test(base)) return 'carlito';
+      if (/arial|helvetica/.test(base)) return 'helvetica';
+      if (/times/.test(base)) return 'times';
+      if (/courier/.test(base)) return 'courier';
+    }
+    return l.mono ? 'mono' : l.serif ? 'serif' : 'sans';
+  }
   function beginLineEdit(page, line, el) {
     commitEditing();
     el.remove();
     const o = addObj({
       type: 'replace', page, lineId: line.id, bbox: line.bbox, x: line.origin[0], y: line.origin[1], text: line.text, original: line.text,
-      size: line.size, font: line.mono ? 'mono' : line.serif ? 'serif' : 'sans', bold: line.bold, italic: line.italic, color: line.color,
+      size: line.size, font: matchFont(line), bold: line.bold, italic: line.italic, color: line.color,
     });
     select(o);
     editText(o, true);
@@ -264,8 +357,15 @@ export function openEditor(view, { file, mode }, ctx) {
     if (o.type === 'replace' || o.type === 'deleteText') {
       const [x0, y0, x1, y1] = o.bbox;
       o.mask = h(`<div class="tline mask"></div>`);
-      o.mask._box = [x0 - 0.5, y0 - 0.5, x1 - x0 + 1, y1 - y0 + 1];
+      o.mask._box = [x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2];
       p.layer.append(o.mask);
+      // The mask is the page itself with this line's text taken out, so only the words change on screen.
+      const mask = o.mask;
+      call('patch', st.sess.id, o.page, o.bbox, Math.min(4, k() * (window.devicePixelRatio || 1) * 1.5)).then((png) => {
+        if (!png || o.mask !== mask) return;
+        mask.style.backgroundImage = `url(${URL.createObjectURL(new Blob([png], { type: 'image/png' }))})`;
+        mask.classList.add('ready');
+      }).catch(() => mask.classList.add('plain'));
     }
     let el;
     if (o.type === 'replace' || o.type === 'text') {
@@ -273,6 +373,12 @@ export function openEditor(view, { file, mode }, ctx) {
       el.textContent = o.text;
     } else if (o.type === 'deleteText') return positionObj(o);
     else if (o.type === 'whiteout') el = h(`<div class="obj"></div>`);
+    else if (o.type === 'erase') {
+      // What the page looks like with it gone, as saving will leave it.
+      el = h(`<div class="obj erase" title="Removed ${esc(KIND[o.kind] || 'area').toLowerCase()}: select and press Delete to put it back"></div>`);
+      const box = el;
+      call('patch', st.sess.id, o.page, o.bbox, Math.min(4, k() * (window.devicePixelRatio || 1) * 1.5), 'erase').then((png) => { if (png && o.el === box) box.style.backgroundImage = `url(${URL.createObjectURL(new Blob([png], { type: 'image/png' }))})`; }).catch(() => { box.style.background = '#fff'; });
+    }
     else if (o.type === 'highlight') el = h(`<div class="obj" style="mix-blend-mode:multiply"></div>`);
     else if (o.type === 'image' || o.type === 'signature') el = h(`<div class="obj"><img alt="" src="${o.data}"></div>`);
     else el = h(`<div class="obj"><svg></svg></div>`);
@@ -295,8 +401,11 @@ export function openEditor(view, { file, mode }, ctx) {
     if (o.type === 'text' || o.type === 'replace') {
       css(o.x, o.y - o.size * 0.86);
       Object.assign(el.style, {
-        fontSize: `${o.size * kk}px`, color: o.color, fontWeight: o.bold ? '700' : '400', fontStyle: o.italic ? 'italic' : 'normal',
-        fontFamily: o.font === 'serif' ? '"Noto Serif","Times New Roman",serif' : o.font === 'mono' ? '"Noto Sans Mono",Consolas,monospace' : o.font === 'caveat' ? 'Caveat,cursive' : '"Noto Sans","Segoe UI",Arial,sans-serif',
+        fontSize: `${o.size * kk}px`, color: o.color, fontWeight: o.bold ? '700' : '400', fontStyle: o.italic ? 'italic' : 'normal', fontFamily: fontCss(o.font),
+        textDecoration: [o.underline && 'underline', o.strike && 'line-through'].filter(Boolean).join(' ') || 'none', textAlign: o.align || 'left',
+        lineHeight: String(o.lineHeight || 1.2), letterSpacing: `${(o.spacing || 0) * kk}px`, opacity: String(o.opacity ?? 1),
+        // The background reaches a little past the words, as it will in the saved file.
+        background: o.bg && o.bg !== 'none' ? o.bg : '', boxShadow: o.bg && o.bg !== 'none' ? `0 0 0 ${o.size * 0.18 * kk}px ${o.bg}` : '',
       });
       return;
     }
@@ -333,13 +442,15 @@ export function openEditor(view, { file, mode }, ctx) {
       $('svg', el).innerHTML = `<polyline fill="none" stroke="${o.stroke}" stroke-width="${(o.width || 2) * kk}" stroke-linecap="round" stroke-linejoin="round" points="${o.points.map((q) => `${(q[0] - x) * kk},${(q[1] - y) * kk}`).join(' ')}"/>`;
     }
   }
+  const textStyle = (o) => ({ size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color, underline: !!o.underline, strike: !!o.strike, bg: o.bg && o.bg !== 'none' ? o.bg : '', align: o.align || 'left', lineHeight: o.lineHeight || 1.2, spacing: o.spacing || 0, opacity: o.opacity ?? 1 });
   function serialize(o) {
     const base = { page: o.page, type: o.type };
     switch (o.type) {
-      case 'replace': return o.text === o.original && !o.styled ? null : (o.text.trim() ? { ...base, bbox: o.bbox, x: o.x, y: o.y, text: o.text, size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color } : { page: o.page, type: 'deleteText', bbox: o.bbox });
+      case 'replace': return o.text === o.original && !o.styled ? null : (o.text.trim() ? { ...base, bbox: o.bbox, x: o.x, y: o.y, text: o.text, ...textStyle(o) } : { page: o.page, type: 'deleteText', bbox: o.bbox });
       case 'deleteText': return { ...base, bbox: o.bbox };
-      case 'text': return o.text.trim() ? { ...base, x: o.x, y: o.y, text: o.text, size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color } : null;
+      case 'text': return o.text.trim() ? { ...base, x: o.x, y: o.y, text: o.text, ...textStyle(o) } : null;
       case 'whiteout': return { ...base, rect: o.rect, fill: o.fill };
+      case 'erase': return { ...base, rect: o.rect };
       case 'highlight': return { ...base, rect: o.rect, color: o.color, opacity: 0.45 };
       case 'rect': case 'ellipse': return { ...base, rect: o.rect, stroke: o.stroke, fill: o.fill, width: o.width };
       case 'line': case 'arrow': return { ...base, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2, stroke: o.stroke, width: o.width };
@@ -348,15 +459,35 @@ export function openEditor(view, { file, mode }, ctx) {
       default: return null;
     }
   }
+  // Copies of added things: everything about them except where they live on screen.
+  let clip = null;
+  const serializeObj = (o) => { const { el, mask, id, ...rest } = o; return rest; };
+  function shiftObj(o, dx, dy) {
+    if (o.rect) o.rect = [o.rect[0] + dx, o.rect[1] + dy, o.rect[2], o.rect[3]];
+    else if (o.points) o.points = o.points.map((q) => [q[0] + dx, q[1] + dy]);
+    else if (o.x1 != null) Object.assign(o, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
+    else if (o.x != null) Object.assign(o, { x: o.x + dx, y: o.y + dy });
+    positionObj(o);
+    updateChrome();
+  }
+  function duplicate(o, by) {
+    if (o.type === 'replace' || o.type === 'deleteText' || o.type === 'erase') return;
+    const c = addObj(JSON.parse(JSON.stringify(serializeObj(o))));
+    shiftObj(c, by, by);
+    select(c);
+  }
   function removeObj(o) {
     o.el?.remove(); o.mask?.remove();
     st.pending = st.pending.filter((x) => x !== o);
     if (st.sel === o) st.sel = null;
     if (o.type === 'replace' && st.tool === 'edittext') showLines(o.page);
+    if (o.type === 'erase' && st.tool === 'select') showObjects(o.page);
     renderProps(); updateChrome();
   }
   function select(o) {
     st.sel = o;
+    st.pick = null;
+    pagesEl.querySelectorAll('.pobj.sel').forEach((x) => x.classList.remove('sel'));
     st.pending.forEach((x) => x.el?.classList.toggle('sel', x === o));
     renderProps();
   }
@@ -371,7 +502,12 @@ export function openEditor(view, { file, mode }, ctx) {
     if (!selectAll) r.collapse(false);
     const s = getSelection(); s.removeAllRanges(); s.addRange(r);
     o.el.oninput = () => { o.text = o.el.innerText.replace(/\n$/, ''); updateChrome(); };
-    o.el.onkeydown = (e) => { if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey && o.type === 'replace')) { e.preventDefault(); commitEditing(); } e.stopPropagation(); };
+    o.el.onkeydown = (e) => {
+      const fmt = (e.ctrlKey || e.metaKey) && { b: 'bold', i: 'italic', u: 'underline' }[e.key.toLowerCase()];
+      if (fmt) { e.preventDefault(); o[fmt] = !o[fmt]; if (o.type === 'replace') o.styled = true; positionObj(o); renderProps(); }
+      else if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey && o.type === 'replace')) { e.preventDefault(); commitEditing(); }
+      e.stopPropagation();
+    };
     o.el.onblur = () => setTimeout(() => { if (editing === o && document.activeElement !== o.el) commitEditing(); }, 0);
   }
   function commitEditing() {
@@ -393,6 +529,7 @@ export function openEditor(view, { file, mode }, ctx) {
     if (e.button !== 0) return;
     commitEditing();
     select(o);
+    if (o.type === 'erase') return;
     const handle = e.target.classList.contains('handle');
     const start = ptOf(e, o.page);
     const snap = JSON.parse(JSON.stringify({ rect: o.rect, x: o.x, y: o.y, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2, points: o.points, size: o.size }));
@@ -426,7 +563,7 @@ export function openEditor(view, { file, mode }, ctx) {
     if (st.tool === 'select' || st.tool === 'edittext') { select(null); return; }
     if (st.tool === 'addtext') {
       e.preventDefault();
-      const o = addObj({ type: 'text', page: i, x: x0, y: y0 + s.size * 0.86, text: '', size: s.size, font: s.font, bold: s.bold, italic: s.italic, color: s.color });
+      const o = addObj({ type: 'text', page: i, x: x0, y: y0 + s.size * 0.86, text: '', size: s.size, font: s.font, bold: s.bold, italic: s.italic, color: s.color, underline: s.underline, strike: s.strike, bg: s.bg, align: s.align, lineHeight: s.lineHeight, spacing: s.spacing, opacity: s.opacity });
       select(o);
       setTimeout(() => editText(o, false), 0);
       return;
@@ -460,6 +597,7 @@ export function openEditor(view, { file, mode }, ctx) {
     $$('[data-tool]', root).forEach((b) => b.setAttribute('aria-pressed', b.dataset.tool === t));
     pagesEl.className = `pages tool-${t}`;
     if (t === 'edittext') st.pages.forEach((p, i) => p.visible && showLines(i)); else hideLines();
+    if (t === 'select') st.pages.forEach((p, i) => p.visible && showObjects(i)); else hideObjects();
     const info = TOOLS.find((x) => x[0] === t);
     tip(info?.[3]);
     renderProps();
@@ -478,19 +616,55 @@ export function openEditor(view, { file, mode }, ctx) {
     const head = (txt) => props.append(h(`<h3>${esc(txt)}</h3>`));
     const swatch = (list, val, fn) => { const el = h(`<div class="swatches">${list.map((c) => `<button style="background:${c}" data-c="${c}" aria-label="${c}" aria-pressed="${c.toLowerCase() === String(val).toLowerCase()}"></button>`).join('')}<input type="color" value="${val}" style="width:28px;height:24px" aria-label="Custom colour"></div>`); el.addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (b) { fn(b.dataset.c); renderProps(); } }); $('input', el).addEventListener('change', (e) => { fn(e.target.value); renderProps(); }); return el; };
     const apply = (patch) => { if (o) { Object.assign(o, patch); if (o.type === 'replace') o.styled = true; positionObj(o); } else Object.assign(s, patch); };
+    if (!o && st.pick) {
+      const it = st.pick.obj;
+      head(KIND[it.kind]);
+      if (it.text) props.append(h(`<p class="tip">“${esc(it.text)}${it.text.length >= 80 ? '…' : ''}”</p>`));
+      props.append(h(`<p class="tip">Delete takes it out of the file when you save: ${it.kind === 'table' ? 'its lines, shading and text' : it.kind === 'image' ? 'the picture' : it.kind === 'drawing' ? 'the lines and shapes' : 'the text'}, leaving what is around it as it is.</p>`));
+      const del = h(`<button class="btn danger" style="justify-self:start">${icon('delete', 'sm')}Remove from page</button>`);
+      del.addEventListener('click', erasePicked);
+      props.append(del);
+      return;
+    }
+    if (o?.type === 'erase') {
+      head(`Removed ${(KIND[o.kind] || 'area').toLowerCase()}`);
+      props.append(h(`<p class="tip">It is taken out of the file when you save.</p>`));
+      const back = h(`<button class="btn" style="justify-self:start">${icon('undo', 'sm')}Put it back</button>`);
+      back.addEventListener('click', () => removeObj(o));
+      props.append(back);
+      return;
+    }
     if (t === 'text' || t === 'replace' || t === 'addtext' || t === 'edittext') {
       const v = o || s;
       head(o?.type === 'replace' ? 'Edited text' : t === 'edittext' ? 'Edit text' : 'Text');
       if (t === 'edittext' && !o) { props.append(h(`<p class="tip">Click a line on the page to edit it. The original text is removed from the file when you save, not just covered.</p><p class="tip">Lines in rotated or vertical text can’t be edited directly; erase them and add new text instead.</p>`)); return; }
-      const fontSel = h(`<select class="input"><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option><option value="caveat">Handwriting</option></select>`);
+      const opt = ([id, label, css]) => `<option value="${esc(id)}" style="font-family:${esc(css)}">${esc(label)}</option>`;
+      const mine = st.fonts.map((f) => [`sys:${f.family}`, f.family, fontCss(`sys:${f.family}`)]);
+      const fontSel = h(`<select class="input" title="Font"><optgroup label="Lime">${BUILT_IN_FONTS.map(opt).join('')}</optgroup>${mine.length ? `<optgroup label="On this computer">${mine.map(opt).join('')}</optgroup>` : ''}</select>`);
       fontSel.value = v.font;
+      if (fontSel.value !== v.font) fontSel.value = 'sans';
       fontSel.addEventListener('change', () => apply({ font: fontSel.value }));
-      const size = h(`<input class="input" type="number" min="4" max="200" step="0.5" value="${Number(v.size).toFixed(1)}">`);
+      const size = h(`<input class="input" type="number" min="4" max="200" step="0.5" value="${Number(v.size).toFixed(1)}" title="Size">`);
       size.addEventListener('input', () => apply({ size: Number(size.value) || 12 }));
       const row = h(`<div class="row2"></div>`); row.append(fontSel, size); props.append(row);
-      const style = h(`<div style="display:flex;gap:4px"><button class="tb" data-s="bold" aria-pressed="${!!v.bold}" title="Bold">${icon('bold')}</button><button class="tb" data-s="italic" aria-pressed="${!!v.italic}" title="Italic">${icon('italic')}</button></div>`);
-      style.addEventListener('click', (e) => { const b = e.target.closest('[data-s]'); if (!b) return; const key = b.dataset.s; apply({ [key]: !(o || s)[key] }); renderProps(); });
-      props.append(style, swatch(COLORS, v.color, (c) => apply({ color: c })));
+      const btn = (key, ic, title) => `<button class="tb" data-s="${key}" aria-pressed="${!!v[key]}" title="${title}">${icon(ic)}</button>`;
+      const alignBtn = (a, ic, title) => `<button class="tb" data-al="${a}" aria-pressed="${(v.align || 'left') === a}" title="${title}">${icon(ic)}</button>`;
+      const style = h(`<div class="tstyle">${btn('bold', 'bold', 'Bold (Ctrl B)')}${btn('italic', 'italic', 'Italic (Ctrl I)')}${btn('underline', 'underline', 'Underline (Ctrl U)')}${btn('strike', 'strike', 'Strikethrough')}<span class="sep"></span>${alignBtn('left', 'alignLeft', 'Align left')}${alignBtn('center', 'alignCenter', 'Centre')}${alignBtn('right', 'alignRight', 'Align right')}</div>`);
+      style.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-s]'), al = e.target.closest('[data-al]');
+        if (b) apply({ [b.dataset.s]: !(o || s)[b.dataset.s] });
+        if (al) apply({ align: al.dataset.al });
+        if (b || al) renderProps();
+      });
+      props.append(style, h(`<div class="label">Colour</div>`), swatch(COLORS, v.color, (c) => apply({ color: c })), h(`<div class="label">Background</div>`), swatch(TEXT_BG, v.bg || 'none', (c) => apply({ bg: c })));
+      const slider = (key, label, min, max, step, fmt) => {
+        const f = h(`<div class="field"><label class="label">${label}</label><div class="range"><input type="range" min="${min}" max="${max}" step="${step}" value="${v[key] ?? (key === 'lineHeight' ? 1.2 : key === 'opacity' ? 1 : 0)}"><output>${fmt(v[key] ?? (key === 'lineHeight' ? 1.2 : key === 'opacity' ? 1 : 0))}</output></div></div>`);
+        $('input', f).addEventListener('input', (e) => { const n = Number(e.target.value); $('output', f).textContent = fmt(n); apply({ [key]: n }); });
+        return f;
+      };
+      const more = h(`<details class="more"><summary>Spacing and opacity</summary></details>`);
+      more.append(slider('lineHeight', 'Line spacing', 0.8, 3, 0.05, (n) => `${Number(n).toFixed(2)}×`), slider('spacing', 'Letter spacing', -2, 10, 0.1, (n) => `${Number(n).toFixed(1)} pt`), slider('opacity', 'Opacity', 0.1, 1, 0.05, (n) => `${Math.round(n * 100)}%`));
+      props.append(more);
       if (o) props.append(h(`<p class="tip">${o.type === 'replace' ? 'Changes replace the original line when you save.' : 'Double-click to edit. Drag to move. Drag the dot to resize.'}</p>`));
     } else if (t === 'whiteout') {
       head('Erase');
@@ -684,6 +858,35 @@ export function openEditor(view, { file, mode }, ctx) {
       s.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) done(a === 'ok' ? inp.value : null); });
     });
   }
+  // Find and replace across the document: every line with the words becomes an edited line, in the closest font, so
+  // nothing changes until Save and each one can still be adjusted or undone.
+  function replaceDialog() {
+    const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>Find and replace</h2><input class="input" data-f="q" placeholder="Find" value="${esc(find.value)}"><input class="input" data-f="r" placeholder="Replace with" style="margin-top:8px"><label class="row" style="margin-top:8px;gap:6px;font-size:12px"><input type="checkbox" data-f="case">Match case</label></div><div class="foot"><button class="btn" data-a="no">Cancel</button><button class="btn primary" data-a="ok">Replace all</button></div></div></div>`);
+    document.body.append(s);
+    const q = $('[data-f=q]', s), r = $('[data-f=r]', s);
+    (q.value ? r : q).focus();
+    const done = async (go) => { const v = [q.value, r.value, $('[data-f=case]', s).checked]; s.remove(); if (go && v[0]) await replaceAll(...v); };
+    s.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') done(true); if (e.key === 'Escape') done(false); });
+    s.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) done(a === 'ok'); });
+  }
+  async function replaceAll(q, r, matchCase) {
+    commitEditing();
+    const re = () => new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), matchCase ? 'g' : 'gi');
+    let n = 0;
+    for (const o of st.pending) if ((o.type === 'replace' || o.type === 'text') && re().test(o.text)) { o.text = o.text.replace(re(), r); if (o.el) o.el.textContent = o.text; positionObj(o); n++; }
+    for (let i = 0; i < st.pages.length; i++) {
+      if (!st.lines.has(i)) st.lines.set(i, call('text', st.sess.id, i).catch(() => []));
+      const taken = new Set(st.pending.filter((o) => o.page === i && o.lineId).map((o) => o.lineId));
+      for (const l of await st.lines.get(i)) {
+        if (!l.editable || taken.has(l.id) || !re().test(l.text)) continue;
+        addObj({ type: 'replace', page: i, lineId: l.id, bbox: l.bbox, x: l.origin[0], y: l.origin[1], text: l.text.replace(re(), r), original: l.text, size: l.size, font: matchFont(l), bold: l.bold, italic: l.italic, color: l.color });
+        n++;
+      }
+    }
+    if (st.tool === 'edittext') st.pages.forEach((p, i) => p.visible && showLines(i));
+    updateChrome();
+    toast(n ? `Replaced in ${n} line${n === 1 ? '' : 's'}. Save to keep it.` : `“${q}” wasn’t found.`, { type: n ? 'success' : undefined });
+  }
   function confirm3(title, text) {
     return new Promise((resolve) => {
       const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2><p class="muted" style="margin:0">${esc(text)}</p></div><div class="foot"><button class="btn primary" data-a="save">Save</button><button class="btn" data-a="discard">Don’t save</button><button class="btn" data-a="cancel">Cancel</button></div></div></div>`);
@@ -706,6 +909,8 @@ export function openEditor(view, { file, mode }, ctx) {
     if (a === 'zoomin') setZoom(st.zoom * 1.2);
     if (a === 'zoomout') setZoom(st.zoom / 1.2);
     if (a === 'fit') fitWidth();
+    if (a === 'fitpage') fitPage();
+    if (a === 'replace') replaceDialog();
     if (a === 'save') save(false);
     if (a === 'saveas') save(true);
     if (a === 'thumbs') { const on = body.classList.toggle('no-thumbs'); e.target.closest('button').setAttribute('aria-pressed', !on); }
@@ -719,17 +924,56 @@ export function openEditor(view, { file, mode }, ctx) {
     else if (c && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
     else if (c && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     else if (c && e.key.toLowerCase() === 'f') { e.preventDefault(); find.focus(); }
+    else if (c && e.key.toLowerCase() === 'h') { e.preventDefault(); replaceDialog(); }
+    else if (c && e.key.toLowerCase() === 'd' && st.sel) { e.preventDefault(); duplicate(st.sel, 12); }
+    else if (c && e.key.toLowerCase() === 'c' && st.sel) { e.preventDefault(); clip = JSON.parse(JSON.stringify(serializeObj(st.sel))); }
+    else if (c && e.key.toLowerCase() === 'v' && clip) { e.preventDefault(); const page = [...st.selPages][0] ?? clip.page; const o = addObj({ ...JSON.parse(JSON.stringify(clip)), page }); shiftObj(o, 12, 12); select(o); }
+    else if (st.sel && e.key.startsWith('Arrow') && st.sel.type !== 'erase') {
+      // Arrow keys nudge what's selected by a point, Shift by ten.
+      e.preventDefault();
+      const d = e.shiftKey ? 10 : 1, dx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0, dy = e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0;
+      shiftObj(st.sel, dx, dy);
+      if (st.sel.type === 'replace') st.sel.styled = true;
+    }
     else if (c && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom(st.zoom * 1.2); }
     else if (c && e.key === '-') { e.preventDefault(); setZoom(st.zoom / 1.2); }
+    else if (c && e.key === '0') { e.preventDefault(); fitWidth(); }
+    else if (c && e.key === '1') { e.preventDefault(); setZoom(1); }
+    else if (c && e.key === '9') { e.preventDefault(); fitPage(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && st.sel) { e.preventDefault(); removeObj(st.sel); }
-    else if (e.key === 'Escape') { if (st.sel) select(null); else selectTool('select'); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && st.pick) { e.preventDefault(); erasePicked(); }
+    else if (e.key === 'Escape') { if (st.sel || st.pick) select(null); else selectTool('select'); }
     else if (!c && !e.altKey) {
       const map = { v: 'select', e: 'edittext', t: 'addtext', x: 'whiteout', h: 'highlight', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line' };
       if (map[e.key.toLowerCase()]) selectTool(map[e.key.toLowerCase()]);
     }
   };
   document.addEventListener('keydown', onKey);
-  pagesEl.addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); setZoom(st.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)); } }, { passive: false });
+  // Ctrl or ⌘ with the scroll wheel, or a trackpad pinch (which arrives as Ctrl + wheel), zooms smoothly at the pointer:
+  // the step follows how far the wheel or fingers moved, so a pinch glides instead of lurching 10% per event.
+  pagesEl.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const d = Math.max(-60, Math.min(60, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+    setZoom(st.zoom * Math.exp(-d * 0.0065), { x: e.clientX, y: e.clientY });
+  }, { passive: false });
+  $('.zoom', root).addEventListener('change', (e) => { const v = e.target.value; if (v === 'width') fitWidth(); else if (v === 'page') fitPage(); else setZoom(Number(v)); });
+  // Hold Space and drag (or drag with the middle button) to move around the page, as in design apps.
+  let spaceDown = false;
+  const onSpace = (e) => { if (e.code === 'Space' && !editing && !e.target.matches?.('input, textarea, select, [contenteditable]')) { spaceDown = e.type === 'keydown'; pagesEl.classList.toggle('panning', spaceDown); if (spaceDown) e.preventDefault(); } };
+  document.addEventListener('keydown', onSpace);
+  document.addEventListener('keyup', onSpace);
+  pagesEl.addEventListener('pointerdown', (e) => {
+    if (!(spaceDown || e.button === 1)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const sx = e.clientX, sy = e.clientY, l0 = pagesEl.scrollLeft, t0 = pagesEl.scrollTop;
+    pagesEl.classList.add('grabbing');
+    const mv = (ev) => { pagesEl.scrollLeft = l0 - (ev.clientX - sx); pagesEl.scrollTop = t0 - (ev.clientY - sy); };
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); pagesEl.classList.remove('grabbing'); };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', up);
+  }, true);
   const ro = new ResizeObserver(() => {});
   ro.observe(pagesEl);
 
@@ -738,6 +982,8 @@ export function openEditor(view, { file, mode }, ctx) {
   return () => {
     disposed = true;
     document.removeEventListener('keydown', onKey);
+    document.removeEventListener('keydown', onSpace);
+    document.removeEventListener('keyup', onSpace);
     io?.disconnect(); tio?.disconnect(); ro.disconnect();
     st.renders.forEach((r) => URL.revokeObjectURL(r.url));
     if (st.sess) call('close', st.sess.id).catch(() => {});

@@ -40,8 +40,16 @@ html, body, #view { height: 100%; overflow: hidden; }
 .tline { position: absolute; border-radius: 2px; cursor: text; }
 .tool-edittext .tline:hover { outline: 1px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .tline.sel { outline: 2px solid var(--accent); }
-.tline.mask { background: #fff; }
+.tline.mask { background: transparent no-repeat 0 0 / 100% 100%; border-radius: 0; }
+.tline.mask.plain { background-color: #fff; }
 .obj { position: absolute; }
+.pobj { position: absolute; border-radius: 2px; cursor: pointer; }
+.tool-select .pdfpage:hover .pobj:not(:hover):not(.sel) { outline: 1px dashed color-mix(in srgb, var(--accent) 38%, transparent); outline-offset: 1px; }
+.pobj:hover { outline: 1.5px dashed var(--accent); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.pobj.sel { outline: 2px solid var(--accent); outline-offset: 1px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.obj.erase { background: transparent no-repeat 0 0 / 100% 100%; }
+.obj.erase .handle { display: none !important; }
+.obj.erase.sel { outline-style: dashed; }
 .obj.sel { outline: 1.5px solid var(--accent); outline-offset: 2px; }
 .obj .handle { position: absolute; right: -7px; bottom: -7px; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); cursor: nwse-resize; display: none; }
 .obj.sel .handle { display: block; }
@@ -66,3 +74,12 @@ html, body, #view { height: 100%; overflow: hidden; }
 .sig-list img { max-width: 100%; max-height: 100%; }
 .label { font-size: 11.5px; font-weight: 500; color: var(--ink-2); }
 .text-sm { font-size: 12px; }
+
+.cmdbar select.zoom { height: 28px; min-width: 70px; padding: 0 6px; border: 0; border-radius: 7px; background: var(--surface-3); color: var(--ink); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; }
+.pages.panning, .pages.panning * { cursor: grab !important; }
+.pages.grabbing, .pages.grabbing * { cursor: grabbing !important; }
+.props .tstyle { display: flex; gap: 2px; align-items: center; flex-wrap: wrap; }
+.props .tstyle .sep { width: .5px; height: 20px; margin: 0 4px; background: var(--line-2); }
+.props details.more summary { cursor: pointer; color: var(--ink-2); font-size: 12px; }
+.props details.more[open] { display: grid; gap: 10px; }
+.swatches button[data-c="none"] { background: linear-gradient(135deg, transparent 45%, var(--danger) 45% 55%, transparent 55%), #fff !important; }

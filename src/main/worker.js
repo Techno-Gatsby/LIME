@@ -56,7 +56,7 @@ const CALLS = {
   archiveList: (p, pw) => require('./engines/archive').list(p, pw),
   probe: (p) => require('./engines/media').probe(p),
   enginesStatus: () => ({ ...require('./engines/office').status(), crafts: require('./engines/crafts').status() }),
-  'editor.open': editor.open, 'editor.render': editor.render, 'editor.text': editor.text, 'editor.search': editor.search,
+  'editor.open': editor.open, 'editor.render': editor.render, 'editor.patch': editor.patch, 'editor.objects': editor.objects, 'editor.fonts': editor.fonts, 'editor.text': editor.text, 'editor.search': editor.search,
   'editor.apply': editor.apply, 'editor.pageOp': editor.pageOp, 'editor.undo': editor.undo, 'editor.redo': editor.redo,
   'editor.save': editor.save, 'editor.exportPages': editor.exportPages, 'editor.close': editor.close,
 };

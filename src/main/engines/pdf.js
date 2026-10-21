@@ -66,27 +66,37 @@ const FONT_FILES = {
   sans: 'NotoSans-Regular.ttf', 'sans-bold': 'NotoSans-Bold.ttf', 'sans-italic': 'NotoSans-Italic.ttf', 'sans-bolditalic': 'NotoSans-BoldItalic.ttf',
   serif: 'NotoSerif-Regular.ttf', 'serif-bold': 'NotoSerif-Bold.ttf', mono: 'NotoSansMono-Regular.ttf',
   caveat: 'Caveat.ttf', dancing: 'DancingScript.ttf',
+  carlito: 'Carlito-Regular.ttf', 'carlito-bold': 'Carlito-Bold.ttf', 'carlito-italic': 'Carlito-Italic.ttf', 'carlito-bolditalic': 'Carlito-BoldItalic.ttf',
 };
 const STD = {
   sans: StandardFonts.Helvetica, 'sans-bold': StandardFonts.HelveticaBold, 'sans-italic': StandardFonts.HelveticaOblique, 'sans-bolditalic': StandardFonts.HelveticaBoldOblique,
   serif: StandardFonts.TimesRoman, 'serif-bold': StandardFonts.TimesRomanBold, 'serif-italic': StandardFonts.TimesRomanItalic, 'serif-bolditalic': StandardFonts.TimesRomanBoldItalic,
   mono: StandardFonts.Courier, 'mono-bold': StandardFonts.CourierBold, 'mono-italic': StandardFonts.CourierOblique, 'mono-bolditalic': StandardFonts.CourierBoldOblique,
+  helvetica: StandardFonts.Helvetica, 'helvetica-bold': StandardFonts.HelveticaBold, 'helvetica-italic': StandardFonts.HelveticaOblique, 'helvetica-bolditalic': StandardFonts.HelveticaBoldOblique,
+  times: StandardFonts.TimesRoman, 'times-bold': StandardFonts.TimesRomanBold, 'times-italic': StandardFonts.TimesRomanItalic, 'times-bolditalic': StandardFonts.TimesRomanBoldItalic,
+  courier: StandardFonts.Courier, 'courier-bold': StandardFonts.CourierBold, 'courier-italic': StandardFonts.CourierOblique, 'courier-bolditalic': StandardFonts.CourierBoldOblique,
 };
 const WINANSI = /^[\x20-\x7e\u00a0-\u00ff\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178\n\r\t]*$/;
 
 function fontCache(doc) {
   const cache = new Map();
   let fkReady = false;
+  // A key is one of Lime's own fonts (sans-bold, carlito-italic…), a standard PDF font (helvetica, times, courier), or
+  // file:<path> for a font installed on the computer.
   return async function get(key, text = '') {
     const needsUnicode = !WINANSI.test(text);
-    const k = STD[key] && !needsUnicode && !FONT_FILES[key]?.match(/caveat|dancing/i) ? `std:${key}` : `ttf:${key}`;
+    const k = key.startsWith('file:') ? key : STD[key] && !needsUnicode && !FONT_FILES[key]?.match(/caveat|dancing/i) ? `std:${key}` : `ttf:${key}`;
     if (cache.has(k)) return cache.get(k);
     let font;
     if (k.startsWith('std:')) font = await doc.embedFont(STD[key]);
     else {
       if (!fkReady) { doc.registerFontkit(fontkit); fkReady = true; }
-      const file = FONT_FILES[key] || FONT_FILES[key.split('-')[0]] || FONT_FILES.sans;
-      font = await doc.embedFont(await fsp.readFile(path.join(U.cfg.data, 'fonts', file)), { subset: true });
+      const file = key.startsWith('file:') ? key.slice(5) : path.join(U.cfg.data, 'fonts', FONT_FILES[key] || FONT_FILES[key.split('-')[0]] || FONT_FILES.sans);
+      const bytes = await fsp.readFile(file);
+      // Cutting a font down to the letters used breaks some fonts' glyphs (Carlito's, and who knows which installed ones),
+      // so only the Noto fonts, which are known to survive it, and very large fonts are cut down.
+      const subset = /[\\/]Noto[^\\/]*$/.test(file) || bytes.length > 3e6;
+      font = await doc.embedFont(bytes, { subset }).catch(() => doc.embedFont(bytes));
     }
     cache.set(k, font);
     return font;
