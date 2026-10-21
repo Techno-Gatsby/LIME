@@ -81,7 +81,7 @@ async function fileText(f) {
   return (url || t).trim();
 }
 async function make(f, opts, ctx) {
-  if ((opts.kind || 'file') === 'file') {
+  if ((opts.kind || 'file') === 'file' || (opts.kind === 'text' && !String(opts.text || '').trim())) {
     opts = { ...opts, kind: 'text', text: await fileText(f) };
     if (!opts.text) throw new Error(`${path.basename(f)} is empty.`);
     if (opts.text.length > 2900) throw new Error('That’s too much text for one QR code (it holds about 2,900 letters).');

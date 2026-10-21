@@ -1565,6 +1565,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
   };
   const SWEEP_REFUSE = { 'replace-text matchCase=true': /found no “lime”/, 'convert-document to=docx': /already DOCX/, 'model-drawing scale=5': /don’t fit on A3/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
+    'make-qr kind=wifi': /network name/, 'make-qr security=WEP': /network name/, 'make-qr security=none': /network name/, 'make-qr hidden=true': /network name/, 'make-qr kind=contact': /name, phone number or email/,
+    'make-qr type=code128': /too long/, 'make-qr type=code39': /too long/, 'make-qr type=ean13': /12 or 13 digits/, 'make-qr type=upca': /11 or 12 digits/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() && !E('office').status().bundled.soffice ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html' };
