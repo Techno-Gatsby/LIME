@@ -50,7 +50,7 @@ async function render(s, src, out, settings, extra = []) {
 }
 const UNIT = { x0: 0, y0: 0, x1: 1, y1: 1 };
 // What a mask (an image's transparency) needs: the same framing and nothing else.
-const geometryOnly = (dev) => ({ orientation: dev.orientation, crop: { ...dev.crop, flip_h: false, flip_v: false } });
+const geometryOnly = (dev) => ({ orientation: dev.orientation, geometry: dev.geometry, crop: { ...dev.crop, flip_h: false, flip_v: false } });
 function settingsFor(dev, mode) {
   if (mode === 'before') return geometryOnly(dev);
   if (mode === 'frame') return { ...dev, crop: { ...dev.crop, geometry: { angle: 0, rect: UNIT } }, vignette: { ...dev.vignette, amount: 0 } };

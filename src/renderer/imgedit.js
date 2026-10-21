@@ -899,7 +899,7 @@ export function openEditor(view, { file }, ctx) {
   }
   function addEye(ox, oy) {
     const [u, v] = normFromOut(ox, oy), e = st.eye;
-    st.dev.red_eye.push({ center: { x: u, y: v }, rx: e.size, ry: e.size, pupil_size: e.pupil, darken: e.darken, pet: false, catchlight: null });
+    st.dev.red_eye.push({ center: { x: u, y: v }, rx: e.size, ry: e.size, pupil_size: e.pupil, darken: e.darken, pet: !!e.pet, catchlight: null });
     st.eyeSel = st.dev.red_eye.length - 1;
     commit('Red eye');
     drawMarks();
@@ -1171,7 +1171,7 @@ export function openEditor(view, { file }, ctx) {
       const rows = defs.filter((d) => !(bw && ['color.vibrance', 'color.saturation'].includes(d.key))).map((d) => slider(d));
       if (title === 'Curve') rows.push(curveWidget());
       if (title === 'Optics') rows.unshift(toggle('optics.lens_profile', 'Lens profile corrections'), toggle('optics.remove_ca', 'Remove chromatic aberration'));
-      props.append(section(title, rows, { open: ['Light', 'Colour', 'Presence'].includes(title), reset: () => { resetKeys(defs.map((d) => d.key)); if (title === 'Curve') st.dev.curve.master = []; if (title === 'Optics') Object.assign(st.dev.optics, { lens_profile: false, remove_ca: false }); } }));
+      props.append(section(title, rows, { open: ['Light', 'Colour', 'Presence'].includes(title), reset: () => { resetKeys(defs.map((d) => d.key)); if (title === 'Curve') Object.assign(st.dev.curve, { master: [], red: [], green: [], blue: [] }); if (title === 'Optics') Object.assign(st.dev.optics, { lens_profile: false, remove_ca: false }); } }));
     }
     const all = h(`<button class="btn subtle" data-x="resetall" style="justify-self:start" title="Back to the original image; Undo brings the edits back">${icon('again', 'sm')}Reset all edits</button>`);
     all.addEventListener('click', resetAll);
@@ -1218,18 +1218,24 @@ export function openEditor(view, { file }, ctx) {
       slider({ ...S(`mixer.${cur}.sat`, 'Saturation'), track: `linear-gradient(90deg,#9a9a9a,${col})` }),
       slider({ ...S(`mixer.${cur}.lum`, 'Luminance'), track: `linear-gradient(90deg,#222,${col},#fff)` })], { open: false, reset: () => resetKeys(HUES.flatMap(([k]) => ['hue', 'sat', 'lum'].map((p) => `mixer.${k}.${p}`))) });
   }
-  // A point curve over the whole image, like Curves: drag points, click to add one, drag one off to remove it.
+  // Point curves, like Curves: one for the whole image and one for each of red, green and blue. Drag a point, click
+  // to add one, drag one off the square to remove it.
+  const CURVES = [['master', 'RGB', '#3d8a28'], ['red', 'Red', '#e8453c'], ['green', 'Green', '#3fae4a'], ['blue', 'Blue', '#3d7be8']];
   function curveWidget() {
+    const box = h('<div class="field"></div>'), ch = st.curveCh || 'master', [, , colour] = CURVES.find((x) => x[0] === ch);
+    const tabs = h(`<div class="seg" role="group" aria-label="Curve">${CURVES.map(([id, label]) => `<button data-ch="${id}" aria-pressed="${id === ch}"${(st.dev.curve[id] || []).length ? ' style="font-weight:650"' : ''}>${label}</button>`).join('')}</div>`);
+    tabs.addEventListener('click', (e) => { const b = e.target.closest('[data-ch]'); if (b) { st.curveCh = b.dataset.ch; renderProps(); } });
     const c = h('<canvas class="curve" title="Click to add a point; drag a point off the square to remove it"></canvas>');
-    const pts = () => { const m = st.dev.curve.master || []; return m.length ? m.map((p) => [p.x, p.y]) : [[0, 0], [1, 1]]; };
+    box.append(tabs, c);
+    const pts = () => { const m = st.dev.curve[ch] || []; return m.length ? m.map((p) => [p.x, p.y]) : [[0, 0], [1, 1]]; };
     const paint = () => {
-      const w = c.clientWidth * dpr() || 500, hh = w;
+      const w = (c.clientWidth || 260) * dpr(), hh = Math.round(w / 1.3);
       c.width = w; c.height = hh;
       const cx = c.getContext('2d'), p = pts();
       cx.strokeStyle = 'rgba(128,128,128,.25)'; cx.lineWidth = 1;
       for (let i = 1; i < 4; i++) { cx.beginPath(); cx.moveTo((i / 4) * w, 0); cx.lineTo((i / 4) * w, hh); cx.moveTo(0, (i / 4) * hh); cx.lineTo(w, (i / 4) * hh); cx.stroke(); }
-      if (histData) { cx.fillStyle = 'rgba(128,128,128,.18)'; const lum = histData.bins[1], peak = Math.max(...lum.slice(2, 254)) || 1; cx.beginPath(); cx.moveTo(0, hh); for (let i = 0; i < 256; i++) cx.lineTo((i / 255) * w, hh - Math.min(1, lum[i] / peak) * hh * 0.9); cx.lineTo(w, hh); cx.fill(); }
-      cx.strokeStyle = getComputedStyle(root).getPropertyValue('--accent') || '#3d8a28'; cx.lineWidth = 2 * dpr();
+      if (histData) { cx.fillStyle = 'rgba(128,128,128,.18)'; const lum = histData.bins[{ red: 0, blue: 2 }[ch] ?? 1], peak = Math.max(...lum.slice(2, 254)) || 1; cx.beginPath(); cx.moveTo(0, hh); for (let i = 0; i < 256; i++) cx.lineTo((i / 255) * w, hh - Math.min(1, lum[i] / peak) * hh * 0.9); cx.lineTo(w, hh); cx.fill(); }
+      cx.strokeStyle = ch === 'master' ? getComputedStyle(root).getPropertyValue('--accent') || colour : colour; cx.lineWidth = 2 * dpr();
       cx.beginPath();
       const f = spline(p);
       for (let i = 0; i <= 100; i++) { const x = i / 100; const y = clamp(f(x), 0, 1); if (i) cx.lineTo(x * w, (1 - y) * hh); else cx.moveTo(x * w, (1 - y) * hh); }
@@ -1244,7 +1250,7 @@ export function openEditor(view, { file }, ctx) {
       let i = p.findIndex(([px, py]) => Math.hypot(px - x, py - y) < 0.05);
       if (i < 0) { p.push([x, y]); p.sort((a, b) => a[0] - b[0]); i = p.findIndex((q) => q[0] === x && q[1] === y); }
       c.setPointerCapture(e.pointerId);
-      const save = () => { st.dev.curve.master = p.length === 2 && p[0][0] === 0 && p[0][1] === 0 && p[1][0] === 1 && p[1][1] === 1 ? [] : p.map(([px, py]) => ({ x: px, y: py })); };
+      const save = () => { st.dev.curve[ch] = p.length === 2 && p[0][0] === 0 && p[0][1] === 0 && p[1][0] === 1 && p[1][1] === 1 ? [] : p.map(([px, py]) => ({ x: px, y: py })); };
       const move = (ev) => {
         const out = (ev.clientX < r.left - 20 || ev.clientX > r.right + 20 || ev.clientY < r.top - 20 || ev.clientY > r.bottom + 20) && i > 0 && i < p.length - 1;
         [x, y] = at(ev);
@@ -1259,7 +1265,9 @@ export function openEditor(view, { file }, ctx) {
       c.addEventListener('pointerup', up);
       save(); paint();
     });
-    return c;
+    // Drawn again when its section opens, at its real size.
+    requestAnimationFrame(() => c.closest('details')?.addEventListener('toggle', () => requestAnimationFrame(paint)));
+    return box;
   }
   // Monotone cubic through the points, the shape a point curve takes.
   function spline(p) {
@@ -1458,7 +1466,10 @@ export function openEditor(view, { file }, ctx) {
       $(`[data-k="${k}"] input`, props).value = val;
       $(`[data-k="${k}"] output`, props).textContent = fmt(val);
     }
-    props.append(h(`<p class="tip">${st.dev.red_eye.length ? `${st.dev.red_eye.length} eye${st.dev.red_eye.length === 1 ? '' : 's'} fixed. ` : ''}Click the middle of each red eye; the pupil inside the circle is found and darkened.</p>`));
+    // Animals' eyes glow green, yellow or white rather than red; LightCraft treats them differently.
+    const pet = h(`<label class="switch"><span class="text-sm">Pet eye</span><input type="checkbox"${(sel ? sel.pet : st.eye.pet) ? ' checked' : ''}></label>`);
+    $('input', pet).addEventListener('change', (ev) => { if (sel) { sel.pet = ev.target.checked; commit('Pet eye'); refresh(); } else st.eye.pet = ev.target.checked; });
+    props.append(pet, h(`<p class="tip">${st.dev.red_eye.length ? `${st.dev.red_eye.length} eye${st.dev.red_eye.length === 1 ? '' : 's'} fixed. ` : ''}Click the middle of each red eye; the pupil inside the circle is found and darkened.</p>`));
     props.onclick = (e) => { if (st.tool === 'redeye' && e.target.closest('[data-x=del]')) removeSel(); };
   }
   function maskPanel() {
