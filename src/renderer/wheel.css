@@ -14,17 +14,17 @@
 }
 
 :root[data-theme="dark"] {
-  --glass-hi: rgba(92, 96, 104, .84); --glass-lo: rgba(42, 45, 50, .82);
-  --bezel-in: rgba(24, 26, 29, .26); --bezel: rgba(28, 30, 34, .5); --bezel-out: rgba(64, 68, 75, .66);
-  --edge-hi: rgba(255, 255, 255, .5); --edge-lo: rgba(255, 255, 255, .07); --sheen: .18;
-  --rim-hi: .9; --rim-lo: rgba(0, 0, 0, .5); --rim-glow: rgba(255, 255, 255, .08);
-  --fringe: .3; --dome-hi: .8; --dome-shade: rgba(0, 0, 0, .4);
+  --glass-hi: rgba(70, 73, 79, .92); --glass-lo: rgba(44, 46, 51, .92);
+  --bezel-in: rgba(12, 13, 15, .6); --bezel: rgba(16, 17, 20, .8); --bezel-out: rgba(30, 32, 36, .86);
+  --edge-hi: rgba(255, 255, 255, .22); --edge-lo: rgba(255, 255, 255, .03); --sheen: .1;
+  --rim-hi: .2; --rim-lo: rgba(0, 0, 0, .35); --rim-glow: rgba(255, 255, 255, .04);
+  --fringe: .18; --dome-hi: .55; --dome-shade: rgba(0, 0, 0, .45);
   --hot-hi: #7cc446; --hot-lo: #2a7116;
-  --wedge-line: rgba(0, 0, 0, .34); --hole: rgba(0, 0, 0, .16); --well: rgba(0, 0, 0, .55); --lip: rgba(255, 255, 255, .16);
-  --drop: rgba(0, 0, 0, .55); --bezel-line: rgba(0, 0, 0, .4);
-  --label: #f6f7f8; --hint: rgba(246, 247, 248, .56);
-  --chip: linear-gradient(180deg, rgba(64, 67, 73, .82), rgba(38, 40, 45, .8)); --chip-line: rgba(255, 255, 255, .16); --chip-ink: #f6f7f8; --chip-ink-2: rgba(246, 247, 248, .62);
-  --chip-shadow: inset 0 1px 0 var(--chip-line), 0 0 0 .5px rgba(0, 0, 0, .5), 0 2px 5px -1px rgba(0, 0, 0, .4), 0 8px 18px -8px rgba(0, 0, 0, .6);
+  --wedge-line: rgba(255, 255, 255, .07); --hole: rgba(0, 0, 0, .22); --well: rgba(0, 0, 0, .6); --lip: rgba(255, 255, 255, .1);
+  --drop: rgba(0, 0, 0, .6); --bezel-line: rgba(255, 255, 255, .06);
+  --label: #f4f5f6; --hint: rgba(244, 245, 246, .5);
+  --chip: linear-gradient(180deg, rgba(56, 59, 64, .9), rgba(34, 36, 40, .9)); --chip-line: rgba(255, 255, 255, .1); --chip-ink: #f4f5f6; --chip-ink-2: rgba(244, 245, 246, .6);
+  --chip-shadow: inset 0 1px 0 var(--chip-line), 0 0 0 .5px rgba(0, 0, 0, .6), 0 2px 5px -1px rgba(0, 0, 0, .45), 0 8px 18px -8px rgba(0, 0, 0, .65);
 }
 html, body { background: transparent !important; overflow: hidden; }
 .s-glass-hi { stop-color: var(--glass-hi); } .s-glass-lo { stop-color: var(--glass-lo); }
