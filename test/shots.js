@@ -9,7 +9,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
   const steps = (process.env.LIME_STEPS || 'all').split(',');
   const w = () => wheel();
   const js = (code) => w().webContents.executeJavaScript(code, true);
-  // The wheel's window covers the screen: its shots are cut to the lime and the wheel, with room for the animations.
   const wheelRect = () => {
     const d = debug(), r = d.placed, t = d.tab, W = d.window;
     const x0 = Math.min(r.x, t.x - 48) - 24, y0 = Math.min(r.y, t.y - 48) - 24, x1 = Math.max(r.x + r.width, t.x + 48) + 24, y1 = Math.max(r.y + r.height, t.y + 48) + 24;
@@ -118,6 +117,50 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       await js(`window.__lime.collapse()`);
       await sleep(500);
     }
+    if (want('glass')) {
+      const mouse = async (sel, dx = 0, dy = 0) => {
+        const p = await js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: Math.round(b.x + b.width / 2 + ${dx}), y: Math.round(b.y + b.height / 2 + ${dy}) }; })()`);
+        w().webContents.sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y });
+        await sleep(40);
+        w().webContents.sendInputEvent({ type: 'mouseMove', x: p.x + 1, y: p.y });
+        return p;
+      };
+      await js(`window.__lime.openWith(${JSON.stringify([img])})`);
+      await sleep(500);
+      await mouse('.petal[data-i="1"] text.l', 10, -6);
+      await shot('g1-pointer-topright');
+      console.log('glass', await js('(() => { const L = window.__lime, g = document.querySelector(".petal.hot"), d = document.querySelector(".dial"); return { hot: L.S.hot, light: [...document.querySelectorAll("fePointLight")].map((l) => l.getAttribute("x") + "," + l.getAttribute("y")), nudge: g && getComputedStyle(g).translate, tilt: d.style.cssText }; })()'));
+      await mouse('.petal[data-i="5"] text.l', -16, 10);
+      await shot('g2-pointer-bottomleft');
+      console.log('shade offsets', await js('[...document.querySelectorAll("feOffset.away, feOffset.toward")].map((o) => o.getAttribute("dx") + "," + o.getAttribute("dy")).join(" ")'));
+      await mouse('.center', 0, -30);
+      await shot('g3-pointer-centre');
+      await js('window.lime.invoke("settings:set", { theme: "dark" })');
+      await sleep(400);
+      await mouse('.petal[data-i="2"] text.l', 8, 8);
+      await shot('g4-pointer-dark');
+      await js('window.lime.invoke("settings:set", { theme: "system" })');
+      w().webContents.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
+      await sleep(900);
+      const cost = await js(`(async () => {
+        const L = window.__lime, r = document.querySelector('.dial').getBoundingClientRect(), c = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        const tick = () => new Promise((res) => requestAnimationFrame(res));
+        const run = async (n, step) => { const f = []; let last = performance.now(); for (let i = 0; i < n; i++) { step(i); await tick(); const t = performance.now(); f.push(t - last); last = t; } f.sort((a, b) => a - b); return { median: Math.round(f[n >> 1]), p90: Math.round(f[Math.floor(n * 0.9)]), worst: Math.round(f[n - 1]) }; };
+        const best = (a, b) => (a && a.median <= b.median ? a : b);
+        let still = null, light = null, all = null;
+        for (let k = 0; k < 3; k++) {
+          still = best(still, await run(60, () => {}));
+          light = best(light, await run(60, (i) => L.glassAt(c.x + Math.cos(i / 9) * 120, c.y + Math.sin(i / 9) * 120)));
+          L.setHot(1);
+          all = best(all, await run(60, (i) => L.glassAt(c.x + 60 + Math.cos(i / 7) * 30, c.y - 60 + Math.sin(i / 7) * 30)));
+          L.setHot(-1);
+        }
+        return { still, light, all };
+      })()`);
+      console.log('frame cost (ms)', JSON.stringify(cost));
+      await js('window.__lime.collapse()');
+      await sleep(500);
+    }
     if (want('options')) {
       const pdf = path.join(samples, 'doc.pdf');
       await js(`window.__lime.openWith(${JSON.stringify([pdf])})`);
@@ -223,7 +266,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('19-editor-markup', e);
       }
     }
-    // The app editors: each opened on a sample, then a few of its panels.
     const STUDIO = [
       ['studio-vector', 'logo.svg', 'vectorcraft', ['select', 'color', 'arrange', 'path', 'type', 'artboard', 'export'], async (ejs) => { await ejs(`document.querySelector('.vobj')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); window.dispatchEvent(new PointerEvent('pointerup', {}))`); }],
       ['studio-layout', 'layout.idml', 'designcraft', ['select', 'story', 'swatches', 'fonts', 'pages', 'preflight', 'export'], async (ejs) => { await ejs(`document.querySelectorAll('.dframe.text')[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))`); }],
@@ -252,7 +294,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       }
       e.destroy();
     }
-    // A few things done in each editor, the way a person would: drawing, typing, the history and Save as.
     if (want('studio-flows')) {
       const open = async (sample, appId) => {
         openEditor(path.join(samples, sample), `studio:${appId}`);
@@ -400,7 +441,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       }
     }
     if (want('imgedit2')) {
-      // Retouching and a cut-out, on the faces sample.
       openEditor(path.join(samples, 'faces.png'), 'image');
       let e = null;
       for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === 'image' && !x.webContents.isLoading()); }
@@ -438,7 +478,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       }
     }
     if (want('media')) {
-      // A clip with a picture that moves and sound that pauses, so the strip, waveform and looks show something.
       const { execFileSync } = require('child_process');
       const ff = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).binPath('ffmpeg'), demo = path.join(dir, 'Lake walk.mp4'), talk = path.join(dir, 'Interview.wav');
       if (!fs.existsSync(demo)) {
@@ -488,7 +527,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       ]);
     }
     if (want('pdftools')) {
-      // Comments, bookmarks, links, form fields, redaction, measuring, cropping and the Document menu.
       const src = path.join(dir, 'tools.pdf');
       fs.copyFileSync(path.join(samples, 'chapters.pdf'), src);
       openEditor(src, 'edit');
@@ -502,7 +540,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await sleep(800);
         const at = (fx_, fy, extra = '') => `(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * ${fx_}, y = b.top + b.height * ${fy}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); ${extra} window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y })); })()`;
         const drag = (fx0, fy0, fx1, fy1) => `(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), p = (u, v) => ({ clientX: b.left + b.width * u, clientY: b.top + b.height * v }); l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ...p(${fx0}, ${fy0}) })); window.dispatchEvent(new PointerEvent('pointermove', p(${fx1}, ${fy1}))); window.dispatchEvent(new PointerEvent('pointerup', p(${fx1}, ${fy1}))); })()`;
-        // A note with a reply, in the Comments panel.
         await ejs(`document.querySelector('[data-tool="note"]').click()`);
         await ejs(at(0.62, 0.1));
         await wait('!!document.querySelector(".cm.sel textarea")');
@@ -514,12 +551,10 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await ejs(drag(0.1, 0.165, 0.5, 0.18));
         await sleep(300);
         await shot('40-comments', e);
-        // Bookmarks.
         await ejs(`document.querySelector('[data-side="bookmarks"]').click()`);
         await sleep(400);
         await ejs(`document.querySelector('.bm')?.click()`);
         await shot('41-bookmarks', e);
-        // A link being added.
         await ejs(`document.querySelector('[data-tool="link"]').click()`);
         await ejs(drag(0.1, 0.075, 0.6, 0.11));
         await sleep(300);
@@ -527,7 +562,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('42-link', e);
         await ejs(`document.querySelector('.props .cmrow .btn.primary')?.click()`);
         await sleep(1200);
-        // Form fields: a text field and a tick box, then fill them in.
         await ejs(`document.querySelector('[data-tool="field"]').click()`);
         await ejs(drag(0.1, 0.3, 0.5, 0.33));
         await wait('document.querySelectorAll(".pfield.edit").length >= 1', 8000);
@@ -540,7 +574,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await sleep(400);
         await ejs(`(() => { const i = document.querySelector('.pfield.fill input[type=text]'); if (i) { i.value = 'Jay Kadam'; i.dispatchEvent(new Event('input')); } const c = document.querySelector('.pfield.fill input[type=checkbox]'); if (c) { c.checked = true; c.dispatchEvent(new Event('change')); } })()`);
         await shot('44-fields-fill', e);
-        // Redaction marks and a measurement.
         await ejs(`document.querySelector('[data-tool="redact"]').click()`);
         await ejs(drag(0.1, 0.13, 0.45, 0.15));
         await sleep(300);
@@ -553,7 +586,6 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await ejs(drag(0.06, 0.05, 0.94, 0.7));
         await sleep(300);
         await shot('47-crop', e);
-        // The Document menu, the header and footer dialog and the save options.
         await ejs(`document.querySelector('[data-tool="select"]').click(); document.querySelector('[data-a="docmenu"]').click()`);
         await sleep(300);
         await shot('48-docmenu', e);

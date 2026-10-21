@@ -54,6 +54,12 @@ Portions of the format conversion logic are adapted from Filee by KnifeLemon (ht
 Compare documents pairs changed paragraphs the way LibreOffice Writer's Compare Document does (sw/source/core/doc/doccomp.cxx,
 MPL-2.0, The Document Foundation): lengths within three times each other, and enough text in long common stretches
 (the sum of their squared lengths).
+The wheel's liquid glass follows liquid-glass-react by rdev (https://github.com/rdev/liquid-glass-react, MIT License; its
+displacement generator is adapted from shuding/liquid-glass): a displacement map drawn on a canvas and fed through feImage to
+feDisplacementMap, the red, green and blue channels each displaced a different distance and screen-blended, and the elastic
+lean toward the pointer. The bevel-zone refraction, the chromatic aberration that grows with it (blue furthest), the specular
+light that moves on its own and the viscous follow of the pointer are after liquidGL by naughtyduk
+(https://github.com/naughtyduk/liquidGL, MIT License). No code is copied from either.
 CAD saving follows FreeCAD (https://www.freecad.org, LGPL-2.1-or-later) and SolidCraft (https://github.com/tangency-labs/solidcraft,
 MIT OR Apache-2.0):
   Mesh decimation is ported from FreeCAD's Mesh Simplify.h, itself Sven Forstmann's Fast Quadric Mesh Simplification
