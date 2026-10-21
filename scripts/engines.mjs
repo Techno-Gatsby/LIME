@@ -248,5 +248,6 @@ if (!only || only === 'crafts') await crafts();
 if (!only || only === 'apps') await apps();
 if (!only || only === 'web') await webs();
 if (!only || only === 'helpers') await helpers();
+if (!only || only === 'diagrams') { const DV = await import('./diagramvendor.mjs'); await DV.buildDrawio(path.join(V, 'diagrams'), CACHE); await DV.buildTranslate(path.join(V, 'translate'), CACHE); }
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);

@@ -66,11 +66,15 @@
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.15",
     "@electron/packager": "20.3.0",
+    "@excalidraw/excalidraw": "0.18.1",
     "@lezer/highlight": "1.2.5",
     "cfb": "1.2.2",
     "electron": "44.9.0",
     "esbuild": "0.25.10",
     "grapesjs": "0.23.6",
+    "mermaid": "11.17.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "wawoff2": "2.0.1"
   },
   "overrides": {

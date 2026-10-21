@@ -109,7 +109,8 @@ async function ensure(id, vendor, root, progress = () => {}) {
       tar.stderr.on('data', (d) => { err += d; });
       tar.on('error', no);
       tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch(no);
+      // tar can finish and close its input before the last padding arrives; its exit code is what counts then.
+      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch((e) => { if (!['EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(e.code)) no(e); });
     });
     if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id].name} was not in its archive`);
     if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }

@@ -31,6 +31,12 @@ Bundled engines
   js-beautify .............. MIT             Einar Lielmanis and contributors https://github.com/beautifier/js-beautify
   html-minifier-terser ..... MIT ; terser ... BSD-2-Clause ; clean-css ... MIT
   Juice .................... MIT             Automattic                       https://github.com/Automattic/juice  (with cheerio, MIT)
+  Excalidraw ............... MIT             Excalidraw contributors          https://github.com/excalidraw/excalidraw  (the whiteboard; with its fonts: Excalifont, Virgil, Nunito, Lilita One, Comic Shanns, Cascadia Code, Liberation Sans, Assistant, SIL OFL 1.1 / MIT / Apache-2.0 as published in the package)
+  React, React DOM ......... MIT             Meta Platforms, Inc.             https://react.dev
+  Mermaid .................. MIT             Knut Sveidqvist and contributors https://github.com/mermaid-js/mermaid  (with d3, dagre, cytoscape, KaTeX, DOMPurify and their MIT/ISC/BSD/Apache-2.0 dependencies)
+  draw.io .................. Apache-2.0      JGraph Ltd                       https://github.com/jgraph/drawio  (the web app, unchanged but trimmed; its notices are inside it)
+  Bergamot translator ...... MPL-2.0         The Bergamot Project             https://github.com/browsermt/bergamot-translator  (WebAssembly build from npm, unchanged; source at that address)
+  Firefox Translations models MPL-2.0        Mozilla                          https://github.com/mozilla/firefox-translations-models  (English with German, French, Spanish, Hindi and Arabic)
   Build only (not shipped as a package): esbuild ... MIT
   Electron / Chromium ...... MIT / BSD
   Noto Sans/Serif/Mono, Caveat, Dancing Script, Carlito fonts ... SIL Open Font License 1.1

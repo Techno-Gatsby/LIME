@@ -2404,6 +2404,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
     });
   }
   pw.close();
+  results.push(...(await require('./diagrams.test').ui({ openEditor, editors, dir })));
 
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed through the wheel${skip.length ? `, ${skip.length} skipped` : ''}`);
