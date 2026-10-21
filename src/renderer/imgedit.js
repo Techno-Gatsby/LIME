@@ -9,6 +9,7 @@ const TOOLS = [
   ['crop', 'crop', 'Crop', 'Drag the corners or edges, or drag outside the frame to straighten.'],
   ['resize', 'resize', 'Resize', 'Set the size in pixels or percent, or the canvas around the image.'],
   ['heal', 'heal', 'Heal', 'Click a spot, or brush over a blemish or wire, to remove it.'],
+  ['erase', 'eraser', 'Erase object', 'Paint over something to remove it. It fills in when you let go.'],
   ['redeye', 'pupil', 'Red eye', 'Click the middle of each red eye.'],
   ['mask', 'mask', 'Masks', 'Light and colour in one part of the photo: drag a gradient or paint where it should go.'],
   ['text', 'textT', 'Text', 'Click where you want to type.'],
@@ -18,9 +19,9 @@ const TOOLS = [
   ['arrow', 'arrow', 'Arrow', 'Drag to draw an arrow.'],
   ['line', 'line', 'Line', 'Drag to draw a line. Hold Shift for straight angles.'],
 ];
-const GROUPS = [['Develop', ['adjust', 'looks', 'enhance']], ['Frame', ['crop', 'resize']], ['Retouch', ['heal', 'redeye', 'mask']], ['Mark up', ['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']]];
+const GROUPS = [['Develop', ['adjust', 'looks', 'enhance']], ['Frame', ['crop', 'resize']], ['Retouch', ['heal', 'erase', 'redeye', 'mask']], ['Mark up', ['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']]];
 const MARKUP = new Set(['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']);
-const KEYS = { d: 'adjust', c: 'crop', j: 'heal', y: 'redeye', k: 'mask', t: 'text', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line' };
+const KEYS = { d: 'adjust', c: 'crop', j: 'heal', x: 'erase', y: 'redeye', k: 'mask', t: 'text', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line' };
 const COLORS = ['#ffffff', '#000000', '#d13438', '#ff8c00', '#ffd400', '#2fb344', '#0f6cbd', '#8a3ffc', '#ff4fa3'];
 const FONTS = [['sans', 'Noto Sans', '"Noto Sans",Arial,sans-serif'], ['serif', 'Noto Serif', '"Noto Serif",Georgia,serif'], ['mono', 'Noto Sans Mono', '"Noto Sans Mono",Consolas,monospace'],
   ['carlito', 'Carlito', 'Carlito,Calibri,sans-serif'], ['caveat', 'Caveat (handwriting)', 'Caveat,cursive'], ['dancing', 'Dancing Script', '"Dancing Script",cursive']];
@@ -59,10 +60,10 @@ const ENHANCE = [
     ['upright', 'develop', 'grid', 'Auto perspective', 'Upright: straightens leaning buildings and lines.']]],
   ['PhotoCraft', [['autoTone', 'step', 'sun', 'Auto tone', 'Fixes dull, flat or colour-cast photos.'], ['autoContrast', 'step', 'sun', 'Auto contrast', 'Stretches the darkest and lightest tones.'], ['autoColor', 'step', 'sun', 'Auto colour', 'Neutralises a colour cast.'],
     ['sharpen', 'step', 'sparkle', 'Smart sharpen', 'Brings back crisp detail.'], ['denoise', 'step', 'sparkle', 'Reduce noise', 'Removes grain and JPEG blocks.'], ['shadows', 'step', 'sun', 'Lift shadows', 'Brightens dark areas and keeps the sky.']]],
-  ['Lime', [['removeBg', 'step', 'image', 'Remove background', 'Cuts out the subject, on this computer.'], ['blurFaces', 'step', 'eye', 'Blur faces', 'Finds faces and blurs them.'], ['upscale', 'step', 'resize', 'Upscale 2×', 'Doubles the size with sharp detail.']]],
+  ['Lime', [['removeBg', 'step', 'image', 'Remove background', 'Cuts out the subject, on this computer.'], ['blurFaces', 'step', 'eye', 'Blur faces', 'Finds faces and blurs them.'], ['upscale', 'step', 'resize', 'Sharper 2×', 'Doubles the size in an instant.'], ['upscaleAi', 'step', 'resize', 'Upscale 2× AI', 'Doubles the size and draws in fine detail.']]],
 ];
 const PAINT = [['oil', 'Oil paint'], ['watercolor', 'Watercolour'], ['poster', 'Poster'], ['ink', 'Ink outlines'], ['pencil', 'Coloured pencil'], ['sketch', 'Graphic pen'], ['glow', 'Diffuse glow'], ['tiltShift', 'Tilt-shift']];
-const BUSY = { autoTone: 'Balancing tones', autoContrast: 'Stretching contrast', autoColor: 'Correcting colour', sharpen: 'Sharpening', denoise: 'Reducing noise', shadows: 'Lifting shadows', removeBg: 'Removing the background', blurFaces: 'Finding faces', upscale: 'Upscaling', auto: 'Working out settings', bw: 'Mixing black and white', straighten: 'Levelling', dust: 'Finding dust spots', upright: 'Straightening lines' };
+const BUSY = { autoTone: 'Balancing tones', autoContrast: 'Stretching contrast', autoColor: 'Correcting colour', sharpen: 'Sharpening', denoise: 'Reducing noise', shadows: 'Lifting shadows', removeBg: 'Removing the background', blurFaces: 'Finding faces', upscale: 'Upscaling', upscaleAi: 'Upscaling with AI', erase: 'Removing', auto: 'Working out settings', bw: 'Mixing black and white', straighten: 'Levelling', dust: 'Finding dust spots', upright: 'Straightening lines' };
 
 export function openEditor(view, { file }, ctx) {
   const { icon, toast, api, go } = ctx;
@@ -75,7 +76,7 @@ export function openEditor(view, { file }, ctx) {
     hist: [], at: -1, savedKey: '', savePath: null, saveFmt: null,
     tool: 'adjust', zoom: 'fit', sel: null, spotSel: -1, eyeSel: -1, busy: false, before: false, look: null, mixer: 'red',
     style: { font: 'sans', size: 0.06, color: '#ffffff', bold: true, italic: false, align: 'left', textStyle: 'shadow', bg: '#000000', opacity: 1, stroke: '#d13438', width: 0.006, fill: 'none' },
-    heal: { mode: 'remove', size: 0.02, feather: 50, opacity: 100 }, eye: { size: 0.025, pupil: 50, darken: 50 },
+    heal: { mode: 'remove', size: 0.02, feather: 50, opacity: 100 }, eye: { size: 0.025, pupil: 50, darken: 50 }, erase: { size: 0.03 },
     maskSel: -1, maskNew: 'linear', paint: { size: 0.04, feather: 50, flow: 100, erase: false },
     seq: 0, fonts: [], looks: null, thumbs: new Map(),
   };
@@ -557,7 +558,7 @@ export function openEditor(view, { file }, ctx) {
       });
     }
     if (st.tool === 'mask') drawMaskMarks();
-    if (st.tool === 'heal' || st.tool === 'redeye' || (st.tool === 'mask' && maskKind() === 'brush')) {
+    if (st.tool === 'heal' || st.tool === 'erase' || st.tool === 'redeye' || (st.tool === 'mask' && maskKind() === 'brush')) {
       brush = h('<div class="brush" hidden></div>');
       marks.append(brush);
       sizeBrush();
@@ -572,7 +573,7 @@ export function openEditor(view, { file }, ctx) {
   }
   function sizeBrush() {
     if (!brush) return;
-    const d = 2 * (st.tool === 'heal' ? (st.spotSel >= 0 ? st.dev.spots[st.spotSel]?.size ?? st.heal.size : st.heal.size) : st.tool === 'mask' ? st.paint.size : st.eye.size) * L() * kd;
+    const d = 2 * (st.tool === 'heal' ? (st.spotSel >= 0 ? st.dev.spots[st.spotSel]?.size ?? st.heal.size : st.heal.size) : st.tool === 'erase' ? st.erase.size : st.tool === 'mask' ? st.paint.size : st.eye.size) * L() * kd;
     Object.assign(brush.style, { width: `${d}px`, height: `${d}px` });
   }
 
@@ -718,6 +719,7 @@ export function openEditor(view, { file }, ctx) {
     endText();
     const [ox, oy] = outPt(e), [lx, ly] = lFromOut(ox, oy);
     if (st.tool === 'heal') { e.preventDefault(); brushSpot(e); return; }
+    if (st.tool === 'erase') { e.preventDefault(); brushErase(e); return; }
     if (st.tool === 'redeye') { e.preventDefault(); addEye(ox, oy); return; }
     if (st.tool === 'mask') { e.preventDefault(); maskPointer(e); return; }
     const o = MARKUP.has(st.tool) ? hit(lx, ly) : null;
@@ -870,6 +872,27 @@ export function openEditor(view, { file }, ctx) {
       drawMarks();
       renderProps();
       refresh();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  // The brushed area goes to the object-removal model when the button is let go; the result is a new step, so Undo brings the object back.
+  function brushErase(e) {
+    const pts = [outPt(e)], r = st.erase.size * L();
+    const trail = h('<canvas class="ink erasing" style="pointer-events:none"></canvas>');
+    const w = marks.clientWidth, hh = marks.clientHeight;
+    trail.width = w * dpr(); trail.height = hh * dpr();
+    Object.assign(trail.style, { width: `${w}px`, height: `${hh}px`, left: '0', top: '0' });
+    marks.append(trail);
+    const tc = trail.getContext('2d'), k = kd * dpr();
+    const paint = () => { tc.clearRect(0, 0, trail.width, trail.height); tc.strokeStyle = 'rgba(255,64,96,.5)'; tc.lineCap = 'round'; tc.lineJoin = 'round'; tc.lineWidth = 2 * r * k; tc.beginPath(); pts.forEach(([x, y], i) => (i ? tc.lineTo(x * k, y * k) : tc.moveTo(x * k, y * k))); if (pts.length === 1) tc.lineTo(pts[0][0] * k + 0.1, pts[0][1] * k); tc.stroke(); };
+    paint();
+    const move = (ev) => { const p = outPt(ev), q = pts[pts.length - 1]; if (Math.hypot(p[0] - q[0], p[1] - q[1]) > r * 0.2) { pts.push(p); paint(); } if (brush) { const b = marks.getBoundingClientRect(); Object.assign(brush.style, { left: `${ev.clientX - b.left}px`, top: `${ev.clientY - b.top}px` }); } };
+    const up = async () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      await runStep('erase', 'Erase object', { points: pts.map(([x, y]) => normFromOut(x, y)), size: st.erase.size });
+      trail.remove();
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1129,6 +1152,7 @@ export function openEditor(view, { file }, ctx) {
     if (t === 'crop') return cropPanel();
     if (t === 'resize') return resizePanel();
     if (t === 'heal') return healPanel();
+    if (t === 'erase') return erasePanel();
     if (t === 'redeye') return eyePanel();
     if (t === 'mask') return maskPanel();
     return markupPanel();
@@ -1333,7 +1357,7 @@ export function openEditor(view, { file }, ctx) {
         const [id, kind, , label] = items.find((x) => x[0] === b.dataset.e);
         $$('.act', props).forEach((x) => { x.disabled = true; });
         if (kind === 'develop') runDevelop(id, id === 'upright' ? { mode: 'auto' } : {}, label);
-        else runStep(id, label, id === 'removeBg' ? { quality: 'best', background: 'transparent' } : id === 'upscale' ? { factor: '2' } : id === 'blurFaces' ? { mode: 'blur', strength: 60 } : {});
+        else runStep(id, label, id === 'removeBg' ? { quality: 'best', background: 'transparent' } : id === 'upscale' ? { factor: '2' } : id === 'upscaleAi' ? { factor: '2', kind: 'photo' } : id === 'blurFaces' ? { mode: 'blur', strength: 60 } : {});
       });
       props.append(section(group, [box]));
     }
@@ -1426,6 +1450,13 @@ export function openEditor(view, { file }, ctx) {
       if (x === 'dust') runDevelop('dust', { sensitivity: 50 }, 'Remove dust');
       if (x === 'clear') { st.dev.spots = []; st.spotSel = -1; commit('Clear spots'); refresh(); drawMarks(); renderProps(); }
     };
+  }
+  function erasePanel() {
+    props.append(head('Erase object'));
+    props.append(slider({ key: 'size', label: 'Brush size', min: 0.005, max: 0.2, step: 0.001, fmt: (v) => `${Math.round(v * L())} px`, live: () => {}, done: () => {} }, (v) => { st.erase.size = v; sizeBrush(); }));
+    $('[data-k="size"] input', props).value = st.erase.size;
+    $('[data-k="size"] output', props).textContent = `${Math.round(st.erase.size * L())} px`;
+    props.append(h('<p class="tip">Paint over a person, wire, sign or stain, a little past its edges. When you let go it’s filled in from what’s around it, on this computer.</p>'));
   }
   function eyePanel() {
     const sel = st.eyeSel >= 0 ? st.dev.red_eye[st.eyeSel] : null;

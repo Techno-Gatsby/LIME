@@ -571,6 +571,29 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         e.destroy();
       }
     }
+    if (want('erase')) {
+      openEditor(process.env.LIME_SHOT_ERASE || path.join(samples, 'photo.jpg'), 'image');
+      let e = null;
+      for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === 'image' && !x.webContents.isLoading()); }
+      const ejs = (code) => e.webContents.executeJavaScript(code, true);
+      const settle = async () => { for (let t = 0; t < 600; t++) { if (await ejs('(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()')) break; await sleep(150); } await sleep(400); };
+      const at = (fx, fy) => `{ bubbles: true, button: 0, clientX: document.querySelector('.imged .marks').getBoundingClientRect().left + document.querySelector('.imged .marks').getBoundingClientRect().width * ${fx}, clientY: document.querySelector('.imged .marks').getBoundingClientRect().top + document.querySelector('.imged .marks').getBoundingClientRect().height * ${fy} }`;
+      const path_ = (process.env.LIME_SHOT_ERASE_AT || '0.45,0.45,0.55,0.55').split(',').map(Number), way = [];
+      for (let i = 2; i < path_.length; i += 2) for (let j = 1; j <= 8; j++) way.push([path_[i - 2] + (path_[i] - path_[i - 2]) * j / 8, path_[i - 1] + (path_[i + 1] - path_[i - 1]) * j / 8]);
+      const [x1, y1] = way.at(-1);
+      if (e) {
+        await settle();
+        await ejs(`document.querySelector('[data-tool="erase"]').click(); document.querySelector(".imged").__imged.st.erase.size = ${Number(process.env.LIME_SHOT_ERASE_SIZE) || 0.03}; document.querySelector('[data-tool="erase"]').click()`);
+        await ejs(`(() => { const m = document.querySelector('.imged .marks'); m.dispatchEvent(new PointerEvent('pointerdown', ${at(path_[0], path_[1])})); ${way.map(([x, y]) => `window.dispatchEvent(new PointerEvent('pointermove', ${at(x, y)})); m.dispatchEvent(new PointerEvent('pointermove', ${at(x, y)}));`).join(' ')} })()`);
+        await shot('66-imgedit-erase-brush', e);
+        await ejs(`window.dispatchEvent(new PointerEvent('pointerup', ${at(x1, y1)}))`);
+        await sleep(600);
+        await shot('67-imgedit-erase-working', e);
+        await settle();
+        await shot('68-imgedit-erase-done', e);
+        e.destroy();
+      }
+    }
     if (want('media')) {
       const { execFileSync } = require('child_process');
       const ff = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).binPath('ffmpeg'), demo = path.join(dir, 'Lake walk.mp4'), talk = path.join(dir, 'Interview.wav');

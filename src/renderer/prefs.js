@@ -124,6 +124,7 @@ async function render() {
     ${row('video', 'FFmpeg', 'Video and audio conversion', '<span class="dot on"></span>')}
     ${row('image', 'libvips · MuPDF · Tesseract', 'Images, PDF and text recognition in 13 languages', '<span class="dot on"></span>')}
     ${row('ruler', 'LibreDWG · OpenCascade', 'DWG drawings and STEP, IGES and BREP models', '<span class="dot on"></span>')}
+    ${row('sparkle', 'Real-ESRGAN · LaMa', 'Upscale with AI and Erase object, on this computer', `<span class="dot ${eng.models?.length === 2 ? 'on' : ''}"></span>`)}
   </div></section>
   <section><h2>Optional helpers</h2><p class="note">Lime converts Office documents on its own. If these free apps are on this ${isMac ? 'Mac' : 'PC'}, it uses them for even more exact layouts and extra formats.</p><div class="group">
     ${row('doc', 'LibreOffice', eng.libreoffice ? esc(eng.libreoffice) : 'Exact Word, Excel and PowerPoint layouts', helper('soffice', eng.libreoffice, 'LibreOffice'))}

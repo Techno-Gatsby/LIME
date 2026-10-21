@@ -16,6 +16,7 @@ const cfg = {
   apps: process.env.LIME_APPS || path.join(__dirname, '../../../vendor/apps', `${process.platform}-${process.arch}`),
   web: process.env.LIME_WEB || path.join(__dirname, '../../../vendor/web'),
   helpers: process.env.LIME_HELPERS || path.join(__dirname, '../../../vendor/helpers', `${process.platform}-${process.arch}`),
+  models: process.env.LIME_MODELS || path.join(__dirname, '../../../vendor/models'),
   user: process.env.LIME_USER || path.join(os.tmpdir(), 'lime-user'),
   tmp: path.join(os.tmpdir(), 'lime'),
   soffice: process.env.LIME_SOFFICE || '',

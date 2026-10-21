@@ -1835,6 +1835,35 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   console.log(`${im.status} ${im.name.padEnd(44)}        ${im.detail}`);
   results.push(im);
 
+  const ee = { name: 'edit image · erase object, undo, save', status: 'PASS', detail: '' };
+  if (!require('../src/main/engines/ai').available('lama')) { ee.status = 'SKIP'; ee.detail = 'the object removal model isn’t packed (vendor/models or LIME_MODELS)'; } else try {
+    const src = path.join(OUT, 'erase.png'), W = 800, H = 600;
+    const bg = Buffer.alloc(W * H * 3);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const v = 128 + 50 * Math.sin((x + 0.5 * y) / 9), i = (y * W + x) * 3; bg[i] = v; bg[i + 1] = v * 0.8 + 20; bg[i + 2] = 255 - v * 0.6; }
+    await sharp(bg, { raw: { width: W, height: H, channels: 3 } }).composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><circle cx="400" cy="300" r="50" fill="#e02020"/></svg>`) }]).png().toFile(src);
+    const { win, ejs, wait, idle, press, saved } = await openImage(src);
+    await ejs('document.querySelector(\'[data-tool="erase"]\').click()');
+    if (!(await wait('!!document.querySelector(\'.props [data-k="size"]\')', 3000))) throw new Error('no brush size in the panel');
+    await ejs('document.querySelector(".imged").__imged.st.erase.size = 0.06');
+    await press(0.47, 0.5, [0.53, 0.5]);
+    if (!(await wait('document.querySelector(".imged").__imged.st.base === 1 && document.querySelector(".imged").__imged.idle()', 90000))) throw new Error('the erase did not make a new step');
+    const label = await ejs('document.querySelector(".imged").__imged.st.hist.at(-1).label');
+    await ejs('document.querySelector(\'[data-a="undo"]\').click()');
+    if (!(await wait('document.querySelector(".imged").__imged.st.base === 0', 3000))) throw new Error('undo did not bring the object back');
+    await ejs('document.querySelector(\'[data-a="redo"]\').click()');
+    if (!(await wait('document.querySelector(".imged").__imged.st.base === 1', 3000))) throw new Error('redo did not remove it again');
+    await idle();
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = await saved(path.join(OUT, 'erase (edited).png'));
+    const b = await statsOf(out), a = await statsOf(src);
+    if (b.w !== W || b.h !== H) throw new Error(`saved ${b.w}×${b.h}`);
+    if (a.red < 5000 || b.red > 50) throw new Error(`red pixels ${a.red} → ${b.red}`);
+    ee.detail = `“${label}” step: red disc ${a.red} → ${b.red} pixels, undo and redo, saved ${b.w}×${b.h}`;
+    win.destroy();
+  } catch (e) { ee.status = 'FAIL'; ee.detail = e.message; }
+  console.log(`${ee.status} ${ee.name.padEnd(44)}        ${ee.detail}`);
+  results.push(ee);
+
   const mediaEditor = async (src) => {
     openEditor(src, 'media');
     const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
