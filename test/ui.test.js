@@ -633,6 +633,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
           if (status !== 'SKIP') {
             const end = await settle();
             const r = await lime('return { state: L.S.state, outs: L.S.result?.outs || [], note: L.S.result?.note || "", error: L.S.result?.error || "", text: !!L.S.result?.text };');
+            if (end !== 'done' && /engine isn’t in this build/.test(r.error)) throw Object.assign(new Error(r.error), { skip: true });
             if (end !== 'done') throw new Error(`${end}${r.error ? `: ${r.error}` : ''}`);
             if (r.outs.length) {
               if (!asked.length) throw new Error('saved without asking where');
@@ -647,7 +648,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
             } else if (r.note || r.text) detail = (r.note || 'text result').split('\n')[0];
             else throw new Error('finished without a result');
           }
-        } catch (e) { status = 'FAIL'; detail = e.message; }
+        } catch (e) { status = e.skip ? 'SKIP' : 'FAIL'; detail = e.message; }
         console.log(`${status} ${name.padEnd(44)} ${String(Date.now() - t0).padStart(6)}ms  ${detail}`.slice(0, 240));
         results.push({ name, status, detail });
         await lime(`if (L.S.state !== 'idle') await L.collapse();`).catch(() => {});
@@ -2263,6 +2264,95 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
     ed.win.destroy();
     if (imgTool !== 'text') throw new Error(`the image editor came back in ${imgTool}`);
     return `PDF came back in Note at ${back.zoom} with Bookmarks open, a form still opens in Select; a photo dropped on the PDF window opened there and came back in Text`;
+  });
+
+  const webSite = async (name, body) => {
+    const site = path.join(OUT, name);
+    fs.mkdirSync(path.join(site, 'images'), { recursive: true });
+    await require('sharp')({ create: { width: 48, height: 32, channels: 3, background: '#3d8a28' } }).png().toFile(path.join(site, 'images', 'pic.png'));
+    fs.writeFileSync(path.join(site, 'style.css'), 'body { font-family: Georgia, serif; }\nh1 { color: #2f6f1e; }\n');
+    const src = path.join(site, 'page.html');
+    fs.writeFileSync(src, `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <title>Test page</title>\n  <link rel="stylesheet" href="style.css">\n  <style>\n    .note { color: #8a5a00; }\n  </style>\n</head>\n<body>\n${body}\n  <script>window.x = 1;</script>\n</body>\n</html>\n`);
+    openEditor(src, 'web');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!window.__web?.st.ready'))) throw new Error('the editor did not load');
+    const save = async () => {
+      await ejs('document.querySelector(\'[data-a="save"]\').click()');
+      const out = path.join(site, 'page (edited).html');
+      if (!(await wait(`window.__web.st.savePath === ${JSON.stringify(out)} && document.querySelector('.dirty').hidden`, 15000))) throw new Error('Save did not finish');
+      return fs.readFileSync(out, 'utf8');
+    };
+    return { site, src, win, ejs, wait, save, code: () => ejs('window.__web.textOf(0)') };
+  };
+  const ODD = '<div class="keep">\n\t<p   data-x=\'1\'  >Odd   spacing &amp; &copy; entities<br/>kept</p >\n</div>';
+
+  await check('edit web page · design and code in step, save', async () => {
+    const { src, win, ejs, wait, save } = await webSite('site', `  <h1>Old heading</h1>\n  <img src="images/pic.png" alt="A green box">\n  <p class="note">A note.</p>\n  ${ODD}`);
+    if (!(await wait('(() => { const i = window.__web.gjs().Canvas.getDocument().querySelector("img"); return !!i && i.complete && i.naturalWidth === 48; })()', 8000))) throw new Error('the picture did not load in Design view');
+    await ejs('void window.__web.gjs().getWrapper().find("h1")[0].components("Fresh heading")');
+    if (!(await wait('window.__web.textOf(0).includes("<h1>Fresh heading</h1>")', 5000))) throw new Error('the Design edit did not reach the code');
+    await ejs(`(() => { const cm = window.__web.cm(), t = cm.state.doc.toString(), i = t.indexOf('#8a5a00'); cm.dispatch({ changes: { from: i, to: i + 7, insert: '#c4291f' } }); })()`);
+    if (!(await wait('/196, 41, 31|c4291f/i.test(window.__web.gjs().getCss())', 5000))) throw new Error('the Code edit did not reach Design view');
+    if (!(await ejs('window.__web.gjs().getWrapper().find("h1")[0].getInnerHTML() === "Fresh heading"'))) throw new Error('the heading was lost when the code was reloaded');
+    await ejs(`(() => { const cm = window.__web.cm(), t = cm.state.doc.toString(), i = t.indexOf('A note.'); cm.dispatch({ changes: { from: i, to: i + 7, insert: 'A note from the code.' } }); })()`);
+    if (!(await wait('window.__web.gjs().getWrapper().find("p.note")[0]?.getEl()?.textContent === "A note from the code."', 5000))) throw new Error(`a text edit in Code did not show in Design view: ${await ejs('JSON.stringify([window.__web.gjs().getWrapper().find("p.note").map((x) => x.getEl()?.outerHTML), window.__web.st.designStale, window.__web.textOf(0).match(/<p class="note">.*/)?.[0]])')}`);
+    const key = (k, extra = '') => ejs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '${k}', ctrlKey: true, bubbles: true${extra} }))`);
+    await key('z');
+    if (!(await wait('window.__web.textOf(0).includes("A note.</p>")', 4000))) throw new Error('Ctrl+Z did not undo the text edit');
+    await key('y');
+    if (!(await wait('window.__web.textOf(0).includes("A note from the code.")', 4000))) throw new Error('Ctrl+Y did not redo it');
+    const saved = await save();
+    const want = { doctype: saved.startsWith('<!DOCTYPE html>'), heading: saved.includes('<h1>Fresh heading</h1>'), css: saved.includes('.note { color: #c4291f; }'), image: saved.includes('<img src="images/pic.png" alt="A green box">'), link: saved.includes('href="style.css"'), script: saved.includes('<script>window.x = 1;</script>'), untouched: saved.includes(ODD) };
+    const missing = Object.entries(want).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) throw new Error(`saved page lacks ${missing.join(', ')}:\n${saved}`);
+    const expect = fs.readFileSync(src, 'utf8').replace('<h1>Old heading</h1>', '<h1>Fresh heading</h1>').replace('#8a5a00', '#c4291f').replace('A note.', 'A note from the code.');
+    if (saved !== expect) throw new Error(`more than the edits changed:\n${saved}`);
+    if (fs.readFileSync(src, 'utf8').includes('Fresh')) throw new Error('the original was changed');
+    win.destroy();
+    return 'heading from Design, colour and text from Code, undo and redo; the saved file is the original byte for byte apart from the three edits';
+  });
+
+  await check('edit web page · bold text, picture, table row, watermark', async () => {
+    const { site, win, ejs, wait, save, code } = await webSite('site2', '  <p class="lead">Plain words here.</p>\n  <table>\n    <tr><td>One</td><td>1</td></tr>\n    <tr><td>Two</td><td>2</td></tr>\n  </table>');
+    await ejs(`(async () => { const g = window.__web.gjs(), p = g.getWrapper().find('p.lead')[0]; g.select(p); p.trigger('active'); await new Promise((r) => setTimeout(r, 400)); const el = p.getEl(), doc = el.ownerDocument, r = doc.createRange(); r.setStart(el.firstChild, 0); r.setEnd(el.firstChild, 5); const s = doc.getSelection(); s.removeAllRanges(); s.addRange(r); doc.dispatchEvent(new Event('selectionchange')); })()`);
+    if (!(await wait('!!document.querySelector(".we-fbar [data-x=bold]")', 4000))) throw new Error('no format bar while typing');
+    await ejs('document.querySelector(".we-fbar [data-x=bold]").dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); document.querySelector(".we-fbar [data-x=bold]").click()');
+    await sleep(200);
+    await ejs('window.__web.gjs().select(null); 0');
+    if (!(await wait('window.__web.textOf(0).includes("<p class=\\"lead\\"><strong>Plain</strong> words here.</p>")', 5000))) throw new Error(`bold did not reach the code: ${(await code()).match(/<p class="lead">.*?<\/p>/)?.[0]}`);
+    const outside = path.join(OUT, 'outside');
+    fs.mkdirSync(outside, { recursive: true });
+    const pic = path.join(outside, 'sunset photo.png');
+    await require('sharp')({ create: { width: 300, height: 200, channels: 3, background: '#e0851f' } }).png().toFile(pic);
+    const realOpen = dialog.showOpenDialog;
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [pic] });
+    try {
+      await ejs('window.__web.gjs().select(window.__web.gjs().getWrapper().find("p.lead")[0]); document.querySelector(\'[data-a="image"]\').click()');
+      if (!(await wait('/<img src="images\\/sunset%20photo\\.png"/.test(window.__web.textOf(0))', 6000))) throw new Error(`the picture was not inserted with a relative src: ${await code()}`);
+    } finally { dialog.showOpenDialog = realOpen; }
+    if (!fs.existsSync(path.join(site, 'images', 'sunset photo.png'))) throw new Error('the picture was not copied into images/');
+    if (!(await wait('document.querySelector(".we-pane[data-pane=element] [data-insp=width]")', 3000))) throw new Error(`no width in the Properties panel: ${await ejs('JSON.stringify([window.__web.gjs().getSelected()?.getName(), document.querySelector(".we-props").dataset.on, document.querySelector(".we-pane[data-pane=element]").innerHTML.slice(0, 300)])')}`);
+    await ejs(`(() => { const i = document.querySelector('.we-pane[data-pane=element] [data-insp=width]'); i.value = '150'; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    if (!(await wait('/<img src="images\\/sunset%20photo\\.png" alt="sunset photo" width="150" height="100">/.test(window.__web.textOf(0))', 5000))) throw new Error(`the picture was not resized: ${(await code()).match(/<img src="images\/sunset[^>]*>/)?.[0]}`);
+    const resizable = await ejs('!!window.__web.gjs().getSelected()?.get("resizable")');
+    await ejs('const g = window.__web.gjs(); g.select(g.getWrapper().find("td")[2]); 0');
+    await sleep(300);
+    await ejs('document.querySelector(\'.we-pane[data-pane=element] [data-insa="rowbelow"]\').click()');
+    if (!(await wait('(window.__web.textOf(0).match(/<tr>/g) || []).length === 3', 5000))) throw new Error(`no new row: ${(await code()).match(/<table>[\s\S]*<\/table>/)?.[0]}`);
+    await ejs('window.__web.gjs().select(null); document.querySelector(\'[data-a="watermark"]\').click()');
+    if (!(await wait('!!document.querySelector(".scrim [data-f=text]")', 3000))) throw new Error('no watermark dialog');
+    await ejs(`(() => { const i = document.querySelector('.scrim [data-f=text]'); i.value = 'CONFIDENTIAL'; i.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.scrim [data-a=ok]').click(); })()`);
+    if (!(await wait('/class="webcraft-watermark"[^>]*pointer-events: ?none[\\s\\S]*CONFIDENTIAL/.test(window.__web.textOf(0))', 5000))) throw new Error(`no watermark in the code: ${await code()}`);
+    const look = await ejs('(() => { const el = window.__web.gjs().Canvas.getDocument().querySelector(".webcraft-watermark"); if (!el) return null; const s = getComputedStyle(el); return { pe: s.pointerEvents, pos: s.position, text: el.textContent }; })()');
+    if (!look || look.pe !== 'none' || look.pos !== 'fixed' || look.text !== 'CONFIDENTIAL') throw new Error(`the watermark doesn’t render as an overlay: ${JSON.stringify(look)}`);
+    await ejs('document.querySelector(\'[data-view="preview"]\').click()');
+    if (!(await wait('(() => { const d = document.querySelector(".we-preview iframe").contentDocument; return d?.querySelector(".webcraft-watermark")?.textContent === "CONFIDENTIAL"; })()', 5000))) throw new Error('the watermark is not in the preview');
+    const saved = await save();
+    for (const [what, re] of [['bold', /<strong>Plain<\/strong>/], ['picture', /<img src="images\/sunset%20photo\.png" alt="sunset photo" width="150" height="100">/], ['row', /(<tr>[\s\S]*){3}/], ['watermark', /webcraft-watermark[\s\S]*CONFIDENTIAL/]]) if (!re.test(saved)) throw new Error(`saved page lacks the ${what}:\n${saved}`);
+    win.destroy();
+    return `<strong> from the format bar; picture copied to images/ with a relative src and resized to 150×100${resizable ? ' (drag handles on)' : ''}; a third table row; a CONFIDENTIAL overlay in the code, Design view and Preview`;
   });
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };

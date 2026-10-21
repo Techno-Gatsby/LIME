@@ -702,6 +702,70 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         await shot('52-paragraphs', e);
       }
     }
+    if (want('webedit')) {
+      const site = path.join(dir, 'site');
+      fs.mkdirSync(path.join(site, 'images'), { recursive: true });
+      fs.copyFileSync(path.join(samples, 'photo.jpg'), path.join(site, 'images', 'lake.jpg'));
+      fs.writeFileSync(path.join(site, 'style.css'), 'body { font: 17px/1.6 Georgia, serif; margin: 0; color: #1d2b22; background: #f6f3ec; }\nheader { background: #2f6f1e; color: #fff; padding: 36px 48px; }\nheader h1 { margin: 0; font: 600 40px/1.1 -apple-system, "Segoe UI", sans-serif; }\nmain { max-width: 820px; margin: 0 auto; padding: 32px 48px; }\nimg.hero { width: 100%; border-radius: 10px; }\n.cards { display: flex; gap: 18px; }\n.card { flex: 1; background: #fff; padding: 16px 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }\n');
+      fs.writeFileSync(path.join(site, 'index.html'), '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <title>Lakeside cabins</title>\n  <link rel="stylesheet" href="style.css">\n  <style>\n    .note { color: #8a5a00; }\n  </style>\n</head>\n<body>\n  <header>\n    <h1>Lakeside cabins</h1>\n    <p>Quiet weekends by the water</p>\n  </header>\n  <main>\n    <img class="hero" src="images/lake.jpg" alt="The lake at dawn">\n    <h2>Stay with us</h2>\n    <p>Three wooden cabins on the north shore, each with a stove, a deck and a boat.</p>\n    <div class="cards">\n      <div class="card"><h3>Cabin one</h3><p>Sleeps two.</p></div>\n      <div class="card"><h3>Cabin two</h3><p>Sleeps four.</p></div>\n    </div>\n    <table class="prices">\n      <tr><th>Cabin</th><th>Per night</th></tr>\n      <tr><td>One</td><td>£90</td></tr>\n      <tr><td>Two</td><td>£120</td></tr>\n    </table>\n    <p class="note">Open from April to October.</p>\n  </main>\n  <script>document.title += "";</script>\n</body>\n</html>\n');
+      const file = path.join(site, 'index.html');
+      openEditor(file, 'web');
+      let e = null;
+      for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.file === file && !x.webContents.isLoading()); }
+      if (e) {
+        e.webContents.on('console-message', (ev, level, message) => { const lv = ev?.level ?? level, msg = ev?.message ?? message; if (lv === 3 || lv === 'error' || lv === 2 || lv === 'warning') console.log('editor:', String(msg).slice(0, 300)); });
+        const ejs = (code) => e.webContents.executeJavaScript(`(async () => { ${code} })()`, true).catch((er) => console.error('web step failed:', er.message));
+        for (let t = 0; t < 80 && !(await e.webContents.executeJavaScript('!!window.__web?.st.ready').catch(() => false)); t++) await sleep(250);
+        await sleep(2000);
+        if (process.env.LIME_WEB_DEBUG) console.log('debug', await ejs(process.env.LIME_WEB_DEBUG));
+        await shot('70-web-split', e);
+        await ejs('const g = window.__web.gjs(); g.select(g.getWrapper().find("h2")[0]);');
+        await shot('71-web-select', e);
+        await ejs('document.querySelector(\'[data-ptab="element"]\').click()');
+        await shot('72-web-element', e);
+        await ejs('document.querySelector(\'[data-stab="layers"]\').click(); document.querySelector(\'[data-view="design"]\').click()');
+        await shot('73-web-design', e);
+        await ejs('document.querySelector(\'[data-view="code"]\').click(); document.querySelector(\'[data-tab="1"]\')?.click()');
+        await shot('74-web-code', e);
+        await ejs('document.querySelector(\'[data-tab="0"]\').click(); document.querySelector(\'[data-view="preview"]\').click(); document.querySelector(\'[data-device="phone"]\').click()');
+        await sleep(1500);
+        await shot('75-web-preview', e);
+        await ejs('document.querySelector(\'[data-device="desktop"]\').click(); document.querySelector(\'[data-view="split"]\').click(); document.querySelector(\'[data-ptab="page"]\').click(); document.querySelector(\'[data-a="check"]\').click()');
+        await sleep(1500);
+        await shot('76-web-page', e);
+        await ejs('document.documentElement.dataset.theme = "dark"');
+        await shot('77-web-dark', e);
+        await ejs('document.documentElement.dataset.theme = "light"; document.querySelector(\'[data-ptab="element"]\').click(); const g = window.__web.gjs(); g.select(g.getWrapper().find("img")[0]);');
+        await shot('78-web-image-props', e);
+        await ejs('const g = window.__web.gjs(), p = g.getWrapper().find("main > p")[0]; g.select(p); p.trigger("active"); await new Promise((r) => setTimeout(r, 300)); const el = p.getEl(), doc = el.ownerDocument, r = doc.createRange(); r.setStart(el.firstChild, 6); r.setEnd(el.firstChild, 20); const s = doc.getSelection(); s.removeAllRanges(); s.addRange(r); doc.dispatchEvent(new Event("selectionchange"));');
+        await shot('79-web-format-bar', e);
+        await ejs('window.__web.gjs().select(null); const b = document.querySelector(\'[data-a="insert"]\'); b.click();');
+        await shot('80-web-insert', e);
+        await ejs('document.querySelector(".we-menu")?.remove(); const g = window.__web.gjs(); g.select(g.getWrapper().find("h2")[0]); document.querySelector(\'[data-a="watermark"]\').click();');
+        await shot('81-web-watermark', e);
+        await ejs('document.querySelector(".scrim [data-f=text]").value = "DRAFT"; document.querySelector(".scrim [data-a=ok]").click(); await new Promise((r) => setTimeout(r, 500)); document.querySelector(\'[data-ptab="css"]\').click(); const g = window.__web.gjs(); g.select(g.getWrapper().find(".card")[0]);');
+        await sleep(600);
+        await ejs('document.querySelector(".we-pane[data-pane=css] [data-cdrule]")?.click()');
+        await shot('82-web-css-designer', e);
+        await ejs('document.querySelector(\'[data-stab="files"]\').click()');
+        await sleep(600);
+        await shot('83-web-files', e);
+        await ejs('document.querySelector(\'[data-a="findall"]\').click(); document.querySelector(".scrim [data-f=find]").value = "cabin"; document.querySelector(".scrim [data-a=find]").click();');
+        await sleep(800);
+        await shot('84-web-find', e);
+        await ejs('document.querySelector(".scrim [data-a=no]").click(); const g = window.__web.gjs(), c = g.getWrapper().find("td")[1] || g.getWrapper().find("h3")[0]; g.select(c); const el = c.getEl(), b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: b.left + 20, clientY: b.top + 10 }));');
+        await shot('85-web-context', e);
+        await ejs('document.querySelector(".we-menu")?.remove(); document.querySelector(\'[data-ptab="element"]\').click();');
+        await shot('86-web-cell', e);
+        await ejs('document.querySelector(\'[data-a="history"]\').click()');
+        await shot('87-web-history', e);
+        await ejs('document.querySelector(".hist")?.remove(); document.querySelector(\'[data-a="help"]\').click()');
+        await shot('88-web-keys', e);
+        await ejs('document.querySelector(".scrim [data-a=done]")?.click(); document.documentElement.dataset.theme = "dark"; document.querySelector(\'[data-stab="blocks"]\').click(); document.querySelector(\'[data-ptab="style"]\').click(); const g = window.__web.gjs(); g.select(g.getWrapper().find("h2")[0]);');
+        await shot('89-web-dark-style', e);
+        e.destroy();
+      }
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();

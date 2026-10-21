@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { packager } from '@electron/packager';
+import { buildWebVendor } from './webvendor.mjs';
 
 export const ROOT = path.resolve(import.meta.dirname, '..');
 export const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -16,6 +17,7 @@ const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests_
 
 export async function pack(platform, arch, opts) {
   const T = `${platform}-${arch}`;
+  await buildWebVendor({ quiet: true });
   if (!fs.existsSync(path.join(V, 'crafts', T, 'manifest.json'))) execFileSync(process.execPath, [path.join(ROOT, 'scripts/engines.mjs'), T], { stdio: 'inherit' });
   const slim = ({ buildPath }) => {
     const nm = path.join(buildPath, 'node_modules');
