@@ -53,5 +53,11 @@ async function imageToPdf(png, lang = 'eng') {
   const { data } = await w.recognize(png, { pdfTitle: 'OCR' }, { pdf: true, text: false });
   return Uint8Array.from(data.pdf);
 }
+// Only the words, as invisible text on a page the size of the picture (at 300 dpi), to lay over the original page.
+async function imageToTextPdf(png, lang = 'eng') {
+  const w = await getWorker(lang);
+  const { data } = await w.recognize(png, { pdfTitle: 'OCR', pdfTextOnly: true }, { pdf: true, text: true });
+  return { pdf: Uint8Array.from(data.pdf), text: data.text || '' };
+}
 async function shutdown() { if (worker) { (await worker.catch(() => null))?.terminate().catch(() => {}); worker = null; } }
-module.exports = { imageToText, imageToPdf, prepare, shutdown };
+module.exports = { imageToText, imageToPdf, imageToTextPdf, prepare, shutdown };

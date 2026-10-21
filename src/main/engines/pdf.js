@@ -477,6 +477,68 @@ async function watermark(input, opts, out) {
   }
   return saveLib(doc, out);
 }
+// Crop marks at each page's trim corners and a bleed round it, on a sheet big enough for both, as Acrobat's Add
+// Printer Marks does: the trim and bleed boxes are set, and whatever the page has past its trim shows in the bleed
+// (the rest is clipped away).
+async function printerMarks(input, o, out) {
+  const { pushGraphicsState, popGraphicsState, rectangle, clip, endPath, cmyk } = require('pdf-lib');
+  const doc = await loadLib(input, o.password);
+  const bleed = Math.max(0, Number(o.bleed ?? 3)) * MM, len = Math.max(2, Number(o.length ?? 6)) * MM, gap = Math.max(bleed, Math.max(0, Number(o.offset ?? 3)) * MM), margin = gap + len + 6;
+  const reg = cmyk(1, 1, 1, 1), thin = Number(o.weight) || 0.25;
+  for (const page of doc.getPages()) {
+    const t = page.getTrimBox(), b = { x: t.x - bleed, y: t.y - bleed, width: t.width + 2 * bleed, height: t.height + 2 * bleed };
+    const stream = (...ops) => doc.context.register(doc.context.contentStream(ops));
+    page.node.normalize();
+    page.node.wrapContentStreams(stream(pushGraphicsState(), rectangle(b.x, b.y, b.width, b.height), clip(), endPath()), stream(popGraphicsState()));
+    const sheet = [t.x - margin, t.y - margin, t.width + 2 * margin, t.height + 2 * margin];
+    page.setMediaBox(...sheet);
+    page.setCropBox(...sheet);
+    page.setBleedBox(b.x, b.y, b.width, b.height);
+    page.setTrimBox(t.x, t.y, t.width, t.height);
+    // Two marks at each corner, in registration colour (every ink), starting past the bleed.
+    for (const [x, y, sx, sy] of [[t.x, t.y, -1, -1], [t.x + t.width, t.y, 1, -1], [t.x, t.y + t.height, -1, 1], [t.x + t.width, t.y + t.height, 1, 1]]) {
+      page.drawLine({ start: { x: x + sx * gap, y }, end: { x: x + sx * (gap + len), y }, thickness: thin, color: reg });
+      page.drawLine({ start: { x, y: y + sy * gap }, end: { x, y: y + sy * (gap + len) }, thickness: thin, color: reg });
+    }
+  }
+  await saveLib(doc, out);
+  return { path: out, note: `${doc.getPageCount()} page${doc.getPageCount() === 1 ? '' : 's'}, ${Number(o.bleed ?? 3)} mm bleed` };
+}
+// Bookmarks from the headings: lines set clearly larger than the body text (or bold at the body size and short),
+// nested by size, the way a table of contents reads.
+async function bookmarksFromHeadings(input, o, out) {
+  const { doc, m } = await readPdf(input, o.password);
+  const lines = [];
+  for (let i = 0; i < doc.countPages(); i++) for (const l of extractLines(m, doc.loadPage(i))) lines.push({ ...l, page: i, chars: undefined });
+  if (!lines.length) throw new Error('This PDF has no text to find headings in. Run Searchable PDF on it first.');
+  const weight = new Map();
+  for (const l of lines) weight.set(Math.round(l.size * 2) / 2, (weight.get(Math.round(l.size * 2) / 2) || 0) + l.text.length);
+  const body = [...weight.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const heads = lines.filter((l) => { const t = l.text.trim(); return t.length > 1 && t.length <= 90 && /\p{L}/u.test(t) && !/[.:;,]$/.test(t) && (l.size >= body * 1.18 || (l.bold && l.size >= body * 0.98 && t.length <= 60 && !/^\d+$/.test(t))); });
+  if (!heads.length) throw new Error('No headings were found: nothing is set larger or bolder than the body text.');
+  // Sizes from the largest down become levels 1–3; lines of a heading that wraps join into one title.
+  const sizes = [...new Set(heads.map((l) => Math.round(l.size * 2) / 2))].sort((a, b) => b - a).slice(0, 3);
+  const level = (l) => Math.max(0, sizes.findIndex((s) => Math.round(l.size * 2) / 2 >= s));
+  const items = [];
+  for (const l of heads) {
+    const prev = items[items.length - 1];
+    if (prev && prev.page === l.page && prev.level === level(l) && l.bbox[1] - prev.bottom < l.size * 0.6) { prev.title += ` ${l.text.trim()}`; prev.bottom = l.bbox[3]; continue; }
+    items.push({ title: l.text.trim(), page: l.page, level: level(l), bottom: l.bbox[3] });
+  }
+  const it = doc.outlineIterator();
+  if (o.replace !== false) for (let k = 0; it.item() && k < 100000; k++) it.delete();
+  else while (it.next() === 0);
+  const uri = (p) => doc.formatLinkURI({ chapter: 0, page: p, type: 'Fit', x: 0, y: 0, width: 0, height: 0, zoom: 0 });
+  let depth = 0;
+  for (const b of items) {
+    // Down into the bookmark just added for a deeper heading, out again for a shallower one.
+    while (depth < b.level && it.prev() === 0) { it.down(); depth++; }
+    while (depth > b.level) { it.up(); it.next(); depth--; }
+    it.insert({ title: b.title.slice(0, 120), uri: uri(b.page), open: true });
+  }
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('garbage=compact').asUint8Array()));
+  return { path: out, note: `${items.length} bookmark${items.length === 1 ? '' : 's'}: ${items.slice(0, 3).map((b) => b.title.slice(0, 30)).join(', ')}${items.length > 3 ? '…' : ''}` };
+}
 async function metadata(input, opts, out) {
   const doc = await loadLib(input);
   if (opts.title != null) doc.setTitle(String(opts.title));
@@ -503,19 +565,23 @@ async function flatten(input, out) {
   await fsp.writeFile(out, Buffer.from(doc.saveToBuffer('garbage=deduplicate,compress=yes').asUint8Array()));
   return out;
 }
-async function protect(input, opts, out) {
-  if (!opts.userPassword && !opts.ownerPassword) throw new Error('Enter a password to protect this PDF.');
-  const { doc } = await readPdf(input, opts.currentPassword);
-
+// MuPDF's save options for AES-256 with a password to open and the permissions allowed.
+function encryption(opts) {
   let p = -1;
   const clear = (bit) => { p &= ~(1 << (bit - 1)); };
   if (opts.allowPrint === false) { clear(3); clear(12); }
   if (opts.allowCopy === false) { clear(5); clear(10); }
   if (opts.allowEdit === false) { clear(4); clear(6); clear(9); clear(11); }
-  const owner = opts.ownerPassword || opts.userPassword + '\u0001owner';
+  // Without a permissions password of its own, a random one keeps the limits from being lifted with the open password
+  // (and a control character in it upsets MuPDF's AES-256 when the file is opened again).
+  const owner = opts.ownerPassword || require('crypto').randomBytes(16).toString('hex');
   const esc = (s) => String(s).replace(/,/g, '');
-  const enc = `encrypt=aes-256,user-password=${esc(opts.userPassword || '')},owner-password=${esc(owner)},permissions=${p | 0},garbage=compact`;
-  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer(enc).asUint8Array()));
+  return `encrypt=aes-256,user-password=${esc(opts.userPassword || '')},owner-password=${esc(owner)},permissions=${p | 0}`;
+}
+async function protect(input, opts, out) {
+  if (!opts.userPassword && !opts.ownerPassword) throw new Error('Enter a password to protect this PDF.');
+  const { doc } = await readPdf(input, opts.currentPassword);
+  await fsp.writeFile(out, Buffer.from(doc.saveToBuffer(`${encryption(opts)},garbage=compact`).asUint8Array()));
   return out;
 }
 async function unlock(input, opts, out) {
@@ -1048,7 +1114,7 @@ async function thumbnail(input, width = 240) {
 
 module.exports = {
   mupdf, readPdf, loadLib, saveLib, unpredict, pageCount, pageFrame, fontCache, hex, extractLines, quadRect, STD, FONT_FILES,
-  merge, subset, split, removePages, extract, handouts, pagesPerSheet, pageSize, overlay, grayscale, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata,
-  repair, flatten, protect, unlock, redact, toImages, toTiff, toComic, toMarkdown, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
+  merge, subset, split, removePages, extract, handouts, pagesPerSheet, pageSize, overlay, grayscale, reorder, rotate, crop, pageNumbers, watermark, metadata, readMetadata, printerMarks, bookmarksFromHeadings,
+  repair, flatten, protect, encryption, unlock, redact, toImages, toTiff, toComic, toMarkdown, extractImages, toText, toHtml, toWord, toPowerPoint, toExcel,
   compress, ocr, imagesToPdf, thumbnail,
 };

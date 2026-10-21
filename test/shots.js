@@ -480,6 +480,95 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         ['61-audio-cuts', 'const M = window.__media; M.seek(3); M.act("split"); M.seek(6); M.act("split"); M.st.sel = 1; M.act("cut"); M.seek(4.5); document.querySelector(\'[data-tool="trim"]\').click()'],
       ]);
     }
+    if (want('pdftools')) {
+      // Comments, bookmarks, links, form fields, redaction, measuring, cropping and the Document menu.
+      const src = path.join(dir, 'tools.pdf');
+      fs.copyFileSync(path.join(samples, 'chapters.pdf'), src);
+      openEditor(src, 'edit');
+      let e = null;
+      for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData && !x.webContents.isLoading()); }
+      if (e) {
+        e.webContents.on('console-message', (ev, level, message) => { const lv = ev?.level ?? level, msg = ev?.message ?? message; if (lv === 3 || lv === 'error') console.log('editor error:', String(msg).slice(0, 300)); });
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+        await wait('!!document.querySelector(".pdfpage img.r[src]")');
+        await sleep(800);
+        const at = (fx_, fy, extra = '') => `(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * ${fx_}, y = b.top + b.height * ${fy}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); ${extra} window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y })); })()`;
+        const drag = (fx0, fy0, fx1, fy1) => `(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), p = (u, v) => ({ clientX: b.left + b.width * u, clientY: b.top + b.height * v }); l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ...p(${fx0}, ${fy0}) })); window.dispatchEvent(new PointerEvent('pointermove', p(${fx1}, ${fy1}))); window.dispatchEvent(new PointerEvent('pointerup', p(${fx1}, ${fy1}))); })()`;
+        // A note with a reply, in the Comments panel.
+        await ejs(`document.querySelector('[data-tool="note"]').click()`);
+        await ejs(at(0.62, 0.1));
+        await wait('!!document.querySelector(".cm.sel textarea")');
+        await ejs(`(() => { const t = document.querySelector('.cm.sel textarea'); t.value = 'Should this heading be bigger?'; t.dispatchEvent(new Event('change')); })()`);
+        await sleep(900);
+        await ejs(`(() => { const i = document.querySelector('.cm.sel .cmrow input'); i.value = 'Yes, 24 pt.'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
+        await sleep(900);
+        await ejs(`document.querySelector('[data-tool="highlight"]').click()`);
+        await ejs(drag(0.1, 0.165, 0.5, 0.18));
+        await sleep(300);
+        await shot('40-comments', e);
+        // Bookmarks.
+        await ejs(`document.querySelector('[data-side="bookmarks"]').click()`);
+        await sleep(400);
+        await ejs(`document.querySelector('.bm')?.click()`);
+        await shot('41-bookmarks', e);
+        // A link being added.
+        await ejs(`document.querySelector('[data-tool="link"]').click()`);
+        await ejs(drag(0.1, 0.075, 0.6, 0.11));
+        await sleep(300);
+        await ejs(`(() => { const i = document.querySelector('.props [data-l=url]'); if (i) i.value = 'getartcraft.com'; })()`);
+        await shot('42-link', e);
+        await ejs(`document.querySelector('.props .cmrow .btn.primary')?.click()`);
+        await sleep(1200);
+        // Form fields: a text field and a tick box, then fill them in.
+        await ejs(`document.querySelector('[data-tool="field"]').click()`);
+        await ejs(drag(0.1, 0.3, 0.5, 0.33));
+        await wait('document.querySelectorAll(".pfield.edit").length >= 1', 8000);
+        await ejs(`document.querySelector('.props [data-fk="checkbox"]')?.click()`);
+        await ejs(at(0.12, 0.37));
+        await wait('document.querySelectorAll(".pfield.edit").length >= 2', 8000);
+        await ejs(`document.querySelector('[data-side="fields"]').click()`);
+        await shot('43-fields-prepare', e);
+        await ejs(`document.querySelector('[data-tool="select"]').click()`);
+        await sleep(400);
+        await ejs(`(() => { const i = document.querySelector('.pfield.fill input[type=text]'); if (i) { i.value = 'Jay Kadam'; i.dispatchEvent(new Event('input')); } const c = document.querySelector('.pfield.fill input[type=checkbox]'); if (c) { c.checked = true; c.dispatchEvent(new Event('change')); } })()`);
+        await shot('44-fields-fill', e);
+        // Redaction marks and a measurement.
+        await ejs(`document.querySelector('[data-tool="redact"]').click()`);
+        await ejs(drag(0.1, 0.13, 0.45, 0.15));
+        await sleep(300);
+        await shot('45-redact', e);
+        await ejs(`document.querySelector('[data-tool="measure"]').click()`);
+        await ejs(drag(0.1, 0.6, 0.7, 0.6));
+        await sleep(300);
+        await shot('46-measure', e);
+        await ejs(`document.querySelector('[data-tool="crop"]').click()`);
+        await ejs(drag(0.06, 0.05, 0.94, 0.7));
+        await sleep(300);
+        await shot('47-crop', e);
+        // The Document menu, the header and footer dialog and the save options.
+        await ejs(`document.querySelector('[data-tool="select"]').click(); document.querySelector('[data-a="docmenu"]').click()`);
+        await sleep(300);
+        await shot('48-docmenu', e);
+        await ejs(`document.querySelector('.popmenu [data-d="headerFooter"]').click()`);
+        await sleep(400);
+        await ejs(`(() => { const i = document.querySelector('[data-box="header_left"]'); i.value = 'Lime handbook'; i.dispatchEvent(new Event('input', { bubbles: true })); const j = document.querySelector('[data-box="footer_right"]'); j.focus(); document.querySelector('[data-tok="<<Page 1 of n>>"]').click(); })()`);
+        await sleep(1500);
+        await shot('49-header-footer', e);
+        await ejs(`document.querySelector('.scrim [data-a=cancel]').click(); document.querySelector('[data-a="docmenu"]').click()`);
+        await sleep(200);
+        await ejs(`document.querySelector('.popmenu [data-d="props"]').click()`);
+        await sleep(1200);
+        await shot('50-properties', e);
+        await ejs(`document.querySelector('.scrim [data-a=cancel]').click(); document.querySelector('[data-a="saveopts"]').click()`);
+        await sleep(300);
+        await shot('51-save-options', e);
+        await ejs(`document.querySelector('.popmenu')?.remove(); document.querySelector('[data-tool="edittext"]').click()`);
+        await ejs(`document.querySelector('.props [data-k="paragraph"]')?.click()`);
+        await sleep(800);
+        await shot('52-paragraphs', e);
+      }
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();

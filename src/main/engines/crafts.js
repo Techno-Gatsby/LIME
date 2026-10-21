@@ -560,6 +560,59 @@ async function printCheck(p, opts, ctx) {
   const f = r?.findings || [], bad = f.filter((x) => x.severity === 'fail'), warn = f.filter((x) => x.severity === 'warn' || x.severity === 'warning');
   return { note: bad.length ? `${plural(bad.length, 'problem')}${warn.length ? `, ${plural(warn.length, 'warning')}` : ''}` : warn.length ? `Printable, ${plural(warn.length, 'warning')}` : 'Ready to print', text: f.map((x) => `${x.severity === 'fail' ? '✗' : x.severity === 'info' ? 'i' : '!'} ${x.page ? `Page ${x.page}: ` : ''}${x.message}`).join('\n') };
 }
+// Header and footer text in six boxes, with PdfCraft's page, date and Bates tokens, as Acrobat adds them (so they can
+// be updated or removed later).
+const HF_BOXES = ['header_left', 'header_center', 'header_right', 'footer_left', 'footer_center', 'footer_right'];
+const tokens = (s) => String(s || '').replace(/\{page\}/gi, '<<1>>').replace(/\{pages\}/gi, '<<n>>').replace(/\{date\}/gi, '<<d/m/yyyy>>');
+const pageList = (spec, n) => { const l = U.parseRanges(spec || 'all', n).map((i) => i + 1); return l.length && l.length < n ? { pages: l } : {}; };
+async function headerFooterPdf(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-header.pdf`);
+  const boxes = Object.fromEntries(HF_BOXES.map((k) => [k, tokens(opts[k])]).filter(([, v]) => v.trim()));
+  if (!Object.keys(boxes).length) throw new Error('Type the header or footer text first.');
+  const n = await require('./pdf').pageCount(p, opts.password), mm = Number(opts.margin ?? 12) * 2.834645669;
+  const [, , , info] = await pdfScript([openDoc(p, opts.password), { tool: 'doc_header_footer', args: { doc: 1, ...boxes, font_size: Number(opts.size) || 10, ...(opts.color ? { color: opts.color } : {}), margins: [mm, mm, Math.max(mm, 36), Math.max(mm, 36)], start_number: Math.max(1, Number(opts.start) || 1), replace: true, ...pageList(opts.pages, n) } },
+    { tool: 'doc_save', args: { doc: 1, path: out, full: true } }, openDoc(out)], ctx, 'Adding the header and footer');
+  return { path: out, note: `On ${plural(pageList(opts.pages, n).pages?.length || info?.pages || n, 'page')}` };
+}
+async function backgroundPdf(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-background.pdf`), n = await require('./pdf').pageCount(p, opts.password);
+  const fill = opts.kind === 'image' ? (opts.image ? { file: opts.image, scale: U.clamp((Number(opts.scale) || 100) / 100, 0.05, 1) } : null) : { color: opts.color || '#fff4ce' };
+  if (!fill) throw new Error('Choose the picture for the background.');
+  await pdfScript([openDoc(p, opts.password), { tool: 'doc_background', args: { doc: 1, ...fill, opacity: U.clamp((Number(opts.opacity) || 100) / 100, 0.02, 1), replace: true, ...pageList(opts.pages, n) } }, { tool: 'doc_save', args: { doc: 1, path: out, full: true } }], ctx, 'Adding the background');
+  return out;
+}
+// Title, author, subject, keywords (in the XMP metadata too), language, and how the file opens.
+async function pdfProperties(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-properties.pdf`);
+  const steps = ['Title', 'Author', 'Subject', 'Keywords'].filter((k) => opts[k.toLowerCase()] != null && opts[k.toLowerCase()] !== '').map((k) => ({ tool: 'doc_set_info', args: { doc: 1, key: k, value: String(opts[k.toLowerCase()]) } }));
+  const view = { ...(opts.lang ? { language: String(opts.lang) } : {}), ...(opts.navigation && opts.navigation !== 'keep' ? { navigation: opts.navigation } : {}), ...(opts.showTitle != null ? { display_title: !!opts.showTitle } : {}) };
+  if (Object.keys(view).length) steps.push({ tool: 'doc_initial_view', args: { doc: 1, ...view } });
+  if (!steps.length) throw new Error('Fill in at least one property.');
+  await pdfScript([openDoc(p, opts.password), ...steps, { tool: 'doc_save', args: { doc: 1, path: out, full: true } }], ctx, 'Setting properties');
+  return { path: out, note: [opts.title && `“${opts.title}”`, opts.author && `by ${opts.author}`].filter(Boolean).join(' ') || 'Properties set' };
+}
+// Page labels: a run of pages numbered i, ii, iii or A-1, A-2 in readers' page boxes.
+async function pageLabels(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-labelled.pdf`), n = await require('./pdf').pageCount(p, opts.password);
+  const from = U.clamp(Number(opts.from) || 1, 1, n), to = U.clamp(Number(opts.to) || n, from, n);
+  await pdfScript([openDoc(p, opts.password), { tool: 'page_number', args: { doc: 1, from, to, style: opts.style || 'lower-roman', start: Math.max(1, Number(opts.start) || 1), ...(opts.prefix ? { prefix: String(opts.prefix) } : {}) } },
+    ...(to < n && opts.restart !== false ? [{ tool: 'page_number', args: { doc: 1, from: to + 1, to: n, style: 'decimal', start: 1 } }] : []), { tool: 'doc_save', args: { doc: 1, path: out, full: true } }], ctx, 'Labelling pages');
+  return { path: out, note: `Pages ${from}–${to} labelled${to < n && opts.restart !== false ? `, then 1 from page ${to + 1}` : ''}` };
+}
+// Form data out to a file (CSV, XFDF, FDF or XML), and back in from one.
+async function exportFormData(p, opts, ctx) {
+  const to = ['csv', 'xfdf', 'fdf', 'xml', 'txt'].includes(opts.to) ? opts.to : 'csv', out = ctx.out.file(p, `${U.base(p)} - form data.${to}`);
+  const [, list] = await pdfScript([openDoc(p, opts.password), { tool: 'form_fields', args: { doc: 1 } }, { tool: 'doc_export_data', args: { doc: 1, path: out, what: 'fields' } }], ctx, 'Exporting form data');
+  if (!list?.count) { await fsp.rm(out, { force: true }); throw new Error('This PDF has no form fields.'); }
+  return { path: out, note: `${plural(list.count, 'field')}, ${list.fields.filter((f) => f.value != null && f.value !== '' && f.value !== false).length} filled in` };
+}
+async function importFormData(p, opts, ctx) {
+  if (!opts.data) throw new Error('Choose the data file to fill the form from.');
+  const out = ctx.out.file(p, `${U.base(p)}-filled.pdf`);
+  const [, , , list] = await pdfScript([openDoc(p, opts.password), { tool: 'doc_import_data', args: { doc: 1, path: opts.data } }, { tool: 'doc_save', args: { doc: 1, path: out, full: true } }, { tool: 'form_fields', args: { doc: 1 } }], ctx, 'Filling in the form');
+  const filled = (list?.fields || []).filter((f) => f.value != null && f.value !== '' && f.value !== false).length;
+  return { path: out, note: `${plural(filled, 'field')} filled in` };
+}
 async function commentSummary(p, opts, ctx) {
   const out = ctx.out.file(p, `${U.base(p)} - comments.pdf`);
   const [, list] = await pdfScript([openDoc(p, opts.password), { tool: 'comment_list', args: { doc: 1 } }, { tool: 'comments_summarize', args: { doc: 1, out, sort: 'page' } }], ctx, 'Summarising comments');
@@ -652,4 +705,5 @@ function status() {
 module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
   autoTone, sharpenPhoto, denoisePhoto, liftShadows, paintPhoto, straightenScans, exportLayers, layerInfo, lookPhoto, smartBw, straightenPhoto, removeDust, hdrBatch,
   traceImage, outlineText, exportArtboards, logoPackage, vectorInfo, preflightLayout, packageLayout, layoutPdf, fixedEpub, bookletPdf, posterFrame, alphaRender, frameSequence, motionInfo,
-  splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS };
+  splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS,
+  headerFooterPdf, backgroundPdf, pdfProperties, pageLabels, exportFormData, importFormData };

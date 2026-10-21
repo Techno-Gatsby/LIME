@@ -73,6 +73,24 @@ const P = {
   level: 'M3 15.5L21 8.5M4 20h16',
   pupil: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 100-6 3 3 0 000 6zM12 12h.01',
   mask: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 3v18M15.5 3.7v16.6M19 6.5v11',
+  // The PDF editor's comments, links, bookmarks, forms and page tools.
+  note: 'M5 5h14v10h-6l-4 4v-4H5zM8.5 9h7M8.5 12h4',
+  comment: 'M4 6a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2h-7l-5 4v-4H6a2 2 0 01-2-2z',
+  bookmark: 'M7 4h10v16l-5-4-5 4z',
+  link: 'M10 14a4 4 0 005.66 0l3-3a4 4 0 00-5.66-5.66l-1 1M14 10a4 4 0 00-5.66 0l-3 3a4 4 0 005.66 5.66l1-1',
+  field: 'M3 7h18v10H3zM7 10v4',
+  redact: 'M4 7h16v10H4zM9 7l-5 5M15 7l-10 10M20 8l-9 9M20 14l-3 3',
+  crop: 'M7 3v14h14M3 7h14v14',
+  shapes: 'M4 10h7v10H4zM16 3l5 8h-10z',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+  list: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
+  listNum: 'M10 6h10M10 12h10M10 18h10M4 5l1.5-1V9M3.5 13.5a1.4 1.4 0 012.5.8c0 1-2.5 1.7-2.5 3.2H6',
+  flipH: 'M12 4v16M8 7L3 17h5zM16 7l5 10h-5z',
+  flipV: 'M4 12h16M7 8L17 3v5zM7 16l10 5v-5z',
+  lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 017 0v3',
+  indent: 'M4 6h16M10 10h10M10 14h10M4 18h16M4 9.5l3 2.5-3 2.5',
+  outdent: 'M4 6h16M10 10h10M10 14h10M4 18h16M7 9.5L4 12l3 2.5',
+  replace: 'M4 5h9v9H4zM11 19h9v-9M15 8l2-2 2 2M17 6v4',
 };
 export function icon(name, size = '') {
   const d = P[name] || P.doc;

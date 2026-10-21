@@ -971,6 +971,16 @@ sh(sevenZ, ['a', '-tzip', '-plime', P('secret.zip'), 'a.txt'], { cwd: P('folder'
   const c = mu.Document.openDocument(fs.readFileSync(P('doc.pdf')), 'application/pdf');
   [[0, 'Check the total'], [2, 'Sign here please']].forEach(([i, text]) => { const a = c.loadPage(i).createAnnotation('Text'); a.setRect([72, 72, 92, 92]); a.setContents(text); a.setAuthor('Ada'); a.update(); });
   fs.writeFileSync(P('comments.pdf'), c.saveToBuffer('').asUint8Array());
+  // A form with fields to fill in and export: text, a date, a tick box and a drop-down.
+  const { PDFDocument } = require('pdf-lib');
+  const fd = await PDFDocument.load(fs.readFileSync(P('form.pdf'))), form = fd.getForm(), pg = fd.getPage(0);
+  form.createTextField('Full name').addToPage(pg, { x: 140, y: 686, width: 360, height: 18 });
+  form.createTextField('Date of birth').addToPage(pg, { x: 150, y: 646, width: 180, height: 18 });
+  form.createCheckBox('Agree').addToPage(pg, { x: 60, y: 600, width: 11, height: 11 });
+  const dd = form.createDropdown('Colour');
+  dd.setOptions(['Red', 'Green', 'Blue']);
+  dd.addToPage(pg, { x: 60, y: 560, width: 140, height: 18 });
+  fs.writeFileSync(P('fillable.pdf'), await fd.save());
 }
 sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24:d=1', '-f', 'lavfi', '-i', 'smptebars=size=320x180:rate=24:d=1', '-f', 'lavfi', '-i', 'color=c=0x2a6f3a:size=320x180:rate=24:d=1',
   '-filter_complex', '[0][1][2]concat=n=3:v=1:a=0', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', P('scenes.mp4')]);
