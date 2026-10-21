@@ -30,7 +30,7 @@ Lime waits as a small lime tucked into the right edge of the screen. The wheel i
 | Drag files and hold **Shift** | The wheel opens beside the pointer, already showing what those files can become, and follows the drag: it trails the pointer as you carry the files, and holds still when you move toward it. Drop on a slice to run it in one go, or drop in the middle to see every choice. |
 | While dragging, hold **Option** (Windows: **Alt**) or **Control** | Shows the Tools or More ring instead. You can also hold the file over a tab at the top for half a second. |
 | Drag files onto the lime at the edge, or into the bottom-left corner | The wheel blooms there; drop the files on it. |
-| Click the lime | Opens the wheel with the seven ArtCraft apps around it, plus **Recent**. Click an app for its own ring: **Open**, or the app's mark in the middle, opens the app in a Lime window (PdfCraft as the PDF editor, PhotoCraft as the photo editor and so on), **Full app** starts the app itself, and its one-click actions ask for files and run right there. Click the middle to choose files. |
+| Click the lime | Opens the wheel with the ArtCraft apps around it: PdfCraft, PhotoCraft, DesignCraft, WebCraft, CADCraft, SoundCraft and FilmCraft, then **More apps** for VectorCraft, LightCraft, EffectCraft, DeckCraft, GridCraft, WordCraft and **Recent**. Settings › Wheel apps picks which ring each app is on and its place. Click an app for its own ring: **Open**, or the app's mark in the middle, opens the app in a Lime window (PdfCraft as the PDF editor, PhotoCraft as the photo editor, CADCraft, GridCraft, WordCraft and SoundCraft as the real apps inside Lime, and so on), **Full app** starts the app itself, and its one-click actions ask for files and run right there. Click the middle to choose files. |
 | Click a slice | Runs it. If the tool has settings (pages, quality, a password, the order of files), a card asks first. Right-click a slice for every setting. |
 | **Convert · Tools · Apps · More** | Switches the ring (or press Tab). **Apps** shows the apps that open these files and each app's actions; **Tools** ends with the likeliest app, so a PDF offers PdfCraft and a photo offers PhotoCraft. **More** lists every tool that fits, with search. Esc steps back out of an app. |
 | Press and drag anywhere on the wheel | Moves it, with or without files. A click still picks a slice; only the middle of a finished job drags its results out instead. |
@@ -67,9 +67,9 @@ Lime asks where to save each result. To save next to the original instead, switc
 
 **Utilities** — checksums, batch rename.
 
-## The seven apps on the wheel
+## The apps on the wheel
 
-Click the lime and pick an app, or drop files and open **Apps**. **Open** starts the full app; the rest run its engine right there, with no window:
+Click the lime and pick an app, or drop files and open **Apps**. **Open** shows the app in a Lime window and **Full app** starts the app itself; the rest run its engine right there, with no window:
 
 - **PhotoCraft** — auto tone, sharpen, reduce noise, lift shadows, paint looks (oil, watercolour, poster, ink, pencil), split a scan into photos, export PSD layers, layer list.
 - **LightCraft** — 41 looks, smart black & white, straighten, remove dust, develop RAW, auto enhance, HDR, panorama, HDR sets for a whole folder.
@@ -77,11 +77,16 @@ Click the lime and pick an app, or drop files and open **Apps**. **Open** starts
 - **DesignCraft** — preflight, print PDF (PDF/X-4, bleed, marks) or web PDF, package for hand-over, fixed-layout EPUB, booklet. **Edit** opens IDML and DesignCraft layouts: edit stories, find and change (with GREP), swatches, fonts, page size, margins and pages, picture fitting, and preflight with fixes.
 - **EffectCraft** — poster frame, transparent GIF or ProRes 4444 MOV, PNG frames, animation info, render to video. **Edit** opens Lottie and EffectCraft projects with a frame monitor and a layer timeline: text, colours, speed, trim, frame size, effects, transparency, then Lottie, MP4, GIF, WebM, ProRes or PNG frames.
 - **FilmCraft** — split into scenes, clean up voices, film-look colour grades, edit-ready ProRes/DNxHR copies, media info, timeline conversion. **Edit** opens OTIO, FCPXML, XML, EDL and AAF timelines on a track view: trim, split, reorder, remove, speed, transitions, effects, looks, titles, markers and sequence settings, then MP4 or any of those formats.
+- **CADCraft** — save DWG for AutoCAD 2000 to 2018, clean up a drawing (fix errors, remove unused layers and blocks, delete doubled lines), print every sheet to one PDF, count blocks into a spreadsheet, layer list, compare two drawings. **Open** shows CADCraft itself in a Lime window, with the drawing loaded; Save puts “name (edited).dwg” beside it. Lime's own engine stays in charge of DWG/DXF to PDF, SVG and pictures (it draws on white paper with real fonts, where CADCraft draws on a dark screen with a drafting font) and of every 3D model.
+- **SoundCraft** — master to a loudness (streaming −14, podcast −16, club −9 or broadcast −23 LUFS, checked after mastering), polish a voice (rumble cut, gentle gate, de-ess, compressor), add room or hall reverb, mix recordings together, and export a SoundCraft session as one mix or a WAV per track (stems). **Open** shows SoundCraft itself in a Lime window with the recording imported.
+- **WordCraft** — a PDF with the comments in the margin and the tracked changes, add a table of contents, lock with a password, update fields, save old .doc, RTF or ODT as DOCX, page pictures. **Open** shows WordCraft itself in a Lime window with the document loaded.
+- **GridCraft** — add a chart (best fit, columns, bars, line, pie, area or scatter), make a table with filter buttons, recalculate, check calculations. **Open** shows GridCraft itself in a Lime window with the workbook loaded.
+- **DeckCraft** — make slides from notes (each heading a slide, in one of eight looks), slides to an animated GIF, slide graphics with a see-through background. **Open** starts the full app.
 - **PdfCraft** — optimise, remove hidden data, PDF/A, fillable forms, check redactions, Bates numbers, word count, print check, link web addresses, split at bookmarks, accessibility check, comment summary, compare, header and footer, page background, properties, page labels, export form data and fill a form from data. Lime adds crop marks and bleed, and bookmarks from headings.
 
 ## Engines
 
-Bundled, all offline: MuPDF and pdf-lib, libvips (sharp), FFmpeg 6.1, 7-Zip 26, Tesseract, IMG.LY background removal, LibreDWG, Open CASCADE, and the command-line engines of the seven ArtCraft apps (PhotoCraft, LightCraft, VectorCraft, DesignCraft, EffectCraft, FilmCraft, PdfCraft). If LibreOffice is installed, Lime uses it for the most faithful Office conversions. Text recognition (image to text, searchable PDF, scan to PDF, recognise text in the editor) reads with Windows' own engine (Windows.Media.Ocr) on Windows and Apple's Vision on macOS, and falls back to Tesseract for languages they lack or when they fail.
+Bundled, all offline: MuPDF and pdf-lib, libvips (sharp), FFmpeg 6.1, 7-Zip 26, Tesseract, IMG.LY background removal, LibreDWG, Open CASCADE, the command-line engines of twelve ArtCraft apps (PhotoCraft, LightCraft, VectorCraft, DesignCraft, EffectCraft, FilmCraft, PdfCraft, CADCraft, SoundCraft, WordCraft, GridCraft, DeckCraft), and the web builds of CADCraft, GridCraft, WordCraft and SoundCraft that open inside Lime windows. If LibreOffice is installed, Lime uses it for the most faithful Office conversions. Text recognition (image to text, searchable PDF, scan to PDF, recognise text in the editor) reads with Windows' own engine (Windows.Media.Ocr) on Windows and Apple's Vision on macOS, and falls back to Tesseract for languages they lack or when they fail.
 
 ## Build from source
 
@@ -94,7 +99,7 @@ npm run dist:mac           # dist/Lime-1.0.0-arm64.dmg
 npm run dist:win           # dist/Lime-Setup-1.0.0-x64.exe (needs 7-Zip; NSIS too when not on Windows)
 ```
 
-The ArtCraft source code is linked under `crafts/` at the exact versions Lime bundles (`git submodule update --init` fetches it). Builds use the projects' official signed release binaries.
+The source code of the first seven ArtCraft apps is linked under `crafts/` at the exact versions Lime bundles (`git submodule update --init` fetches it); CADCraft 0.10.0, SoundCraft 0.10.0, WordCraft 0.9.0, GridCraft 0.9.0 (storytold/sheetcraft) and DeckCraft 0.9.0 (storytold/slidecraft) come from their GitHub releases. Builds use the projects' official signed release binaries.
 
 Building the Mac DMG on Linux needs `rcodesign`, `mkfs.hfsplus`, and the `hfsplus` and `dmg` tools from libdmg-hfsplus; set `RCODESIGN`, `HFSPLUS` and `DMG` if they aren't on PATH. Set `LIME_ELECTRON_ZIPS` to a folder of Electron zips to build offline.
 

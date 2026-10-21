@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
+module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -173,7 +173,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     };
     try {
       await lime('L.expand("click");');
-      if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 4000))) throw new Error('no apps around the lime');
+      if (!(await until('return L.S.state === "ready" && L.S.ring.some((x) => x.homeMore)', 4000))) throw new Error('no apps around the lime');
       await sleep(800);
       const a = await drag('.petal[data-i="2"] text.l');
       const still = await lime('return { state: L.S.state, app: L.S.app };');
@@ -198,24 +198,105 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
     return 'picture shown on the tab and in the middle; Use the lime put it back';
   });
-  await check('click opens the seven apps; each opens its own ring', async () => {
+  await check('click opens the first ring of apps; More apps opens the rest; each opens its own ring', async () => {
     await lime('L.expand("click");');
-    if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 4000))) throw new Error('no apps around the lime');
+    if (!(await until('return L.S.state === "ready" && L.S.ring.some((x) => x.homeMore)', 4000))) throw new Error('no apps around the lime');
     await sleep(700);
-    const home = await lime('return { labels: L.S.ring.map((x) => x.label), shown: [...document.querySelectorAll(".petal text.l")].filter((t) => getComputedStyle(t).display !== "none").length };');
-    for (const n of ['PhotoCraft', 'LightCraft', 'VectorCraft', 'DesignCraft', 'EffectCraft', 'FilmCraft', 'PdfCraft', 'Recent']) if (!home.labels.includes(n)) throw new Error(`no ${n}: ${home.labels}`);
-    if (home.shown !== 8) throw new Error(`${home.shown} of 8 labels visible`);
-    const i = home.labels.indexOf('PdfCraft');
-    await click(`.petal[data-i="${i}"] text.l`);
-    if (!(await until('return L.S.app === "pdfcraft" && L.S.ring[0]?.label === "Open"', 3000))) throw new Error('PdfCraft did not open its ring');
-    const ring = await lime('return { labels: L.S.ring.map((x) => x.label), back: document.querySelector(".pill [data-a=home]")?.textContent, cap: document.querySelector(".center .cap").textContent };');
-    if (!ring.labels.includes('Repair')) throw new Error(`PdfCraft ring ${ring.labels}`);
-    if (!/All apps/.test(ring.back || '')) throw new Error('no way back to the apps');
-    if (!(await lime('return !!L.S.ring[0]?.appOpen && L.S.ring[1]?.label === "Full app"'))) throw new Error('Open is not the app in a Lime window');
-    const said = 'Open opens a Lime window, Full app the app';
+    const ring = () => lime('return { labels: L.S.ring.map((x) => x.label), shown: [...document.querySelectorAll(".petal text.l")].filter((t) => getComputedStyle(t).display !== "none").length, sizes: [...new Set([...document.querySelectorAll(".petal[data-i] text.l")].map((t) => getComputedStyle(t).fontSize))], back: document.querySelector(".pill [data-a=home]")?.textContent || "" };');
+    const home = await ring();
+    const first = ['PdfCraft', 'PhotoCraft', 'DesignCraft', 'CADCraft', 'SoundCraft', 'FilmCraft'], second = ['VectorCraft', 'LightCraft', 'EffectCraft', 'DeckCraft', 'GridCraft', 'WordCraft'];
+    if (first.join() !== home.labels.filter((l) => first.includes(l)).join()) throw new Error(`first ring ${home.labels}`);
+    if (home.labels[home.labels.length - 1] !== 'More apps' || home.labels.some((l) => second.includes(l) || l === 'Recent')) throw new Error(`first ring ${home.labels}`);
+    if (home.shown !== home.labels.length || home.labels.length > 10) throw new Error(`${home.shown} of ${home.labels.length} labels visible`);
+    if (home.sizes.length !== 1) throw new Error(`label sizes ${home.sizes}`);
+    await click(`.petal[data-i="${home.labels.indexOf('More apps')}"] text.l`);
+    if (!(await until('return L.S.homeMore && L.S.ring.some((x) => x.homeBack)', 3000))) throw new Error('More apps did not open the second ring');
+    const more = await ring();
+    if (second.join() !== more.labels.slice(0, 6).join() || more.labels.slice(-2).join() !== 'Recent,Back') throw new Error(`second ring ${more.labels}`);
+    if (more.sizes.length !== 1 || !/First ring/.test(more.back)) throw new Error(`second ring sizes ${more.sizes}, pill ${more.back}`);
+    await click(`.petal[data-i="${more.labels.indexOf('GridCraft')}"] text.l`);
+    if (!(await until('return L.S.app === "gridcraft"', 3000))) throw new Error('GridCraft did not open its ring');
+    const grid = await ring();
+    if (!grid.labels.includes('Chart') || !/More apps/.test(grid.back)) throw new Error(`GridCraft ring ${grid.labels} · ${grid.back}`);
     wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
-    if (!(await until('return !L.S.app && L.S.ring.length === 8', 2000))) throw new Error('Esc did not go back to the apps');
-    return `${home.labels.join(', ')} · PdfCraft: ${ring.labels.join(', ')} · middle: ${said}`;
+    if (!(await until('return !L.S.app && L.S.homeMore', 2000))) throw new Error('Esc did not go back to More apps');
+    await click(`.petal[data-i="${more.labels.indexOf('Back')}"] text.l`);
+    if (!(await until('return !L.S.homeMore && L.S.ring.some((x) => x.homeMore)', 2000))) throw new Error('Back did not return to the first ring');
+    await click(`.petal[data-i="${home.labels.indexOf('PdfCraft')}"] text.l`);
+    if (!(await until('return L.S.app === "pdfcraft" && L.S.ring[0]?.label === "Open"', 3000))) throw new Error('PdfCraft did not open its ring');
+    const pdf = await ring();
+    if (!pdf.labels.includes('Repair')) throw new Error(`PdfCraft ring ${pdf.labels}`);
+    if (!/All apps/.test(pdf.back)) throw new Error('no way back to the apps');
+    if (!(await lime('return !!L.S.ring[0]?.appOpen && L.S.ring[1]?.label === "Full app"'))) throw new Error('Open is not the app in a Lime window');
+    wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    if (!(await until('return !L.S.app && L.S.ring.some((x) => x.homeMore)', 2000))) throw new Error('Esc did not go back to the apps');
+    return `${home.labels.join(', ')} | ${more.labels.join(', ')} · ${home.sizes[0]} and ${more.sizes[0]}`;
+  });
+  await check('Settings decide which ring each app is on', async () => {
+    const labels = () => lime('return L.S.ring.map((x) => x.label);');
+    await lime('L.expand("click"); await L.loadHome();');
+    await until('return L.S.ring.some((x) => x.homeMore)', 3000);
+    await js('window.lime.invoke("settings:set", { rings: { first: ["wordcraft", "pdfcraft", "photocraft", "nosuchapp"], second: ["vectorcraft"] } })');
+    if (!(await until('return L.S.ring[0]?.label === "WordCraft" && L.S.ring[1]?.label === "PdfCraft" && L.S.ring.length === 4', 4000))) throw new Error(`first ring did not follow: ${await labels()}`);
+    const saved = await js('window.lime.invoke("settings:get")');
+    if (saved.rings.first.join() !== 'wordcraft,pdfcraft,photocraft' || saved.rings.second[0] !== 'vectorcraft' || saved.rings.second.length < 9) throw new Error(`stored ${JSON.stringify(saved.rings)}`);
+    await lime('L.pick(L.S.ring.find((x) => x.homeMore));');
+    const more = await labels();
+    if (more[0] !== 'VectorCraft' || more.includes('WordCraft') || more.includes('PhotoCraft')) throw new Error(`second ring ${more}`);
+    await lime('L.back();');
+    await js('window.lime.invoke("settings:set", { rings: null })');
+    if (!(await until('return L.S.ring[0]?.label === "PdfCraft" && L.S.ring[1]?.label === "PhotoCraft"', 4000))) throw new Error(`reset did not restore the rings: ${await labels()}`);
+    return `moved WordCraft first and back; unknown ids dropped; the rest went to More apps (${saved.rings.second.length})`;
+  });
+  const Crafts = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'crafts'));
+  const craftWindow = async (id, src) => {
+    const win = await openCraftWeb(id, src);
+    const wjs = (code) => win.webContents.executeJavaScript(code, true);
+    let state = 'loading';
+    for (const t0 = Date.now(); Date.now() - t0 < 90000 && state === 'loading'; await sleep(250)) state = await wjs('document.body.dataset.state');
+    return { win, wjs, state };
+  };
+  const waitFile = async (f, ms = 8000) => { for (const t0 = Date.now(); Date.now() - t0 < ms; await sleep(100)) if (fs.existsSync(f)) return true; return false; };
+  if (fs.existsSync(fx('book.xlsx'))) await check('GridCraft opens in a Lime window and saves beside the original', async () => {
+    if (!Crafts.hasWeb('gridcraft')) throw Object.assign(new Error('no GridCraft web app in this build'), { skip: true });
+    const d = target(), src = path.join(d, 'book.xlsx');
+    fs.copyFileSync(fx('book.xlsx'), src);
+    const { win, wjs, state } = await craftWindow('gridcraft', src);
+    try {
+      if (state === 'loading') throw new Error('GridCraft never started');
+      const info = await wjs('window.limeCraft.info()');
+      if (!info.bridge || info.fileName !== 'book.xlsx' || !/host=parent/.test(await wjs('document.getElementById("app").src'))) throw new Error(`host mode: ${JSON.stringify(info)}`);
+      const post = (msg) => wjs(`document.getElementById('app').contentWindow.eval(${JSON.stringify(`parent.postMessage(${msg}, location.origin)`)})`);
+      await post("{ type: 'gridcraft:save', name: 'book.xlsx', bytes: new Uint8Array([80, 75, 5, 6, 1]).buffer }");
+      const edited = path.join(d, 'book (edited).xlsx');
+      if (!(await waitFile(edited))) throw new Error(`nothing saved: ${fs.readdirSync(d)}`);
+      if (fs.readFileSync(edited).length !== 5 || !fs.readFileSync(src).equals(fs.readFileSync(fx('book.xlsx')))) throw new Error('the save went to the wrong file');
+      await post("{ type: 'gridcraft:save', name: 'book.xlsx', bytes: new Uint8Array([80, 75, 5, 6, 1, 2]).buffer }");
+      await post("{ type: 'gridcraft:save', name: 'book.pdf', bytes: new Uint8Array([37, 80, 68, 70]).buffer }");
+      if (!(await waitFile(path.join(d, 'book.pdf')))) throw new Error(`no export: ${fs.readdirSync(d)}`);
+      if (fs.readFileSync(edited).length !== 6 || fs.existsSync(path.join(d, 'book (edited) 2.xlsx'))) throw new Error(`a second save did not replace its own file: ${fs.readdirSync(d)}`);
+      const toast = await wjs('document.querySelector(".toast").hidden ? "" : document.querySelector(".toast span").textContent');
+      if (!/Saved book\.pdf/.test(toast)) throw new Error(`toast: ${toast}`);
+      await post("{ type: 'gridcraft:dirty', dirty: true }");
+      for (const t0 = Date.now(); Date.now() - t0 < 3000 && !win.craftWeb.dirty; ) await sleep(100);
+      if (!win.craftWeb.dirty) throw new Error('unsaved changes were not reported');
+      win.craftWeb.dirty = false;
+      return `${state}; saved book (edited).xlsx and book.pdf beside the original, which stayed as it was`;
+    } finally { if (!win.isDestroyed()) win.destroy(); }
+  });
+  if (fs.existsSync(fx('doc.docx'))) await check('WordCraft opens in a Lime window; its downloads save beside the file', async () => {
+    if (!Crafts.hasWeb('wordcraft')) throw Object.assign(new Error('no WordCraft web app in this build'), { skip: true });
+    const d = target(), src = path.join(d, 'doc.docx');
+    fs.copyFileSync(fx('doc.docx'), src);
+    const { win, wjs, state } = await craftWindow('wordcraft', src);
+    try {
+      if (state !== 'ready') throw new Error(`state ${state}`);
+      await wjs(`document.getElementById('app').contentWindow.eval(${JSON.stringify("const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['PK'])); a.download = 'doc.docx'; document.body.append(a); a.click();")})`);
+      const edited = path.join(d, 'doc (edited).docx');
+      if (!(await waitFile(edited))) throw new Error(`nothing saved: ${fs.readdirSync(d)}`);
+      if (!fs.readFileSync(src).equals(fs.readFileSync(fx('doc.docx')))) throw new Error('the original changed');
+      return 'the document went in by drop; Save wrote doc (edited).docx';
+    } finally { if (!win.isDestroyed()) win.destroy(); }
   });
   if (fs.existsSync(fx('photo.jpg'))) await check('hovering and progress update the middle in place', async () => {
     await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
@@ -391,7 +472,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(await until('return L.S.state === "idle" && !L.folding()', 5000))) throw new Error(`${label}: didn't fold after the drag left`);
     await sleep(600);
     await click('.tab');
-    if (!(await until('return L.S.state === "ready" && L.S.ring.length === 8', 3000))) throw new Error(`${label}: a click on the lime didn't open the apps`);
+    if (!(await until('return L.S.state === "ready" && L.S.ring.some((x) => x.homeMore)', 3000))) throw new Error(`${label}: a click on the lime didn't open the apps`);
     wheel().webContents.sendInputEvent({ type: 'mouseLeave', x: -20, y: -20 });
     await lime('await L.fold();');
     await until('return L.S.state === "idle" && !L.folding()', 3000);
@@ -683,9 +764,9 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await sleep(250);
     await lime('L.expand("click"); await L.loadHome();');
     await sleep(700);
-    for (const id of [null, 'photocraft', 'lightcraft', 'vectorcraft', 'designcraft', 'effectcraft', 'filmcraft', 'pdfcraft']) {
+    for (const id of [null, ':more', 'photocraft', 'lightcraft', 'vectorcraft', 'designcraft', 'effectcraft', 'filmcraft', 'pdfcraft', 'cadcraft', 'soundcraft', 'wordcraft', 'gridcraft', 'deckcraft']) {
       const r = await lime(`
-        L.S.app = ${JSON.stringify(id)}; L.redraw();
+        L.S.homeMore = ${JSON.stringify(id === ':more')}; L.S.app = ${JSON.stringify(id === ':more' ? null : id)}; L.redraw();
         await new Promise((res) => setTimeout(res, 450));
         const out = [], name = 'home · ' + ${JSON.stringify(id || 'apps')};
         for (const g of document.querySelectorAll('.petal[data-i]')) {
@@ -731,8 +812,8 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await lime('L.expand("click"); await L.loadHome();');
     await sleep(700);
     let home = '';
-    for (const id of [null, 'photocraft', 'vectorcraft', 'pdfcraft']) {
-      await lime(`L.S.app = ${JSON.stringify(id)}; L.redraw();`);
+    for (const id of [null, ':more', 'photocraft', 'vectorcraft', 'pdfcraft', 'cadcraft', 'gridcraft']) {
+      await lime(`L.S.homeMore = ${JSON.stringify(id === ':more')}; L.S.app = ${JSON.stringify(id === ':more' ? null : id)}; L.redraw();`);
       const r = await probe(`home · ${id || 'apps'}`);
       if (r.n) rings++;
       bad.push(...r.out);

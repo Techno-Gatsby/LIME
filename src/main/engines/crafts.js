@@ -14,6 +14,11 @@ const APPS = {
   effectcraft: { name: 'EffectCraft', role: 'Motion graphics', short: 'Motion', opens: ['motion', 'lottie', 'ecproj'] },
   filmcraft: { name: 'FilmCraft', role: 'Video editing', short: 'Video', opens: ['video', 'timeline', 'fcproj', 'otio', 'fcpxml'] },
   pdfcraft: { name: 'PdfCraft', role: 'PDF workbench', short: 'PDF', opens: ['pdf'] },
+  cadcraft: { name: 'CADCraft', role: '2D drafting', short: 'CAD', opens: ['cad2d'] },
+  soundcraft: { name: 'SoundCraft', role: 'Audio production', short: 'Audio', opens: ['audio', 'scraft'] },
+  wordcraft: { name: 'WordCraft', role: 'Word processing', short: 'Docs', opens: ['docx', 'doc', 'docm', 'dotx', 'dotm', 'odt', 'rtf', 'md', 'markdown', 'txt', 'html', 'htm'] },
+  gridcraft: { name: 'GridCraft', role: 'Spreadsheets', short: 'Sheets', opens: ['sheet'], except: ['numbers', 'dif', 'sylk'] },
+  deckcraft: { name: 'DeckCraft', role: 'Presentations', short: 'Slides', opens: ['pptx', 'pptm', 'ppsx', 'potx', 'deckcraft', 'md', 'markdown'] },
 };
 const exe = (id) => `${id}-cli${U.isWin ? '.exe' : ''}`;
 const unpacking = new Map();
@@ -48,7 +53,7 @@ async function run(id, args, ctx, label, opts = {}) {
   let tick = 0.15;
   const t = setInterval(() => { tick = Math.min(0.92, tick + (0.95 - tick) * 0.06); ctx?.progress?.(tick, label); }, 400);
   try {
-    return await U.run(bin, args, { signal: ctx?.signal, cwd: opts.cwd || os.tmpdir(), okCodes: opts.okCodes, timeout: opts.timeout, errorMessage: `${APPS[id].name} couldn’t finish`, env: { NO_COLOR: '1' } });
+    return await U.run(bin, args, { signal: ctx?.signal, cwd: opts.cwd || os.tmpdir(), okCodes: opts.okCodes, timeout: opts.timeout, errorMessage: `${APPS[id].name} couldn’t finish`, env: { NO_COLOR: '1', ...opts.env } });
   } catch (e) {
     e.message = e.message.replace(/\(([\s\S]*)\)$/, (m, inner) => `(${quiet(inner)})`);
     throw e;
@@ -621,6 +626,226 @@ async function commentSummary(p, opts, ctx) {
   return { path: out, note: plural(n, 'comment') };
 }
 
+const cadCmd = (id, params = {}) => ['--cmd', `${id} ${JSON.stringify(params)}`];
+const cadResults = (stdout) => jsonLines(stdout).filter((j) => j && typeof j === 'object' && !Array.isArray(j));
+const DWG_VERSIONS = [2018, 2013, 2010, 2007, 2004, 2000];
+async function cadSaveAs(p, opts, ctx) {
+  const to = opts.to === 'dxf' ? 'dxf' : 'dwg', version = DWG_VERSIONS.includes(Number(opts.version)) ? Number(opts.version) : 2018;
+  const out = ctx.out.file(p, `${U.base(p)}${U.ext(p) === to ? `-${version}` : ''}.${to}`);
+  await run('cadcraft', ['run', p, ...cadCmd('saveas', { path: out, version })], ctx, `Saving ${to.toUpperCase()}`, { timeout: 180000 });
+  if (!fs.existsSync(out)) throw new Error('CADCraft finished without writing a file.');
+  return { path: out, note: `${to.toUpperCase()} for AutoCAD ${version} and later` };
+}
+async function cadClean(p, opts, ctx) {
+  const to = U.ext(p) === 'dxf' ? 'dxf' : 'dwg', out = ctx.out.file(p, `${U.base(p)}-clean.${to}`);
+  const r = await run('cadcraft', ['run', p, ...cadCmd('audit', { fix: true }), ...cadCmd('purge'), ...cadCmd('overkill'), ...cadCmd('saveas', { path: out })], ctx, 'Cleaning up', { timeout: 180000 });
+  if (!fs.existsSync(out)) throw new Error('CADCraft finished without writing a file.');
+  const [audit = {}, purge = {}, over = {}] = cadResults(r.stdout);
+  const unused = Object.values(purge).filter((v) => typeof v === 'number').reduce((n, v) => n + v, 0);
+  const bits = [audit.fixed && `fixed ${plural(audit.fixed, 'error')}`, unused && `removed ${unused} unused name${unused === 1 ? '' : 's'}`, (over.deleted || over.overlapping) && `deleted ${plural((over.deleted || 0) + (over.overlapping || 0), 'doubled object')}`].filter(Boolean);
+  return { path: out, note: bits.length ? `${bits.join(', ').replace(/^./, (c) => c.toUpperCase())}` : 'Nothing needed cleaning' };
+}
+async function cadSheets(p, opts, ctx) {
+  const dir = await U.tmpDir('cadsheets');
+  try {
+    const r = await run('cadcraft', ['run', p, ...cadCmd('publish', { path: path.join(dir, 'sheet.pdf') })], ctx, 'Printing sheets', { timeout: 300000 });
+    const sheets = (cadResults(r.stdout).find((j) => j.sheets)?.sheets || []).filter((x) => x.path && fs.existsSync(x.path));
+    if (!sheets.length) throw new Error('This drawing has no sheets to print.');
+    const out = ctx.out.file(p, `${U.base(p)} - sheets.pdf`);
+    await require('./pdf').merge(sheets.map((x) => x.path), out, ctx);
+    return { path: out, note: `${plural(sheets.length, 'sheet')}: ${sheets.map((x) => x.layout).join(', ')}` };
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+async function cadCompare([older, newer], opts, ctx) {
+  const r = await run('cadcraft', ['run', newer, ...cadCmd('compare', { path: older })], ctx, 'Comparing drawings', { timeout: 180000 });
+  const c = cadResults(r.stdout).find((j) => j.counts);
+  if (!c) throw new Error('CADCraft couldn’t compare these drawings.');
+  const n = c.counts, kinds = (list) => Object.entries(list.reduce((m, x) => ({ ...m, [x.type]: (m[x.type] || 0) + 1 }), {})).map(([k, v]) => `${v} ${k}`).join(', ');
+  const text = [`${path.basename(newer)} compared with ${path.basename(older)}`, `Added: ${n.added}${n.added ? ` (${kinds(c.added)})` : ''}`, `Removed: ${n.removed}${n.removed ? ` (${kinds(c.removed)})` : ''}`, `Changed: ${n.changed}${n.changed ? ` (${kinds(c.changed)})` : ''}`, `The same: ${n.common}`].join('\n');
+  return { note: n.added || n.removed || n.changed ? `${n.added} added, ${n.removed} removed, ${n.changed} changed` : 'The drawings are the same', text };
+}
+async function cadBlocks(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)} - blocks.csv`);
+  const r = await run('cadcraft', ['run', p, ...cadCmd('dataextraction', { file: out })], ctx, 'Counting blocks', { timeout: 180000 });
+  const d = cadResults(r.stdout).find((j) => j.rows);
+  if (!d?.rows?.length) { await fsp.rm(out, { force: true }); throw new Error('This drawing has no blocks.'); }
+  const total = d.rows.reduce((s, row) => s + (Number(row[0]) || 0), 0);
+  return { path: out, note: `${plural(total, 'block')} of ${plural(d.rows.length, 'kind')}` };
+}
+async function cadLayers(p, opts, ctx) {
+  const d = lastJson((await run('cadcraft', ['info', p], ctx, 'Reading', { timeout: 120000 })).stdout);
+  if (!d?.layers) throw new Error('CADCraft couldn’t read this drawing.');
+  const state = (l) => [!l.on && 'off', l.frozen && 'frozen', l.locked && 'locked'].filter(Boolean).join(', ');
+  const [[x0, y0], [x1, y1]] = d.extents || [[0, 0], [0, 0]], r2 = (v) => Math.round(v * 100) / 100;
+  const text = [`Size: ${r2(x1 - x0)} × ${r2(y1 - y0)}`, `Layers: ${d.layers.map((l) => `${l.name}${state(l) ? ` (${state(l)})` : ''}`).join(', ')}`, `Blocks: ${d.blocks?.length ? d.blocks.join(', ') : 'none'}`,
+    `Sheets: ${d.layouts?.length ? d.layouts.join(', ') : 'none'}`, `Objects: ${Object.entries(d.counts || {}).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}`, ...(d.skipped?.count ? [`Not kept by CADCraft: ${d.skipped.count}`] : [])].join('\n');
+  return { note: `${plural(d.layers.length, 'layer')}, ${plural(d.blocks?.length || 0, 'block')}, ${plural(d.entityCount || 0, 'object')}`, text };
+}
+
+const SOUND_IN = ['wav', 'aif', 'aiff', 'flac', 'mp3', 'ogg'];
+const LOSSLESS = { wav: 'wav', aif: 'aiff', aiff: 'aiff', flac: 'flac' };
+const soundExt = (p) => LOSSLESS[U.ext(p)] || (['mp3', 'm4a', 'ogg', 'opus'].includes(U.ext(p)) ? U.ext(p) : 'm4a');
+const soundCmd = (id, params) => ['--cmd', `${id}=${JSON.stringify(params)}`];
+async function soundSource(p, dir, ctx) {
+  if (SOUND_IN.includes(U.ext(p))) return p;
+  const wav = path.join(dir, `${U.base(p)}.wav`);
+  await require('./media').convertAudio(p, { to: 'wav', depth: '24' }, { ...ctx, progress: () => {}, out: { file: () => wav } });
+  return wav;
+}
+async function soundSession(sources, dir, ctx) {
+  const session = path.join(dir, 'mix.scraft');
+  const r = await run('soundcraft', ['run', ...sources.flatMap((src) => soundCmd('file.import_audio', { path: src })), '--save', session], ctx, 'Reading the sound', { timeout: 600000 });
+  const tracks = String(r.stdout).split(/\r?\n/).filter((l) => l.startsWith('file.import_audio:')).flatMap((l) => JSON.parse(l.slice(l.indexOf('{'))).imported || []).map((x) => x.track);
+  if (!fs.existsSync(session) || tracks.length < sources.length) throw new Error('SoundCraft couldn’t read this sound.');
+  return { session, tracks };
+}
+async function soundBounce({ session, tracks }, chain, out, ctx, label) {
+  const inserts = tracks.flatMap((track) => chain.flatMap(([plugin, params]) => soundCmd('mix.insert', { track, plugin, params })));
+  const r = await run('soundcraft', ['run', '--in', session, ...inserts, ...soundCmd('file.bounce_mix', { path: out, format: LOSSLESS[U.ext(out)] || 'wav', bit_depth: '24' })], ctx, label, { timeout: 600000 });
+  const line = String(r.stdout).split(/\r?\n/).reverse().find((l) => l.startsWith('file.bounce_mix:'));
+  const res = line ? JSON.parse(line.slice(line.indexOf('{'))) : null;
+  if (!res || !fs.existsSync(out)) throw new Error('SoundCraft finished without writing a file.');
+  return res;
+}
+async function soundWork(files, chain, suffix, ctx, label, { target } = {}) {
+  const p = files[0], dir = await U.tmpDir('sound');
+  try {
+    const sources = [];
+    for (const f of files) sources.push(await soundSource(f, dir, ctx));
+    const mix = await soundSession(sources, dir, ctx);
+    const to = soundExt(p), out = ctx.out.file(p, `${U.base(p)}${suffix}.${to}`), wav = LOSSLESS[to] ? out : path.join(dir, 'mix.wav');
+    let res = await soundBounce(mix, chain, wav, ctx, label), gain = 0;
+    for (let i = 0; target != null && i < 3 && Number.isFinite(res.lufs) && Math.abs(target - res.lufs) > 0.5; i++) {
+      gain = Math.max(-30, Math.min(30, gain + target - res.lufs));
+      res = await soundBounce(mix, [['gain', { gain: Math.round(gain * 10) / 10 }], ...chain], wav, ctx, label);
+    }
+    if (wav !== out) await require('./media').convertAudio(wav, { to, bitrate: '256k' }, { ...ctx, progress: () => {}, out: { file: () => out } });
+    return { path: out, note: `${Math.round(res.lufs * 10) / 10} LUFS, peaks at ${Math.round(res.true_peak_db * 10) / 10} dB` };
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+const MASTER = [['dc_offset_removal', {}], ['eq_7band', { hpf_on: 1, hpf_freq: 30 }], ['compressor', { ratio: 2, threshold: -18, attack: 30, release: 200, makeup: 2 }], ['maximizer', { threshold: -3, ceiling: -1, release: 80 }]];
+const masterAudio = (p, opts, ctx) => soundWork([p], MASTER, '-mastered', ctx, 'Mastering', { target: Number(opts.loudness) || -14 });
+const VOICE = [['eq_7band', { hpf_on: 1, hpf_freq: 80, high_mid_freq: 3500, high_mid_gain: 2 }], ['expander_gate', { threshold: -50, range: 15, ratio: 3 }], ['de_esser', { threshold: -28, freq: 6500 }], ['compressor', { ratio: 3, threshold: -22, attack: 10, release: 120, makeup: 4 }], ['maximizer', { threshold: -2, ceiling: -1 }]];
+const polishVoice = (p, opts, ctx) => soundWork([p], VOICE, '-voice', ctx, 'Polishing the voice', { target: -16 });
+const SPACES = { room: 'room_reverb', hall: 'plate_reverb' };
+const addReverb = (p, opts, ctx) => soundWork([p], [[SPACES[opts.space] || SPACES.room, { mix: Math.max(5, Math.min(60, Number(opts.amount) || 25)) }]], '-reverb', ctx, 'Adding reverb');
+const mixTracks = (files, opts, ctx) => soundWork(files, [], ' - mix', ctx, 'Mixing', { target: -14 });
+async function sessionBounce(p, opts, ctx) {
+  const stems = opts.what === 'stems';
+  if (stems) {
+    const dir = ctx.out.folder(p, `${U.base(p)} - stems`);
+    await run('soundcraft', ['run', '--in', p, ...soundCmd('file.bounce_stems', { dir, format: 'wav', bit_depth: '24' })], ctx, 'Bouncing stems', { timeout: 900000 });
+    const n = (await fsp.readdir(dir).catch(() => [])).filter((f) => /\.(wav|aiff|flac)$/i.test(f)).length;
+    if (!n) throw new Error('This session has no tracks to bounce.');
+    return { path: dir, note: plural(n, 'stem') };
+  }
+  const out = ctx.out.file(p, `${U.base(p)}.wav`);
+  await run('soundcraft', ['run', '--in', p, ...soundCmd('file.bounce_mix', { path: out, format: 'wav', bit_depth: '24' })], ctx, 'Bouncing the mix', { timeout: 900000 });
+  if (!fs.existsSync(out)) throw new Error('SoundCraft finished without writing a file.');
+  return out;
+}
+
+const WORD_SAVE = ['docx', 'odt', 'rtf'];
+const wordOut = (p) => (WORD_SAVE.includes(U.ext(p)) ? U.ext(p) : 'docx');
+const wordEnv = { WORDCRAFT_REGION: Intl.DateTimeFormat().resolvedOptions().locale || 'en-GB' };
+async function wordRun(args, ctx, label) { return run('wordcraft', args, ctx, label, { timeout: 300000, env: wordEnv }); }
+async function wordMarkup(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)} - with comments.pdf`);
+  await wordRun(['convert', p, out, '--markup'], ctx, 'Laying out comments and changes');
+  if (!fs.existsSync(out)) throw new Error('WordCraft finished without writing a file.');
+  return out;
+}
+async function wordContents(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-contents.${wordOut(p)}`);
+  await wordRun(['run', '--file', p, '--cmd', 'caret.docStart', '--cmd', `references.toc=${JSON.stringify({ title: opts.title || 'Contents', levels: Number(opts.levels) || 3 })}`, '--save', out], ctx, 'Adding the contents');
+  if (!fs.existsSync(out)) throw new Error('WordCraft finished without writing a file.');
+  return out;
+}
+async function wordPassword(p, opts, ctx) {
+  if (!opts.password) throw new Error('Type the password to lock the document with.');
+  const out = ctx.out.file(p, `${U.base(p)}-locked.docx`);
+  await wordRun(['run', '--file', p, '--cmd', `file.encrypt=${JSON.stringify({ password: String(opts.password) })}`, '--save', out], ctx, 'Locking');
+  if (!fs.existsSync(out)) throw new Error('WordCraft finished without writing a file.');
+  return out;
+}
+async function wordFields(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-updated.${wordOut(p)}`);
+  await wordRun(['convert', p, out, '--update-fields'], ctx, 'Updating fields');
+  if (!fs.existsSync(out)) throw new Error('WordCraft finished without writing a file.');
+  return out;
+}
+async function wordUpgrade(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}.docx`);
+  await wordRun(['convert', p, out], ctx, 'Saving as DOCX');
+  if (!fs.existsSync(out)) throw new Error('WordCraft finished without writing a file.');
+  return out;
+}
+async function wordPages(p, opts, ctx) {
+  const info = lastJson((await wordRun(['info', p], ctx, 'Reading')).stdout) || {};
+  const n = Math.max(1, Number(info.pages) || 1), dir = ctx.out.folder(p, `${U.base(p)} - pages`), w = String(n).length;
+  for (let i = 1; i <= n; i++) {
+    ctx.progress?.(i / (n + 1), `Page ${i} of ${n}`);
+    await wordRun(['render', p, path.join(dir, `page-${String(i).padStart(w, '0')}.png`), '--page', String(i), '--scale', String(Number(opts.scale) || 2)], { ...ctx, progress: () => {} }, 'Drawing pages');
+  }
+  return { path: dir, note: plural(n, 'page') };
+}
+
+const gridCmd = (id, params = {}) => ['--cmd', `${id}=${JSON.stringify(params)}`];
+async function gridRun(p, cmds, out, ctx, label) {
+  const r = await run('gridcraft', ['run', '--in', p, ...cmds, '--out', out], ctx, label, { timeout: 300000 });
+  if (!fs.existsSync(out)) throw new Error('GridCraft finished without writing a file.');
+  return jsonLines(r.stdout);
+}
+async function gridChart(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-chart.xlsx`), type = ['column', 'bar', 'line', 'pie', 'area', 'scatter'].includes(opts.type) ? { type: opts.type } : {};
+  await gridRun(p, [...gridCmd('insert.chart', type), ...gridCmd('chart.set', { title: opts.title || U.base(p), legend: 'bottom' })], out, ctx, 'Drawing the chart');
+  return out;
+}
+async function gridTable(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-table.xlsx`);
+  const res = await gridRun(p, gridCmd('home.formatAsTable', { style: opts.style || 'TableStyleMedium2', header: true }), out, ctx, 'Making a table');
+  const t = res.find((j) => j.command === 'home.formatAsTable')?.result;
+  return { path: out, note: t?.range ? `Table ${t.range}, with filter buttons` : 'Saved' };
+}
+async function gridRecalc(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}-recalculated.xlsx`);
+  const res = await gridRun(p, gridCmd('formulas.calculateNow'), out, ctx, 'Recalculating');
+  const n = res.find((j) => j.command === 'formulas.calculateNow')?.result?.cells;
+  return { path: out, note: n ? `${plural(n, 'formula')} recalculated` : 'No formulas to recalculate' };
+}
+async function gridCheck(p, opts, ctx) {
+  const r = await run('gridcraft', ['check', p, '--json', '--max-report', '20'], ctx, 'Checking calculations', { timeout: 300000, okCodes: [1] });
+  const f = lastJson(r.stdout)?.files?.[0];
+  if (!f?.opened) throw new Error(f?.error || 'GridCraft couldn’t open this workbook.');
+  const c = f.calc || {}, bad = c.mismatches || [];
+  const cell = (m) => `${m.sheet ? `${m.sheet}!` : ''}${m.cell || m.address || ''}: saved ${m.cached ?? m.expected ?? '?'}, now ${m.computed ?? m.actual ?? '?'}`;
+  const text = [`Formulas: ${c.formulaCells || 0}`, `Checked: ${c.checked || 0}`, `Match: ${c.matched || 0}`, `Differ: ${c.mismatched || 0}`, ...(c.staleCache ? ['The saved results are out of date: recalculate before sharing.'] : []), ...bad.slice(0, 20).map(cell)].join('\n');
+  return { note: !c.formulaCells ? 'No formulas' : c.mismatched ? `${plural(c.mismatched, 'formula')} out of ${c.checked} show an out-of-date result` : `All ${plural(c.checked, 'formula')} add up`, text };
+}
+
+const DECK_THEMES = ['DeckCraft', 'Harbor', 'Ember', 'Meadow', 'Nocturne', 'Paper', 'Coral Reef', 'Slate'];
+async function deckOutline(p, opts, ctx) {
+  const text = (await fsp.readFile(p, 'utf8')).replace(/^﻿/, '');
+  if (!text.trim()) throw new Error('This file is empty.');
+  const out = ctx.out.file(p, `${U.base(p)}.pptx`), theme = DECK_THEMES.includes(opts.theme) ? opts.theme : 'DeckCraft';
+  await run('deckcraft', ['run', '--cmd', `slide.fromOutline=${JSON.stringify({ text, markdown: true })}`, '--cmd', 'slide.delete={"index":0}', '--cmd', `design.theme=${JSON.stringify({ name: theme })}`, '--save', out], ctx, 'Making slides', { timeout: 300000 });
+  if (!fs.existsSync(out)) throw new Error('DeckCraft finished without writing a file.');
+  return out;
+}
+async function deckGif(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)}.gif`), seconds = Math.max(0.5, Math.min(60, Number(opts.seconds) || 3));
+  await run('deckcraft', ['run', '--in', p, '--export', out, '--export-params', JSON.stringify({ secondsPerSlide: seconds, width: opts.width || 'medium', loop: true })], ctx, 'Making the GIF', { timeout: 600000 });
+  if (!fs.existsSync(out)) throw new Error('DeckCraft finished without writing a file.');
+  return out;
+}
+async function deckGraphics(p, opts, ctx) {
+  const dir = ctx.out.folder(p, `${U.base(p)} - slide graphics`);
+  await run('deckcraft', ['render', p, '--all', '--transparent', '--scale', String(Number(opts.scale) || 2), dir], ctx, 'Drawing slides', { timeout: 600000 });
+  const n = (await fsp.readdir(dir).catch(() => [])).filter((f) => f.endsWith('.png')).length;
+  if (!n) throw new Error('DeckCraft finished without drawing any slides.');
+  return { path: dir, note: plural(n, 'slide') };
+}
+
 function installedApp(id) {
   const name = APPS[id]?.name;
   if (!name) return null;
@@ -630,8 +855,10 @@ function installedApp(id) {
     : U.isWin ? [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean).map((b) => path.join(b, name, `${id}.exe`)) : [`/usr/bin/${id}`, `/usr/local/bin/${id}`];
   return cands.find((c) => fs.existsSync(c)) || null;
 }
-const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 'vectorcraft', ai: 'vectorcraft', eps: 'vectorcraft', afdesign: 'vectorcraft', pdf: 'pdfcraft', idml: 'designcraft', indd: 'designcraft', ecproj: 'effectcraft', lottie: 'effectcraft', fcproj: 'filmcraft', otio: 'filmcraft', fcpxml: 'filmcraft' };
-const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'vectorcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft' };
+const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 'vectorcraft', ai: 'vectorcraft', eps: 'vectorcraft', afdesign: 'vectorcraft', pdf: 'pdfcraft', idml: 'designcraft', indd: 'designcraft', ecproj: 'effectcraft', lottie: 'effectcraft', fcproj: 'filmcraft', otio: 'filmcraft', fcpxml: 'filmcraft',
+  dwg: 'cadcraft', dxf: 'cadcraft', scraft: 'soundcraft', md: 'wordcraft', markdown: 'wordcraft', deckcraft: 'deckcraft' };
+const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'cadcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft',
+  audio: 'soundcraft', doc: 'wordcraft', sheet: 'gridcraft', slides: 'deckcraft' };
 let bundled = null;
 const bundledApps = () => { if (!bundled) { try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
 const appSource = (id) => path.join(U.cfg.apps, `${id}.app.tar.br`);
@@ -656,6 +883,17 @@ const settle = async (fn) => {
     try { return await fn(); } catch (e) { if (i >= 12 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise((r) => setTimeout(r, 250 * (i + 1))); }
   }
 };
+async function untar(src, dest) {
+  const tarExe = U.isWin ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : '/usr/bin/tar';
+  await new Promise((ok, no) => {
+    const tar = spawn(tarExe, ['-xf', '-', '-C', dest], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+    let err = '';
+    tar.stderr.on('data', (d) => { err += d; });
+    tar.on('error', (e) => no(e.code === 'ENOENT' ? new Error('tar.exe is missing: Windows 10 (1803) or later is needed') : e));
+    tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
+    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress(), tar.stdin).catch(no);
+  });
+}
 async function bundledApp(id) {
   const m = bundledApps()[id];
   if (!m || !fs.existsSync(appSource(id))) return null;
@@ -666,17 +904,7 @@ async function bundledApp(id) {
       // Each unpack has a folder of its own, so two at once (or a leftover from one that stopped) never collide.
       const part = `${dir}.part-${process.pid}-${Date.now()}`;
       await fsp.mkdir(part, { recursive: true });
-      const unbrotli = () => fs.createReadStream(appSource(id)).pipe(zlib.createBrotliDecompress());
-      // The app's folder (a .app on a Mac) comes out of a tar; Windows has had bsdtar since 2018.
-      const tarExe = U.isWin ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : '/usr/bin/tar';
-      await new Promise((ok, no) => {
-        const tar = spawn(tarExe, ['-xf', '-', '-C', part], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
-        let err = '';
-        tar.stderr.on('data', (d) => { err += d; });
-        tar.on('error', (e) => no(e.code === 'ENOENT' ? new Error('tar.exe is missing: Windows 10 (1803) or later is needed') : e));
-        tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-        pipeline(unbrotli(), tar.stdin).catch(no);
-      });
+      await untar(appSource(id), part);
       if (!U.isWin) await new Promise((r) => { const x = spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', part], { stdio: 'ignore' }); x.on('error', r); x.on('close', r); });
       if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
       await settle(() => fsp.rm(dir, { recursive: true, force: true }));
@@ -703,6 +931,30 @@ async function openApp(id, files = []) {
   if (why) throw new Error(`${APPS[id].name} didn’t start (${why}).`);
   return app;
 }
+const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true } };
+let webs = null;
+const webManifest = () => { if (!webs) { try { webs = JSON.parse(fs.readFileSync(path.join(U.cfg.web, 'manifest.json'), 'utf8')); } catch (_) { webs = {}; } } return webs; };
+const webSource = (id) => path.join(U.cfg.web || '', `${id}.tar.br`);
+const hasWeb = (id) => !!WEB[id] && !!webManifest()[id] && fs.existsSync(webSource(id));
+const unpackingWeb = new Map();
+async function webApp(id) {
+  if (!hasWeb(id)) return null;
+  const root = path.join(U.cfg.user, 'web'), dir = path.join(root, `${id}-${webManifest()[id].version}`), site = path.join(dir, 'site');
+  if (fs.existsSync(path.join(site, 'index.html'))) return site;
+  if (!unpackingWeb.has(id)) {
+    unpackingWeb.set(id, (async () => {
+      const part = `${dir}.part-${process.pid}-${Date.now()}`;
+      await fsp.mkdir(part, { recursive: true });
+      await untar(webSource(id), part);
+      if (fs.existsSync(path.join(site, 'index.html'))) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return site; }
+      await settle(() => fsp.rm(dir, { recursive: true, force: true }));
+      await settle(() => fsp.rename(part, dir));
+      for (const d of await fsp.readdir(root)) if (d.startsWith(`${id}-`) && d !== path.basename(dir)) fsp.rm(path.join(root, d), { recursive: true, force: true }).catch(() => {});
+      return site;
+    })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingWeb.delete(id)));
+  }
+  return unpackingWeb.get(id);
+}
 const versions = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg.crafts, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 async function getApp(id, progress) {
   const exe = await require('../helpers').get(id, path.join(U.cfg.user, 'apps'), progress, { version: versions()[id] });
@@ -711,11 +963,13 @@ async function getApp(id, progress) {
 }
 function status() {
   const manifest = versions(), apps = bundledApps();
-  return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
+  return Object.entries(APPS).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), web: hasWeb(id), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
 module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, getApp, bundledApp, status,
   autoTone, sharpenPhoto, denoisePhoto, liftShadows, paintPhoto, straightenScans, exportLayers, layerInfo, lookPhoto, smartBw, straightenPhoto, removeDust, hdrBatch,
   traceImage, outlineText, exportArtboards, logoPackage, vectorInfo, preflightLayout, packageLayout, layoutPdf, fixedEpub, bookletPdf, posterFrame, alphaRender, frameSequence, motionInfo,
   splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS,
-  headerFooterPdf, backgroundPdf, pdfProperties, pageLabels, exportFormData, importFormData };
+  headerFooterPdf, backgroundPdf, pdfProperties, pageLabels, exportFormData, importFormData, WEB, hasWeb, webApp, DECK_THEMES,
+  cadSaveAs, cadClean, cadSheets, cadCompare, cadBlocks, cadLayers, masterAudio, polishVoice, addReverb, mixTracks, sessionBounce, soundExt,
+  wordMarkup, wordContents, wordPassword, wordFields, wordUpgrade, wordPages, gridChart, gridTable, gridRecalc, gridCheck, deckOutline, deckGif, deckGraphics };

@@ -112,6 +112,10 @@ const photoExt = (o, files) => { const e = U.ext(files[0] || ''); return ['jpg',
 const lightExt = (o, files) => (['png', 'tif', 'tiff'].includes(U.ext(files[0] || '')) ? 'png' : 'jpg');
 const LIGHT_LOOK_CHOICES = craft().LIGHT_PRESETS.map((id) => [id, id.replace(/^lc\./, '').replace(/^bw-/, 'B&W ').replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()).replace('70s', '70s')]);
 const VIDEO_LOOK_CHOICES = craft().VIDEO_LOOKS.map((l) => [l, l]);
+const notMidi = (files) => !files.some((f) => ['mid', 'midi'].includes(U.ext(f)));
+const WORD_EDIT = [...WORD_IN, 'odt', 'rtf'], WORD_DOCS = [...WORD_EDIT, 'doc'];
+const wordExt = (o, files) => (['docx', 'odt', 'rtf'].includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'docx');
+const CSV_IN = ['csv', 'tsv'], GRID_IN = [...XLSX_IN, 'ods', 'xls', 'xlsb', ...CSV_IN], DECK_IN = ['pptx', 'deckcraft'];
 
 const TOOLS = [
   { id: 'edit-pdf', cat: 'pdf', name: 'Edit PDF', desc: 'Change text, add text, images, shapes and highlights.', accepts: ['pdf'], max: 1, editor: 'edit' },
@@ -636,6 +640,53 @@ const TOOLS = [
     run: each((f, o, c) => pdf().printerMarks(f, o, outFile('-marks', 'pdf')(f, c))) },
   { id: 'bookmark-headings', cat: 'pdf', name: 'Bookmarks from headings', desc: 'A bookmark for every heading, nested like a table of contents.', accepts: ['pdf'], suffix: '-bookmarked', ext: 'pdf',
     options: [toggle('replace', 'Replace the bookmarks it has', true), pdfPassword], run: each((f, o, c) => pdf().bookmarksFromHeadings(f, o, outFile('-bookmarked', 'pdf')(f, c))) },
+  { id: 'cad-dwg', cat: 'cad', name: 'Save as DWG', desc: 'A DWG that AutoCAD opens, with its layers, blocks and dimensions. Pick an older version for older CAD programs.', tags: 'autocad dwg dxf version', accepts: ['cad2d'], craft: 'cadcraft', prio: 8,
+    petals: [['DWG', 'AutoCAD', { version: '2018' }], ['DWG 2000', 'Older CAD', { version: '2000' }]], ext: 'dwg', outName: (files, o) => `${U.base(files[0])}${U.ext(files[0]) === 'dwg' ? `-${o.version || 2018}` : ''}.dwg`,
+    options: [select('version', 'For AutoCAD', [['2018', '2018 and later'], ['2013', '2013'], ['2010', '2010'], ['2007', '2007'], ['2004', '2004'], ['2000', '2000']], '2018')], run: each((f, o, c) => craft().cadSaveAs(f, { ...o, to: 'dwg' }, c)) },
+  { id: 'cad-clean', cat: 'cad', name: 'Clean up drawing', desc: 'Fixes errors, removes unused layers, blocks and styles, and deletes doubled lines.', tags: 'purge audit overkill', accepts: ['cad2d'], craft: 'cadcraft', prio: 10, petal: ['Clean up', 'Unused'],
+    ext: (o, files) => (U.ext(files[0] || '') === 'dxf' ? 'dxf' : 'dwg'), suffix: '-clean', run: each((f, o, c) => craft().cadClean(f, o, c)) },
+  { id: 'cad-sheets', cat: 'cad', name: 'Print sheets', desc: 'Every sheet of the drawing as a page of one PDF, at its own paper size.', tags: 'layouts plot publish paper space', accepts: ['cad2d'], craft: 'cadcraft', prio: 12, petal: ['Sheets', 'PDF'],
+    ext: 'pdf', outName: (files) => `${U.base(files[0])} - sheets.pdf`, run: each((f, o, c) => craft().cadSheets(f, o, c)) },
+  { id: 'cad-blocks', cat: 'cad', name: 'Count blocks', desc: 'How many of each block, like doors, windows and fittings, as a spreadsheet.', tags: 'data extraction quantities schedule', accepts: ['cad2d'], craft: 'cadcraft', prio: 14, petal: ['Blocks', 'Count'],
+    ext: 'csv', outName: (files) => `${U.base(files[0])} - blocks.csv`, run: each((f, o, c) => craft().cadBlocks(f, o, c)) },
+  { id: 'cad-layers', cat: 'cad', name: 'Layer list', desc: 'Every layer, and which are off, frozen or locked, with blocks, sheets and objects.', accepts: ['cad2d'], craft: 'cadcraft', prio: 16, petal: ['Layers', 'List'], save: 'none', run: each((f, o, c) => craft().cadLayers(f, o, c)) },
+  { id: 'cad-compare', cat: 'cad', name: 'Compare drawings', desc: 'What was added, removed or changed between two versions. Put the older one first.', accepts: ['cad2d'], min: 2, max: 2, ordered: true, craft: 'cadcraft', prio: 18, petal: ['Compare', '2 versions'], save: 'none',
+    run: async (files, o, c) => [await craft().cadCompare(files, o, c)] },
+
+  { id: 'master-audio', cat: 'media', name: 'Master', desc: 'Louder and polished, ready to publish: gentle EQ, compression and a limiter, to the loudness you pick.', tags: 'mastering loudness lufs limiter', accepts: ['audio'], ok: notMidi, craft: 'soundcraft', prio: 8, petal: ['Master', 'Loud & clear'],
+    ext: (o, files) => craft().soundExt(files[0] || ''), suffix: '-mastered', options: [select('loudness', 'Loudness', [['-14', 'Streaming (−14 LUFS)'], ['-16', 'Podcast (−16 LUFS)'], ['-9', 'Club (−9 LUFS)'], ['-23', 'Broadcast (−23 LUFS)']], '-14')], run: each((f, o, c) => craft().masterAudio(f, o, c)) },
+  { id: 'polish-voice', cat: 'media', name: 'Polish voice', desc: 'Clearer speech: no rumble, a quieter background between words, softer S sounds and an even level.', tags: 'podcast de-ess gate compressor', accepts: ['audio'], ok: notMidi, craft: 'soundcraft', prio: 10, petal: ['Voice', 'Podcast'],
+    ext: (o, files) => craft().soundExt(files[0] || ''), suffix: '-voice', run: each((f, o, c) => craft().polishVoice(f, o, c)) },
+  { id: 'add-reverb', cat: 'media', name: 'Add reverb', desc: 'The sound of a room or a hall, as if it were recorded there.', tags: 'echo space', accepts: ['audio'], ok: notMidi, craft: 'soundcraft', prio: 12, petal: ['Reverb', 'Room'],
+    ext: (o, files) => craft().soundExt(files[0] || ''), suffix: '-reverb', options: [choice('space', 'Space', [['room', 'Room'], ['hall', 'Hall']]), range('amount', 'Amount', 25, 5, 60, { unit: '%' })], run: each((f, o, c) => craft().addReverb(f, o, c)) },
+  { id: 'mix-tracks', cat: 'media', name: 'Mix together', desc: 'Several recordings played at once, as one track at streaming loudness.', accepts: ['audio'], ok: notMidi, min: 2, ordered: true, craft: 'soundcraft', prio: 14, petal: ['Mix', 'One track'],
+    ext: (o, files) => craft().soundExt(files[0] || ''), outName: (files) => `${U.base(files[0])} - mix.${craft().soundExt(files[0])}`, run: async (files, o, c) => [await craft().mixTracks(files, o, c)] },
+  { id: 'session-mix', cat: 'media', name: 'Export mix', desc: 'A SoundCraft session as one mixed WAV.', accepts: [], extAccept: ['scraft'], craft: 'soundcraft', prio: 16, petal: ['Mix', 'WAV'], ext: 'wav', suffix: '', run: each((f, o, c) => craft().sessionBounce(f, { what: 'mix' }, c)) },
+  { id: 'session-stems', cat: 'media', name: 'Export stems', desc: 'A WAV for every track of a SoundCraft session.', accepts: [], extAccept: ['scraft'], craft: 'soundcraft', prio: 18, petal: ['Stems', 'Each track'], save: 'folder', suffix: ' - stems', run: each((f, o, c) => craft().sessionBounce(f, { what: 'stems' }, c)) },
+
+  { id: 'doc-markup', cat: 'docs', name: 'PDF with comments', desc: 'A PDF that shows the comments in the margin and the tracked changes, as Word prints them.', tags: 'print markup review', accepts: [], extAccept: WORD_DOCS, craft: 'wordcraft', prio: 8, petal: ['Comments', 'In PDF'],
+    ext: 'pdf', outName: (files) => `${U.base(files[0])} - with comments.pdf`, run: each((f, o, c) => craft().wordMarkup(f, o, c)) },
+  { id: 'doc-contents', cat: 'docs', name: 'Add contents', desc: 'A table of contents at the start, made from the headings, with page numbers.', tags: 'toc table of contents', accepts: [], extAccept: WORD_EDIT, craft: 'wordcraft', prio: 10, petal: ['Contents', 'Page list'],
+    ext: wordExt, suffix: '-contents', options: [text('title', 'Title', 'Contents'), select('levels', 'Heading levels', [['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']], '3', { advanced: true })], run: each((f, o, c) => craft().wordContents(f, o, c)) },
+  { id: 'doc-password', cat: 'docs', name: 'Lock with password', desc: 'A Word file that asks for the password before it opens.', tags: 'encrypt protect', accepts: [], extAccept: WORD_DOCS, craft: 'wordcraft', prio: 12, petal: ['Password', 'Lock'],
+    ext: 'docx', suffix: '-locked', options: [password('password', 'Password', { required: true })], run: each((f, o, c) => craft().wordPassword(f, o, c)) },
+  { id: 'doc-fields', cat: 'docs', name: 'Update fields', desc: 'Brings the contents, page numbers, dates and cross-references up to date.', accepts: [], extAccept: WORD_EDIT, craft: 'wordcraft', prio: 14, petal: ['Fields', 'Update'],
+    ext: wordExt, suffix: '-updated', run: each((f, o, c) => craft().wordFields(f, o, c)) },
+  { id: 'doc-upgrade', cat: 'docs', name: 'Save as DOCX', desc: 'An old Word (.doc), RTF or OpenDocument file as a modern Word document.', accepts: [], extAccept: ['doc', 'rtf', 'odt'], craft: 'wordcraft', prio: 16, petal: ['DOCX', 'Modern Word'],
+    ext: 'docx', suffix: '', run: each((f, o, c) => craft().wordUpgrade(f, o, c)) },
+  { id: 'doc-pages', cat: 'docs', name: 'Page pictures', desc: 'Each page as a sharp picture, laid out as it prints.', accepts: [], extAccept: WORD_DOCS, craft: 'wordcraft', prio: 18, petal: ['Pages', 'PNG'], save: 'folder', suffix: ' - pages', run: each((f, o, c) => craft().wordPages(f, o, c)) },
+
+  { id: 'sheet-chart', cat: 'docs', name: 'Add a chart', desc: 'A chart of the table, in the kind that suits the data or one you choose.', tags: 'graph plot', accepts: [], extAccept: GRID_IN, craft: 'gridcraft', prio: 8, petal: ['Chart', 'From data'],
+    ext: 'xlsx', suffix: '-chart', options: [select('type', 'Chart', [['auto', 'Best fit'], ['column', 'Columns'], ['bar', 'Bars'], ['line', 'Line'], ['pie', 'Pie'], ['area', 'Area'], ['scatter', 'Scatter']], 'auto'), text('title', 'Title', '', { advanced: true })], run: each((f, o, c) => craft().gridChart(f, o, c)) },
+  { id: 'sheet-table', cat: 'docs', name: 'Make a table', desc: 'Banded rows, a header row and filter buttons, like Format as Table in Excel.', tags: 'format filter', accepts: [], extAccept: GRID_IN, craft: 'gridcraft', prio: 10, petal: ['Table', 'Filters'], ext: 'xlsx', suffix: '-table', run: each((f, o, c) => craft().gridTable(f, o, c)) },
+  { id: 'sheet-recalc', cat: 'docs', name: 'Recalculate', desc: 'Works out every formula again, so the saved results are current.', tags: 'formulas calculate', accepts: [], extAccept: GRID_IN.filter((e) => !CSV_IN.includes(e)), craft: 'gridcraft', prio: 12, petal: ['Recalculate', 'Formulas'], ext: 'xlsx', suffix: '-recalculated', run: each((f, o, c) => craft().gridRecalc(f, o, c)) },
+  { id: 'sheet-check', cat: 'docs', name: 'Check calculations', desc: 'Works out every formula again and lists any whose saved result is out of date.', tags: 'formulas audit', accepts: [], extAccept: GRID_IN.filter((e) => !CSV_IN.includes(e)), craft: 'gridcraft', prio: 14, petal: ['Check', 'Formulas'], save: 'none', run: each((f, o, c) => craft().gridCheck(f, o, c)) },
+
+  { id: 'make-slides', cat: 'docs', name: 'Make slides', desc: 'Slides from notes: each heading becomes a slide and the list under it its points.', tags: 'outline markdown presentation', accepts: [], extAccept: ['md', 'markdown', 'txt'], craft: 'deckcraft', prio: 8, petal: ['Slides', 'From notes'],
+    ext: 'pptx', suffix: '', options: [select('theme', 'Look', craft().DECK_THEMES.map((t) => [t, t]))], run: each((f, o, c) => craft().deckOutline(f, o, c)) },
+  { id: 'slides-gif', cat: 'docs', name: 'Slides to GIF', desc: 'An animated GIF that shows each slide in turn, for chats and web pages.', accepts: [], extAccept: DECK_IN, craft: 'deckcraft', prio: 10, petal: ['GIF', 'Animated'], ext: 'gif', suffix: '',
+    options: [range('seconds', 'Seconds per slide', 3, 1, 20, { unit: 's' }), choice('width', 'Size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], 'medium')], run: each((f, o, c) => craft().deckGif(f, o, c)) },
+  { id: 'slide-graphics', cat: 'docs', name: 'Slide graphics', desc: 'Each slide as a picture with a see-through background, for videos and overlays.', tags: 'transparent png', accepts: [], extAccept: DECK_IN, craft: 'deckcraft', prio: 12, petal: ['Graphics', 'See-through'], save: 'folder', suffix: ' - slide graphics', run: each((f, o, c) => craft().deckGraphics(f, o, c)) },
 ];
 function keepExt(f) { const e = U.ext(f || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'png'; }
 
@@ -689,7 +740,7 @@ const WHEELS = {
       W('replace-text', 'Replace', 'Find', {}, { ask: true }), W('clean-office', 'Clean', 'Personal info'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
   slides: {
-    convert: [W('convert-slides', 'PDF', 'Document', { to: 'pdf' }), W('convert-slides', 'PNG', 'Slides', { to: 'png' }), W('convert-slides', 'HTML', 'Web', { to: 'html' }), W('convert-slides', 'TXT', 'Text', { to: 'txt' }), W('convert-slides', 'MD', 'Outline', { to: 'md' }), W('convert-slides', 'PPTX', 'PowerPoint', { to: 'pptx' }), W('slide-notes', 'DOCX', 'Notes', { to: 'docx', include: 'both' })],
+    convert: [W('convert-slides', 'PDF', 'Document', { to: 'pdf' }), W('convert-slides', 'PNG', 'Slides', { to: 'png' }), W('convert-slides', 'HTML', 'Web', { to: 'html' }), W('convert-slides', 'TXT', 'Text', { to: 'txt' }), W('convert-slides', 'MD', 'Outline', { to: 'md' }), W('convert-slides', 'PPTX', 'PowerPoint', { to: 'pptx' }), W('slide-notes', 'DOCX', 'Notes', { to: 'docx', include: 'both' }), W('slides-gif', 'GIF', 'Animated')],
     tools: [W('slide-notes', 'Notes', 'Word', { to: 'docx', include: 'both' }), W('pick-slides', 'Slides', 'Pick', {}, { ask: true }), W('pick-slides', 'Hidden', 'Remove', { slides: 'all', dropHidden: true }), W('replace-text', 'Replace', 'Find', {}, { ask: true }),
       W('clean-office', 'Clean', 'Personal info'), W('office-media', 'Media', 'Extract'), W('compress-office', 'Compress', 'Pictures'), ZIP, HASH],
   },
@@ -698,8 +749,8 @@ const WHEELS = {
     tools: [W('edit-vector', 'Edit', 'VectorCraft'), ZIP, HASH],
   },
   cad2d: {
-    convert: [W('convert-cad', 'PDF', 'Sheet', { to: 'pdf' }), W('convert-cad', 'SVG', 'Vector', { to: 'svg' }), W('convert-cad', 'PNG', 'Image', { to: 'png' }), W('convert-cad', 'DXF', 'AutoCAD', { to: 'dxf' }), W('convert-cad', 'AI', 'Illustrator', { to: 'ai' }), W('convert-cad', 'EPS', 'Print', { to: 'eps' }), W('convert-cad', 'JPG', 'Photo', { to: 'jpg' })],
-    tools: [W('cad-info', 'Measure', 'Size'), W('convert-cad', 'Mono', 'Black PDF', { to: 'pdf', mono: true }), ZIP],
+    convert: [W('convert-cad', 'PDF', 'Sheet', { to: 'pdf' }), W('convert-cad', 'SVG', 'Vector', { to: 'svg' }), W('convert-cad', 'PNG', 'Image', { to: 'png' }), W('cad-dwg', 'DWG', 'AutoCAD', { version: '2018' }), W('convert-cad', 'DXF', 'Exchange', { to: 'dxf' }), W('convert-cad', 'AI', 'Illustrator', { to: 'ai' }), W('convert-cad', 'EPS', 'Print', { to: 'eps' }), W('convert-cad', 'JPG', 'Photo', { to: 'jpg' })],
+    tools: [W('cad-info', 'Measure', 'Size'), W('cad-clean', 'Clean up', 'Unused'), W('cad-sheets', 'Sheets', 'PDF'), W('cad-blocks', 'Blocks', 'Count'), W('convert-cad', 'Mono', 'Black PDF', { to: 'pdf', mono: true }), ZIP],
   },
   cad3d: {
     convert: [W('convert-model', 'STL', '3D print', { to: 'stl' }), W('convert-model', 'STEP', 'CAD', { to: 'step' }), W('convert-model', 'OBJ', 'Universal', { to: 'obj' }), W('convert-model', 'GLB', 'Web & AR', { to: 'glb' }), W('convert-model', '3MF', 'Print', { to: '3mf' }),
@@ -752,15 +803,16 @@ const MULTI = {
   image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('images-to-cbz', 'CBZ', 'Comic')],
   raw: [W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' })],
   cad3d: [W('merge-models', 'Merge', 'One model')],
+  cad2d: [W('cad-compare', 'Compare', 'Changes')],
   video: [W('merge-media', 'Merge', 'One video')],
-  audio: [W('merge-media', 'Merge', 'One track')],
+  audio: [W('merge-media', 'Merge', 'One track'), W('mix-tracks', 'Mix', 'Together')],
   sheet: [W('merge-sheets', 'Merge', 'One workbook')],
   doc: [W('compare-docs', 'Compare', 'Changes')],
   slides: [W('merge-slides', 'Merge', 'One deck')],
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
   media: [W('add-audio', 'Soundtrack', 'Replace', { mode: 'replace' }), W('add-audio', 'Mix', 'Add music', { mode: 'mix' }), W('merge-media', 'Merge', 'One video')],
 };
-const SINGLE_OUTPUT = new Set(['compare-docs', 'merge-slides', 'hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama', 'merge-models']);
+const SINGLE_OUTPUT = new Set(['mix-tracks', 'compare-docs', 'merge-slides', 'hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama', 'merge-models']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js' };

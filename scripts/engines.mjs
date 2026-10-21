@@ -14,8 +14,11 @@ const [PLAT, ARCH] = TARGET.split('-');
 const WIN = PLAT === 'win32';
 const V = path.join(ROOT, 'vendor');
 const CACHE = path.join(V, '.cache');
-const BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), HELPERS = path.join(V, 'helpers', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
-const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0' };
+const WEBS = path.join(V, 'web'), BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), HELPERS = path.join(V, 'helpers', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
+const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0', cadcraft: '0.10.0', soundcraft: '0.10.0', wordcraft: '0.9.0', gridcraft: '0.9.0', deckcraft: '0.9.0' };
+const REPO = { gridcraft: 'sheetcraft', deckcraft: 'slidecraft' };
+const release = (id, v) => `https://github.com/storytold/${REPO[id] || id}/releases/download/v${v}`;
+const WEB = ['cadcraft', 'gridcraft', 'wordcraft', 'soundcraft'];
 const FF = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1';
 const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
 const NOTO = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts';
@@ -104,7 +107,7 @@ async function crafts() {
     const exe = `${id}-cli${WIN ? '.exe' : ''}`, dest = path.join(CRAFTS, `${exe}.br`);
     manifest[id] = v;
     if (has(dest) || has(path.join(CRAFTS, exe))) return;
-    const rel = `https://github.com/storytold/${id}/releases/download/v${v}`;
+    const rel = release(id, v);
     let buf;
     if (PLAT === 'darwin') buf = thin(Buffer.from(unzipOne(await get(`${rel}/${id}-cli-${v}-macos-universal.zip`), new RegExp(`/${exe}$`))));
     else if (WIN) buf = Buffer.from(unzipOne(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`), new RegExp(`/${exe.replace('.', '\\.')}$`)));
@@ -153,7 +156,7 @@ async function apps() {
   for (const [id, v] of Object.entries(CRAFT)) {
     const dest = path.join(APPS, `${id}.app.tar.br`);
     if (has(dest) && manifest[id]?.version === v) continue;
-    const rel = `https://github.com/storytold/${id}/releases/download/v${v}`;
+    const rel = release(id, v);
     const tmp = path.join(CACHE, `${id}-app`);
     fs.rmSync(tmp, { recursive: true, force: true });
     let app;
@@ -169,6 +172,28 @@ async function apps() {
     fs.rmSync(tmp, { recursive: true, force: true });
     manifest[id] = { version: v, file: WIN ? `${id}/${id}.exe` : path.basename(app) };
     console.log('▣', manifest[id].file, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
+    fs.writeFileSync(file, JSON.stringify(manifest));
+  }
+}
+
+async function webs() {
+  mk(WEBS);
+  const file = path.join(WEBS, 'manifest.json');
+  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  for (const id of WEB) {
+    const v = CRAFT[id], dest = path.join(WEBS, `${id}.tar.br`);
+    if (has(dest) && manifest[id]?.version === v) continue;
+    const zip = unzipSync(fs.readFileSync(await get(`${release(id, v)}/${id}-web-${v}.zip`)), { filter: (f) => !f.name.endsWith('/') });
+    const tmp = path.join(CACHE, `${id}-web`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    for (const [name, buf] of Object.entries(zip)) { const out = path.join(tmp, 'site', ...name.split('/').slice(1)); mk(path.dirname(out)); fs.writeFileSync(out, buf); }
+    const tar = path.join(CACHE, `${id}-web.tar`);
+    sh(TAR, ['-cf', tar, '-C', tmp, 'site']);
+    await brotli(fs.readFileSync(tar), dest, 9);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tar, { force: true });
+    manifest[id] = { version: v };
+    console.log('◎', `${id} web`, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   }
 }
@@ -221,6 +246,7 @@ const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
 if (!only || only === 'apps') await apps();
+if (!only || only === 'web') await webs();
 if (!only || only === 'helpers') await helpers();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);

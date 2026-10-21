@@ -37,6 +37,8 @@ Bundled engines
 
 ArtCraft engines (unmodified command-line builds from github.com/storytold)
   PhotoCraft 0.10.0, VectorCraft 0.13.1, FilmCraft 0.9.0, LightCraft 0.9.1, PdfCraft 0.9.0, EffectCraft 0.11.1, DesignCraft 0.9.0
+  CADCraft 0.10.0, SoundCraft 0.10.0, WordCraft 0.9.0, GridCraft 0.9.0 (storytold/sheetcraft), DeckCraft 0.9.0 (storytold/slidecraft),
+  and the unmodified web (WebAssembly) builds of CADCraft, GridCraft, WordCraft and SoundCraft from the same releases
   © ArtCraft Team and contributors, MIT OR Apache-2.0. ArtCraft names and logos are trademarks of their owners.
   Lime is not affiliated with ArtCraft.
   The wheel's slice hysteresis, one-slice-per-notch scrolling, time-based easing, ranked search and middle-shortened
