@@ -126,7 +126,16 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
     page.toStructuredText('preserve-whitespace').walk({ onChar: (c, origin) => chars.push([c, origin[0]]) });
     return { out, text: page.toStructuredText('').asText().trim(), chars, png: Buffer.from(page.toPixmap(m.Matrix.scale(3, 3), m.ColorSpace.DeviceRGB, false, true).asPNG()) };
   };
-  const pango = (fam, file, text, extra = '') => sharp({ text: { text: `<span font="${fam} 28" foreground="black"${extra}>${text}</span>`, fontfile: path.join(FONTS, file), dpi: 216, rgba: true } }).flatten({ background: '#ffffff' }).png().toBuffer();
+  const solo = (fam, file) => {
+    const alt = `Zq${fam.slice(2)}`, to = path.join(OUT, `ref-${file}`);
+    if (!fs.existsSync(to)) {
+      let b = fs.readFileSync(path.join(FONTS, file)).toString('latin1');
+      for (const [a, z] of [[fam, alt], [fam.replace(/ /g, ''), alt.replace(/ /g, '')]]) b = b.split(a).join(z).split([...a].map((c) => `\0${c}`).join('')).join([...z].map((c) => `\0${c}`).join(''));
+      fs.writeFileSync(to, Buffer.from(b, 'latin1'));
+    }
+    return [alt, to];
+  };
+  const pango = (fam, file, text, extra = '') => { const [alt, f] = solo(fam, file); return sharp({ text: { text: `<span font="${alt} 28" foreground="black"${extra}>${text}</span>`, fontfile: f, dpi: 216, rgba: true } }).flatten({ background: '#ffffff' }).png().toBuffer(); };
   const ink = async (png) => {
     const { data, info } = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
     let x0 = info.width, y0 = info.height, x1 = -1, y1 = -1;
