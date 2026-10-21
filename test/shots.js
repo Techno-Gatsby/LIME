@@ -247,6 +247,71 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await settle();
         await shot('47-imgedit-dark', e);
         await ejs('window.lime.invoke("settings:set", { theme: "system" })');
+        await ejs('document.querySelectorAll(".props details.sec").forEach((d) => { d.open = !["Light", "Colour", "Presence"].includes(d.querySelector("summary").textContent.replace("Reset", "")); }); document.querySelector(".props").scrollTop = 520');
+        await sleep(500);
+        await shot('48-imgedit-panels', e);
+        await tool('resize');
+        await ejs('document.querySelector(\'.props [data-q="5"]\').click()');
+        await settle();
+        await shot('49-imgedit-resize', e);
+        await ejs('document.querySelector(\'[data-a="history"]\').click()');
+        await sleep(300);
+        await shot('50-imgedit-history', e);
+        await ejs('document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))');
+        await ejs('document.querySelector(\'[data-a="compare"]\').dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }))');
+        await settle();
+        await shot('51-imgedit-before', e);
+        await ejs('document.querySelector(\'[data-a="compare"]\').dispatchEvent(new PointerEvent("pointerup", { bubbles: true }))');
+        await tool('crop');
+        await settle();
+        await shot('52-imgedit-crop-again', e);
+        await tool('text');
+        await ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(); m.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + b.width * 0.1, clientY: b.top + b.height * 0.8 })); })()`);
+        await sleep(300);
+        await ejs(`(() => { const el = document.querySelector('.tedit'); el.textContent = 'Typing here'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+        await sleep(300);
+        await shot('53-imgedit-typing', e);
+        await ejs('document.querySelector(\'[data-a="saveas"]\').click()');
+        await sleep(400);
+        await shot('54-imgedit-saveas', e);
+        e.destroy();
+      }
+    }
+    if (want('imgedit2')) {
+      // Retouching and a cut-out, on the faces sample.
+      openEditor(path.join(samples, 'faces.png'), 'image');
+      let e = null;
+      for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === 'image' && !x.webContents.isLoading()); }
+      const ejs = (code) => e.webContents.executeJavaScript(code, true);
+      const settle = async () => { for (let t = 0; t < 400; t++) { if (await ejs('(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()')) break; await sleep(150); } await sleep(400); };
+      const tool = (t) => ejs(`document.querySelector('[data-tool="${t}"]').click()`);
+      const press = (fx_, fy, to) => ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(), p = (x, y) => ({ bubbles: true, button: 0, clientX: b.left + b.width * x, clientY: b.top + b.height * y }); m.dispatchEvent(new PointerEvent('pointerdown', p(${fx_}, ${fy}))); ${to ? `window.dispatchEvent(new PointerEvent('pointermove', p(${to[0]}, ${to[1]})));` : ''} window.dispatchEvent(new PointerEvent('pointerup', p(${(to || [fx_])[0]}, ${(to || [0, fy])[1]}))); })()`);
+      if (e) {
+        await settle();
+        await tool('redeye');
+        await press(0.355, 0.24);
+        await press(0.18, 0.24);
+        await settle();
+        await shot('60-imgedit-redeye', e);
+        await tool('heal');
+        await press(0.2, 0.33, [0.24, 0.36]);
+        await settle();
+        await ejs('document.querySelector(".imged .marks").dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: document.querySelector(".imged .marks").getBoundingClientRect().left + 300, clientY: document.querySelector(".imged .marks").getBoundingClientRect().top + 120 }))');
+        await shot('61-imgedit-heal-spot', e);
+        await tool('crop');
+        await ejs('document.querySelector(\'.props [data-o="right"]\').click()');
+        await tool('heal');
+        await settle();
+        await shot('62-imgedit-turned-spot', e);
+        await tool('enhance');
+        await ejs('document.querySelector(\'.props [data-e="removeBg"]\').click()');
+        await sleep(1000);
+        await shot('63-imgedit-working', e);
+        await settle();
+        await shot('64-imgedit-cutout', e);
+        await ejs('document.querySelector(".zoom").value = "1"; document.querySelector(".zoom").dispatchEvent(new Event("change"))');
+        await settle();
+        await shot('65-imgedit-100', e);
         e.destroy();
       }
     }

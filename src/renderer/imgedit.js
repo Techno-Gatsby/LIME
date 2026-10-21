@@ -47,10 +47,13 @@ const PANELS = [
   ['Presence', [S('effects.texture', 'Texture'), S('effects.clarity', 'Clarity'), S('effects.dehaze', 'Dehaze')]],
   ['Curve', [S('curve.highlights', 'Highlights'), S('curve.lights', 'Lights'), S('curve.darks', 'Darks'), S('curve.shadows', 'Shadows')]],
   ['Colour mixer', []],
+  ['Colour grading', []],
   ['Detail', [S('detail.sharpen_amount', 'Sharpening', 0, 150), S('detail.sharpen_radius', 'Radius', 0.5, 3, 0.1, { fmt: (v) => Number(v).toFixed(1) }), S('detail.nr_luminance', 'Noise', 0, 100), S('detail.nr_color', 'Colour noise', 0, 100)]],
   ['Effects', [S('vignette.amount', 'Vignette'), S('vignette.midpoint', 'Midpoint', 0, 100), S('vignette.feather', 'Feather', 0, 100), S('grain.amount', 'Grain', 0, 100), S('grain.size', 'Grain size', 0, 100), S('grain.roughness', 'Roughness', 0, 100)]],
+  ['Optics', [S('optics.distortion', 'Distortion'), S('optics.vignetting', 'Vignetting')]],
 ];
-const DEFAULTS = { 'detail.sharpen_radius': 1, 'detail.nr_detail': 50, 'vignette.midpoint': 50, 'vignette.feather': 50, 'grain.size': 25, 'grain.roughness': 50 };
+const DEFAULTS = { 'detail.sharpen_radius': 1, 'detail.nr_detail': 50, 'vignette.midpoint': 50, 'vignette.feather': 50, 'grain.size': 25, 'grain.roughness': 50, 'grading.blending': 50, 'profile.amount': 100 };
+const RAINBOW = 'linear-gradient(90deg,#e8453c,#f2d230,#4cb84c,#2ec4c4,#3d7be8,#d64fc0,#e8453c)';
 
 const ENHANCE = [
   ['LightCraft', [['auto', 'develop', 'sparkle', 'Auto settings', 'Sets light and colour for this photo; the sliders show what it did.'], ['bw', 'develop', 'looks', 'Smart B&W', 'Black and white mixed from the photo’s own colours.'],
@@ -1019,7 +1022,7 @@ export function openEditor(view, { file }, ctx) {
   function adjustPanel() {
     const bw = st.dev.treatment === 'bw';
     props.append(h('<canvas class="hist" aria-label="Histogram"></canvas>'), h('<div class="histinfo"></div>'));
-    const top = h(`<div class="row nowrap"><button class="btn" data-x="auto" title="LightCraft sets light and colour for this photo">${icon('sparkle', 'sm')}Auto</button><div class="seg" role="group"><button data-x="color" aria-pressed="${!bw}">Colour</button><button data-x="bw" aria-pressed="${bw}">B&amp;W</button></div><button class="btn subtle fixed" data-x="resetall" title="Back to the original image: undo can bring the edits back">Reset all</button></div>`);
+    const top = h(`<div class="row nowrap"><button class="btn" data-x="auto" title="LightCraft sets light and colour for this photo">${icon('sparkle', 'sm')}Auto</button><div class="seg" role="group"><button data-x="color" aria-pressed="${!bw}">Colour</button><button data-x="bw" aria-pressed="${bw}">B&amp;W</button></div><button class="btn subtle fixed" data-x="resetall" title="Back to the original image (Undo brings the edits back)">Reset</button></div>`);
     top.addEventListener('click', (e) => {
       const x = e.target.closest('[data-x]')?.dataset.x;
       if (x === 'auto') runDevelop('auto', {}, 'Auto');
@@ -1027,12 +1030,45 @@ export function openEditor(view, { file }, ctx) {
       if (x === 'resetall') resetAll();
     });
     props.append(top);
+    props.append(profileRow());
     for (const [title, defs] of PANELS) {
       if (title === 'Colour mixer') { props.append(mixerSection(bw)); continue; }
+      if (title === 'Colour grading') { props.append(gradingSection()); continue; }
       const rows = defs.filter((d) => !(bw && ['color.vibrance', 'color.saturation'].includes(d.key))).map((d) => slider(d));
       if (title === 'Curve') rows.push(curveWidget());
-      props.append(section(title, rows, { open: ['Light', 'Colour', 'Presence'].includes(title), reset: () => { resetKeys(defs.map((d) => d.key)); if (title === 'Curve') st.dev.curve.master = []; } }));
+      if (title === 'Optics') rows.unshift(toggle('optics.lens_profile', 'Lens profile corrections'), toggle('optics.remove_ca', 'Remove chromatic aberration'));
+      props.append(section(title, rows, { open: ['Light', 'Colour', 'Presence'].includes(title), reset: () => { resetKeys(defs.map((d) => d.key)); if (title === 'Curve') st.dev.curve.master = []; if (title === 'Optics') Object.assign(st.dev.optics, { lens_profile: false, remove_ca: false }); } }));
     }
+  }
+  // LightCraft's profiles, as Lightroom's: the starting look, with an amount for the creative ones.
+  function profileRow() {
+    const box = h('<div class="field"></div>'), p = st.dev.profile || { id: 'lc.color', amount: 100 };
+    const groups = [...new Set((st.profiles || []).map((x) => x.group))];
+    const sel = h(`<select class="input" aria-label="Profile">${st.profiles ? groups.map((g) => `<optgroup label="${esc(g)}">${st.profiles.filter((x) => x.group === g).map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('') : `<option value="${esc(p.id)}">${esc(p.id === 'lc.color' ? 'Color' : p.id)}</option>`}</select>`);
+    sel.value = p.id;
+    sel.addEventListener('change', () => { st.dev.profile = { ...p, id: sel.value, amount: 100 }; commit('Profile'); renderProps(); refresh(); });
+    const row = h('<div class="sl"><label>Profile</label></div>');
+    row.append(sel);
+    sel.style.gridColumn = 'span 2';
+    box.append(row);
+    if (p.id !== 'lc.color') box.append(slider(S('profile.amount', 'Amount', 0, 200, 1, { mid: false, fmt: (v) => `${Math.round(v)}%` })));
+    if (!st.profiles) call('profiles').then((list) => { st.profiles = list; if (st.tool === 'adjust') renderProps(); }).catch(() => { st.profiles = []; });
+    return box;
+  }
+  function toggle(key, label) {
+    const el = h(`<label class="switch"><span class="text-sm">${esc(label)}</span><input type="checkbox"${getPath(st.dev, key) ? ' checked' : ''}></label>`);
+    $('input', el).addEventListener('change', (e) => { setPath(st.dev, key, e.target.checked); commit(label); refresh(); });
+    return el;
+  }
+  function gradingSection() {
+    const rows = [];
+    for (const [k, label] of [['shadows', 'Shadows'], ['midtones', 'Midtones'], ['highlights', 'Highlights']]) {
+      rows.push(h(`<div class="label">${label}</div>`));
+      const hue = Number(getPath(st.dev, `grading.${k}.hue`) || 0), col = `hsl(${hue},75%,55%)`;
+      rows.push(slider({ ...S(`grading.${k}.hue`, 'Hue', 0, 360), mid: false, track: RAINBOW, fmt: (v) => `${Math.round(v)}°` }), slider({ ...S(`grading.${k}.sat`, 'Saturation', 0, 100), track: `linear-gradient(90deg,#9a9a9a,${col})` }));
+    }
+    rows.push(slider(S('grading.blending', 'Blending', 0, 100)), slider(S('grading.balance', 'Balance')));
+    return section('Colour grading', rows, { open: false, reset: () => resetKeys(['shadows', 'midtones', 'highlights'].flatMap((k) => [`grading.${k}.hue`, `grading.${k}.sat`]).concat(['grading.blending', 'grading.balance'])) });
   }
   function mixerSection(bw) {
     if (bw) return section('B&W mix', HUES.map(([k, c]) => slider({ ...S(`bw_mix.${k}`, k[0].toUpperCase() + k.slice(1)), track: `linear-gradient(90deg,#222,${c},#eee)` })), { open: false, reset: () => resetKeys(HUES.map(([k]) => `bw_mix.${k}`)) });
@@ -1231,9 +1267,10 @@ export function openEditor(view, { file }, ctx) {
     const canvasRows = [];
     const cdims = h(`<div class="dims"><div class="field"><label class="label">Width</label><input class="input" type="number" min="1" data-c="w" value="${c ? c.w : rw}"></div><span></span><div class="field"><label class="label">Height</label><input class="input" type="number" min="1" data-c="h" value="${c ? c.h : rh}"></div></div>`);
     const anchor = (c?.anchor || [0.5, 0.5]).join(',');
-    const grid = h(`<div class="row" style="align-items:flex-start;gap:14px"><div><div class="label" style="margin-bottom:5px">Anchor</div><div class="anchor">${[0, 0.5, 1].flatMap((y) => [0, 0.5, 1].map((x) => `<button data-an="${x},${y}" aria-pressed="${anchor === `${x},${y}`}" title="Anchor"></button>`)).join('')}</div></div><div style="flex:1;display:grid;gap:5px"><div class="label">Colour</div></div></div>`);
+    const grid = h(`<div class="field"><div class="label">Anchor</div><div class="anchor">${[0, 0.5, 1].flatMap((y) => [0, 0.5, 1].map((x) => `<button data-an="${x},${y}" aria-pressed="${anchor === `${x},${y}`}" title="Keep the picture ${y === 0 ? 'at the top' : y === 1 ? 'at the bottom' : 'in the middle'}${x === 0 ? ', left' : x === 1 ? ', right' : ''}"></button>`)).join('')}</div></div>`);
     const setCanvas = (patch) => { const cur = st.output.canvas || { w: rw, h: rh, anchor: [0.5, 0.5], color: '#ffffff' }; st.output.canvas = { ...cur, ...patch }; if (st.output.canvas.w === rw && st.output.canvas.h === rh && patch.w != null) st.output.canvas = null; commit('Canvas'); layout(); renderProps(); };
-    $('div[style*="flex:1"]', grid).append(swatch(['#ffffff', '#000000', '#808080', '#f3efe6'], c?.color || '#ffffff', (col) => setCanvas({ color: col }), ['transparent']));
+    const colour = h('<div class="field"><div class="label">Colour</div></div>');
+    colour.append(swatch(['#ffffff', '#000000', '#808080', '#f3efe6', '#d13438', '#0f6cbd'], c?.color || '#ffffff', (col) => setCanvas({ color: col }), ['transparent']));
     cdims.addEventListener('change', (e) => { const d = e.target.dataset.c; if (d) setCanvas({ [d]: Math.max(1, Number(e.target.value) || (d === 'w' ? rw : rh)) }); });
     grid.addEventListener('click', (e) => { const b = e.target.closest('[data-an]'); if (b) setCanvas({ anchor: b.dataset.an.split(',').map(Number) }); });
     const quick = h(`<div class="row"><button class="btn" data-q="5">Add 5%</button><button class="btn" data-q="sq">Square</button><button class="btn" data-q="none">None</button></div>`);
@@ -1243,7 +1280,7 @@ export function openEditor(view, { file }, ctx) {
       if (q === 'sq') { const m = Math.max(rw, rh); setCanvas({ w: m, h: m }); }
       if (q === 'none') { st.output.canvas = null; commit('Canvas'); layout(); renderProps(); }
     });
-    canvasRows.push(cdims, grid, quick);
+    canvasRows.push(cdims, grid, colour, quick);
     props.append(section('Canvas', canvasRows, { open: !!c }));
     props.append(h(`<p class="tip"><b>Saves at ${fw} × ${fh} px.</b></p>`));
   }

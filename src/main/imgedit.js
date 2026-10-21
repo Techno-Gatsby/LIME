@@ -165,7 +165,7 @@ async function preview(id, state, opts = {}) {
       await render(s, size <= PROXY && b.maskProxy ? b.maskProxy : b.mask, am, geometryOnly(opts.mode === 'frame' ? settingsFor(state.dev, 'frame') : state.dev), ['--size', String(size), '--opt', 'metadata=none']);
       const m = await sharp()(out).metadata();
       const alpha = await sharp()(am).resize(m.width, m.height, { fit: 'fill' }).extractChannel(0).toBuffer();
-      const data = await sharp()(out).removeAlpha().joinChannel(alpha).png({ compressionLevel: 1 }).toBuffer();
+      const data = await sharp()(out).joinChannel(alpha).png({ compressionLevel: 1 }).toBuffer();
       return { data, type: 'image/png', w: m.width, h: m.height };
     } finally { fsp.rm(am, { force: true }).catch(() => {}); }
   } finally { fsp.rm(out, { force: true }).catch(() => {}); }
@@ -178,6 +178,12 @@ async function looks() {
     lookList = (jsonLines(r.stdout)[0]?.result || []).filter((p) => p.builtin).map(({ id, name, group }) => ({ id, name, group }));
   }
   return lookList;
+}
+// LightCraft's profiles: Color is the plain rendering, the rest are creative starting points.
+let profileList = null;
+async function profiles() {
+  if (!profileList) profileList = (jsonLines((await lightcraft(['run', 'profiles.list'])).stdout)[0]?.result || []).map(({ id, name, group }) => ({ id, name, group }));
+  return profileList;
 }
 // A small rendering of one LightCraft look on the image, for the Looks panel.
 async function lookThumb(id, preset, size = 112) {
@@ -231,7 +237,7 @@ async function pixels(s, state) {
   }
   if (b.mask) {
     const out = path.join(s.dir, `rgba-${++s.n}.png`), m = await sharp()(file).metadata();
-    await sharp()(file).removeAlpha().joinChannel(await sharp()(b.mask).resize(m.width, m.height, { fit: 'fill' }).extractChannel(0).toBuffer()).png().toFile(out);
+    await sharp()(file).joinChannel(await sharp()(b.mask).resize(m.width, m.height, { fit: 'fill' }).extractChannel(0).toBuffer()).png().toFile(out);
     file = out;
   }
   return { file, baked: false };
@@ -353,4 +359,4 @@ function close(id) {
   return true;
 }
 
-module.exports = { open, preview, looks, lookThumb, develop, step, save, close };
+module.exports = { open, preview, looks, profiles, lookThumb, develop, step, save, close };
