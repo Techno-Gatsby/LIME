@@ -2215,6 +2215,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
     if (!text.includes('APPROVED') || !(s.pages[0].w > s.pages[0].h) || !list.some((a) => a.type === 'Text')) throw new Error(`saved ${s.pages[0].w}×${s.pages[0].h}, note ${list.length}: ${text.slice(0, 60)}`);
     return `${want.length - 1} steps named, went back to step 1 (page upright, later steps dimmed) and forward to the last; stamp, turn and note saved`;
   });
+  await require('./editor-fields.ui')(editorTest);
 
   await check('editors · remember the last tool, and a file dropped on the window opens in it', async () => {
     const opened = async (file, mode, ready) => {

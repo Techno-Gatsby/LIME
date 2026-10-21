@@ -225,13 +225,16 @@ export function openEditor(view, { file, mode }, ctx) {
     zoomMenu();
     st.pending.forEach(positionObj);
     const decorate = () => {
+      decorT = null;
       if (st.tool === 'edittext') st.pages.forEach((p, i) => p.visible && showLines(i));
       if (st.tool === 'select') st.pages.forEach((p, i) => p.visible && showObjects(i));
       st.pages.forEach((p, i) => p.visible && drawMarks(i));
       drawHits();
     };
+    // Lines to click follow the zoom at once. A redraw already on its way is not put off again: refits that
+    // keep coming (a fit that toggles the scroll bar, say) would otherwise postpone it for ever.
+    if (quick) { pagesEl.querySelectorAll('.pobj, .pmark').forEach((x) => x.remove()); placeLines(); decorT ??= setTimeout(decorate, 160); return; }
     clearTimeout(decorT);
-    if (quick) { pagesEl.querySelectorAll('.tline:not(.mask), .pobj, .pmark').forEach((x) => x.remove()); decorT = setTimeout(decorate, 160); return; }
     decorate();
   }
   async function renderPage(p, i) {
@@ -457,9 +460,16 @@ export function openEditor(view, { file, mode }, ctx) {
     for (const l of items) {
       if (paras ? l.lineIds.some((x) => taken.has(x)) : !l.editable || taken.has(l.id)) continue;
       const [x0, y0, x1, y1] = l.bbox;
-      const el = h(`<div class="tline${paras ? ' para' : ''}" style="left:${x0 * kk}px;top:${y0 * kk}px;width:${(x1 - x0) * kk}px;height:${(y1 - y0) * kk}px" title="Click to edit"></div>`);
+      const el = h(`<div class="tline${paras ? ' para' : ''}" data-box="${x0},${y0},${x1},${y1}" style="left:${x0 * kk}px;top:${y0 * kk}px;width:${(x1 - x0) * kk}px;height:${(y1 - y0) * kk}px" title="Click to edit"></div>`);
       el.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); if (paras) beginParaEdit(i, l, el); else beginLineEdit(i, l, el); });
       p.layer.append(el);
+    }
+  }
+  function placeLines() {
+    const kk = k();
+    for (const el of pagesEl.querySelectorAll('.tline[data-box]')) {
+      const [x0, y0, x1, y1] = el.dataset.box.split(',').map(Number);
+      Object.assign(el.style, { left: `${x0 * kk}px`, top: `${y0 * kk}px`, width: `${(x1 - x0) * kk}px`, height: `${(y1 - y0) * kk}px` });
     }
   }
   function hideLines() { pagesEl.querySelectorAll('.tline:not(.mask)').forEach((x) => x.remove()); }
