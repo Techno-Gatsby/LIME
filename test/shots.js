@@ -157,6 +157,17 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       await js('window.__lime.collapse()');
       await sleep(400);
     }
+    if (want('cad-options')) {
+      await js(`window.__lime.openWith(${JSON.stringify([path.join(samples, 'box.stl')])})`);
+      await sleep(600);
+      await shot('13a-cad3d-ring');
+      await js('window.__lime.showOptions(window.__lime.catalog["convert-model"], { to: "step", ascii: false, refine: true, units: "in", centre: "floor", scale: 100, repair: false, keep: 100 })');
+      await shot('13b-convert-model-options');
+      await js('window.__lime.showOptions(window.__lime.catalog["model-drawing"], { to: "pdf", views: "four", hidden: true, sheet: "a3", scale: "", angle: "first", title: "" })');
+      await shot('13c-drawing-options');
+      await js('window.__lime.collapse()');
+      await sleep(400);
+    }
     if (want('prefs')) {
       openPrefs();
       await sleep(2500);

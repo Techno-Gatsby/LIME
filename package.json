@@ -16,6 +16,7 @@
     "dist:win": "node scripts/dist-win.mjs"
   },
   "dependencies": {
+    "@bitbybit-dev/occt": "1.4.1",
     "@imgly/background-removal-node": "1.4.5",
     "@kenjiuno/msgreader": "1.29.0",
     "@mlightcad/libredwg-web": "0.8.1",

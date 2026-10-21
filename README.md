@@ -58,7 +58,7 @@ Lime asks where to save each result. To save next to the original instead, switc
 
 **Data and subtitles** — JSON, JSON Lines, YAML, TOML, XML, CSV and XLSX convert into each other; vCard contacts to and from spreadsheets. Subtitles (SRT, VTT, ASS, SAMI, LRC, TTML, MicroDVD, SCC) convert between formats.
 
-**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ (with MTL colours), PLY, GLB/glTF, 3MF and FBX (read only). Drawings convert to PDF, SVG, PNG, DXF, AI, EPS or EMF; 3D models convert between formats with real units and part colours, and to rendered images; plus measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
+**CAD** — DWG, DXF, STEP, IGES, BREP, STL, OBJ (with MTL colours), PLY, OFF, GLB/glTF, 3MF and FBX (read only). Drawings convert to PDF, SVG, PNG, DXF (AutoCAD 2000 with layers, colours, lineweights and exact arcs, or R12), AI, EPS or EMF. 3D models save as STEP, IGES and BREP (exact from STEP, IGES and BREP through Open CASCADE; meshes become faceted solids the way FreeCAD's “Shape from mesh” makes them), STL (binary or ASCII), OBJ, GLB/glTF, 3MF, PLY, OFF, AMF, VRML, X3D and Collada, in the units you pick, with part colours, centred or scaled, and as rendered images. Make drawing lays out front, top, side and 3D views with hidden lines, a standard scale and a title block on a PDF, SVG, DXF or PNG sheet, like FreeCAD's TechDraw; plus mesh repair, simplify, merge and measurements. Vector art (SVG, AI, EPS, PDF, EMF, Affinity) converts between formats.
 
 **Archives** — extract 40+ formats including RAR, 7Z and ISO, with checks against unsafe paths and archive bombs; create ZIP, 7Z, TAR, TAR.GZ, TAR.XZ or TAR.BZ2 with passwords; decompress single GZ/BZ2/XZ files; convert and test archives.
 
