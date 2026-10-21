@@ -1109,6 +1109,40 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     ed.win.destroy();
     return `preview ${v.w}×${v.h} H.264; saved ${path.basename(out)} ${info.video.width}×${info.video.height} ${info.video.codec}`;
   });
+  await check('edit video · FilmCraft finds the scenes', async () => {
+    const src = path.join(OUT, 'scenes.mp4');
+    fs.copyFileSync(fx('scenes.mp4'), src);
+    const ed = await mediaEditor(src), { ejs } = ed;
+    await ejs(`document.querySelector('[data-tool="scenes"]').click()`);
+    await sleep(150);
+    await ed.press('Find scenes');
+    if (!(await ed.wait('window.__media.E().segs.length >= 3', 60000))) throw new Error(`found ${await ejs('window.__media.E().segs.length')} parts`);
+    const cuts = await ejs('window.__media.E().segs.slice(1).map((g) => g.a.toFixed(2)).join(", ")');
+    ed.win.destroy();
+    return `split at ${cuts} s`;
+  });
+  await check('edit audio · remove silence, clean up, save MP3', async () => {
+    const src = path.join(OUT, 'talk.wav');
+    require('child_process').execFileSync(ffmpegBin, ['-v', 'error', '-y', '-f', 'lavfi', '-i', "aevalsrc='0.5*sin(2*PI*220*t)*gt(mod(t,3),1.5)+0.002*random(0)':s=44100:d=9", src]);
+    const ed = await mediaEditor(src), { ejs } = ed;
+    await ejs(`document.querySelector('[data-tool="clean"]').click()`);
+    await sleep(150);
+    await ejs(`document.querySelector('.props [data-v="light"]').click()`);
+    await ed.press('Remove silence');
+    if (!(await ed.wait('window.__media.E().segs.some((g) => g.off)', 30000))) throw new Error('no silence was cut');
+    const kept = await ejs('window.__media.outLen()');
+    await ejs(`document.querySelector('[data-a="saveas"]').click()`);
+    if (!(await ed.wait('!!document.querySelector(\'.scrim [data-f="mp3"]\')', 5000))) throw new Error('no format choice');
+    await ejs(`document.querySelector('.scrim [data-f="mp3"]').click(); document.querySelector('.scrim [data-a="ok"]').click()`);
+    if (!(await ed.wait('!!window.__media.st.savePath && /\\.mp3$/.test(window.__media.st.savePath) && !window.__media.st.busy', 60000))) throw new Error('Save as did not finish');
+    const out = await ejs('window.__media.st.savePath'), info = await probeMedia(out);
+    if (info.audio?.codec !== 'mp3' || Math.abs(info.duration - kept) > 0.15 || info.duration > 7) throw new Error(`saved ${info.audio?.codec}, ${info.duration} s (edit ${kept.toFixed(2)} s)`);
+    const prep = await ejs('window.__media.st.prep?.key');
+    if (prep !== 'light|0|0') throw new Error(`noise reduction not prepared (${prep})`);
+    const cut = await ejs('window.__media.E().segs.filter((g) => g.off).length');
+    ed.win.destroy();
+    return `9 s → ${info.duration.toFixed(2)} s with ${cut} pauses cut and noise reduced, ${path.relative(OUT, out)}`;
+  });
   await check('edit audio · trim, gain, fade, save', async () => {
     const src = path.join(OUT, 'toneedit.wav');
     fs.copyFileSync(fx('tone.wav'), src);
