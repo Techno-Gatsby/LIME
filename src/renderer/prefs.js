@@ -19,7 +19,8 @@ const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').repla
 async function render() {
   const eng = await api.invoke('engines:status').catch(() => ({ crafts: [] }));
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
-  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">Found</span>` : '<span class="tag">Not installed</span>'}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
+  const SIZE = { soffice: 350, pandoc: 40 };
+  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">Found</span>` : '<span class="tag">Not installed</span>'}${p ? '' : `<button class="btn primary" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key]} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
   <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">
@@ -76,6 +77,18 @@ app.addEventListener('click', async (e) => {
       note.style.color = 'var(--danger)';
     } finally { b.disabled = false; }
   }
+  if (a === 'get' || a === 'stop') {
+    const b = e.target.closest('[data-a]'), k = b.dataset.k, t = b.closest('.row').querySelector('.t');
+    if (a === 'stop') { b.disabled = true; api.invoke('helpers:cancel', k); return; }
+    b.dataset.a = 'stop'; b.textContent = 'Stop'; b.classList.remove('primary');
+    t.querySelector('.why')?.remove();
+    try { await api.invoke('helpers:get', k); render(); } catch (err) {
+      const why = String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      b.dataset.a = 'get'; b.textContent = 'Download…'; b.classList.add('primary'); b.disabled = false;
+      b.closest('.row').querySelector('.tag').textContent = 'Not installed';
+      if (why !== 'Stopped.') { const note = t.appendChild(Object.assign(document.createElement('small'), { className: 'why' })); note.textContent = `Couldn’t download ${b.dataset.what}: ${why}`; note.style.color = 'var(--danger)'; }
+    }
+  }
   if (a === 'locate') {
     const el = e.target.closest('[data-a]');
     const [f] = await api.invoke('dialog:open', { title: `Find ${el.dataset.what}`, multi: false, filters: isMac ? undefined : [{ name: 'Programs', extensions: ['exe'] }] });
@@ -85,4 +98,10 @@ app.addEventListener('click', async (e) => {
 });
 app.addEventListener('change', (e) => { const i = e.target.closest('input[type=checkbox][data-k]'); if (i) set({ [i.dataset.k]: i.checked }); });
 api.on('settings', (n) => { s = n; render(); });
+api.on('helpers:progress', (p) => {
+  const tag = $(`.row [data-k="${p.id}"]`)?.closest('.row')?.querySelector('.tag');
+  if (!tag) return;
+  const mb = (n) => `${Math.round(n / 1048576)} MB`;
+  tag.textContent = p.phase === 'download' ? `Downloading… ${p.pct}% of ${mb(p.total)}` : p.phase === 'unpack' ? 'Unpacking…' : 'Starting…';
+});
 render();

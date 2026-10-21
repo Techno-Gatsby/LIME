@@ -728,6 +728,14 @@ function registerIpc() {
   h('settings:set', (patch) => setSettings(patch));
   h('prefs:open', (tab) => openPrefs(tab));
   h('engines:status', () => call('enginesStatus'));
+  // Settings can fetch LibreOffice and Pandoc from their makers into Lime's own folder; progress goes back to the page.
+  hE('helpers:get', async (e, id) => {
+    const helpers = require('./helpers');
+    const exe = await helpers.get(id, path.join(app.getPath('userData'), 'helpers'), (p) => { if (!e.sender.isDestroyed()) e.sender.send('helpers:progress', p); });
+    await setSettings({ [id]: exe });
+    return exe;
+  });
+  h('helpers:cancel', (id) => require('./helpers').cancel(id));
   h('apps:open', async (id, files) => { await crafts.openApp(id, Array.isArray(files) ? files : []); return true; });
   h('recent:list', () => settings.recent.filter((r) => fs.existsSync(r.path)));
 }
