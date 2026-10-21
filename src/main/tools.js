@@ -49,8 +49,15 @@ const IMAGE_OUT = [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['heic', 'H
   ['ico', 'Windows icon (ICO)'], ['icns', 'Mac icon (ICNS)'], ['cur', 'Cursor (CUR)'], ['bmp', 'BMP'], ['jxl', 'JPEG XL'], ['jp2', 'JPEG 2000 (lossless)'], ['tga', 'TGA'], ['qoi', 'QOI'], ['dds', 'DDS texture'],
   ['pcx', 'PCX'], ['ppm', 'PPM'], ['pgm', 'PGM (greyscale)'], ['pbm', 'PBM (black and white)'], ['pam', 'PAM'], ['pfm', 'PFM (float)'], ['sgi', 'SGI'], ['ras', 'Sun raster'], ['xpm', 'XPM'], ['xbm', 'XBM'], ['wbmp', 'WBMP']];
 const LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
-const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF (R12)'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
-const CAD3D_OUT = [['stl', 'STL'], ['obj', 'OBJ'], ['glb', 'GLB'], ['gltf', 'glTF (one file)'], ['3mf', '3MF'], ['ply', 'PLY'], ['png', 'PNG render'], ['pdf', 'PDF render']];
+const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
+const CAD3D_OUT = [['stl', 'STL'], ['step', 'STEP'], ['iges', 'IGES'], ['obj', 'OBJ'], ['glb', 'GLB'], ['gltf', 'glTF (one file)'], ['3mf', '3MF'], ['ply', 'PLY'], ['brep', 'BREP (Open CASCADE)'], ['off', 'OFF'], ['amf', 'AMF'],
+  ['wrl', 'VRML (WRL)'], ['x3d', 'X3D'], ['dae', 'Collada (DAE)'], ['png', 'PNG render'], ['pdf', 'PDF render']];
+const UNIT_OUT = ['stl', 'step', 'iges', 'obj', '3mf', 'ply', 'brep', 'off', 'amf', 'wrl', 'x3d', 'dae'];
+const MODEL_UNITS = [['mm', 'Millimetres'], ['cm', 'Centimetres'], ['m', 'Metres'], ['in', 'Inches'], ['ft', 'Feet']];
+const PLACE_OPTS = [select('centre', 'Position', [['', 'As it is'], ['centre', 'Centred'], ['floor', 'Centred, on the ground']], '', { advanced: true }), num('scale', 'Scale (%)', 100, { advanced: true, min: 0.001 })];
+const MERGE_OUT = [['stl', 'STL'], ['step', 'STEP'], ['obj', 'OBJ'], ['glb', 'GLB'], ['3mf', '3MF'], ['ply', 'PLY']];
+const SAME_MODEL = ['stl', 'obj', 'ply', 'off', '3mf', 'glb', 'gltf'];
+const sameModel = (files) => (SAME_MODEL.includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'stl');
 const VIDEO_OUT = [['mp4', 'MP4 (H.264)'], ['hevc', 'MP4 (HEVC)'], ['av1', 'MP4 (AV1)'], ['mov', 'MOV'], ['webm', 'WebM'], ['mkv', 'MKV'], ['avi', 'AVI'], ['wmv', 'WMV'], ['flv', 'FLV'], ['mpg', 'MPG (MPEG-2)'], ['ts', 'TS'], ['m2ts', 'M2TS (Blu-ray)'], ['vob', 'VOB (DVD)'], ['ogv', 'OGV (Theora)'], ['3gp', '3GP'], ['3g2', '3G2'], ['m4v', 'M4V'], ['dv', 'DV'], ['mxf', 'MXF'], ['gif', 'GIF'], ['apng', 'APNG (animated PNG)']];
 const AUDIO_OUT = [['mp3', 'MP3'], ['m4a', 'M4A (AAC)'], ['wav', 'WAV'], ['flac', 'FLAC'], ['alac', 'ALAC (Apple Lossless)'], ['aiff', 'AIFF'], ['ogg', 'OGG'], ['opus', 'Opus'], ['aac', 'AAC'], ['wma', 'WMA'], ['ac3', 'AC3'], ['eac3', 'E-AC-3'], ['m4b', 'M4B (audiobook)'], ['wv', 'WavPack'], ['tta', 'TTA'], ['caf', 'CAF'], ['au', 'AU'], ['w64', 'Wave64'], ['mp2', 'MP2'], ['mka', 'MKA'], ['weba', 'WEBA'], ['voc', 'VOC'], ['amr', 'AMR (voice)']];
 const LOSSY = ['mp3', 'm4a', 'aac', 'ogg', 'opus', 'wma', 'ac3', 'eac3', 'm4b', 'mp2', 'mka', 'weba'];
@@ -413,11 +420,25 @@ const TOOLS = [
   { id: 'convert-vector', cat: 'cad', name: 'Convert vector', desc: 'VectorCraft converts AI, EPS, SVG, PDF, DXF, EMF and Affinity files.', accepts: ['vector'], extAccept: ['svg', 'svgz', 'pdf', 'dxf'], craft: 'vectorcraft', prio: 8, petal: ['Convert', 'Format'], ext: (o) => o.to,
     options: [select('to', 'Convert to', [['svg', 'SVG'], ['pdf', 'PDF'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['png', 'PNG'], ['dxf', 'DXF'], ['emf', 'EMF'], ['psd', 'Photoshop (PSD)']]), num('scale', 'Image scale', 2, { when: { to: ['png', 'psd'] }, min: 1 }), toggle('outlineText', 'Text as outlines', false, { when: { to: 'svg' }, advanced: true })],
     run: each((f, o, c) => craft().vector(f, o, c)) },
-  { id: 'convert-cad', cat: 'cad', name: 'Convert drawing', desc: 'DWG and DXF to PDF, SVG, PNG, DXF, AI or EPS.', accepts: ['cad2d'], ext: (o) => o.to,
-    options: [select('to', 'Convert to', CAD2D_OUT), select('sheet', 'PDF sheet', [['a3', 'A3'], ['a4', 'A4'], ['tabloid', 'Tabloid'], ['letter', 'Letter']], 'a3', { when: { to: 'pdf' } }), toggle('mono', 'Black lines', false), num('size', 'Image width (px)', 3000, { when: { to: ['png', 'jpg'] } })],
+  { id: 'convert-cad', cat: 'cad', name: 'Convert drawing', desc: 'DWG and DXF to PDF, SVG, PNG, DXF (2000 or R12), AI or EPS.', accepts: ['cad2d'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', CAD2D_OUT), select('sheet', 'PDF sheet', [['a3', 'A3'], ['a4', 'A4'], ['tabloid', 'Tabloid'], ['letter', 'Letter']], 'a3', { when: { to: 'pdf' } }), select('dxf', 'DXF version', [['r2000', 'AutoCAD 2000'], ['r12', 'R12, for older machines']], 'r2000', { when: { to: 'dxf' } }), toggle('mono', 'Black lines', false), num('size', 'Image width (px)', 3000, { when: { to: ['png', 'jpg'] } })],
     run: each((f, o, c) => cad().convert(f, o, c)) },
-  { id: 'convert-model', cat: 'cad', name: 'Convert 3D model', desc: 'STEP, IGES, STL, OBJ, FBX, GLB, 3MF and PLY.', accepts: ['cad3d'], ext: (o) => o.to,
-    options: [select('to', 'Convert to', CAD3D_OUT)], run: each((f, o, c) => cad().convert(f, o, c)) },
+  { id: 'convert-model', cat: 'cad', name: 'Convert 3D model', desc: 'STEP, IGES, BREP, STL, OBJ, FBX, GLB, 3MF, PLY and more, with units.', accepts: ['cad3d'], ext: (o) => o.to,
+    options: [select('to', 'Convert to', CAD3D_OUT), toggle('ascii', 'Text STL (ASCII)', false, { when: { to: 'stl' } }), toggle('refine', 'Merge flat faces', true, { when: { to: ['step', 'iges', 'brep'] }, advanced: true }),
+      select('units', 'Units', MODEL_UNITS, 'mm', { when: { to: UNIT_OUT }, advanced: true }), ...PLACE_OPTS, toggle('repair', 'Repair mesh', false, { advanced: true }), range('keep', 'Triangles kept (%)', 100, 1, 100, { advanced: true })],
+    run: each((f, o, c) => cad().convert(f, o, c)) },
+  { id: 'model-drawing', cat: 'cad', name: 'Make drawing', desc: 'Front, top, side and 3D views on a sheet, with hidden lines, a scale and a title block.', accepts: ['cad3d'], suffix: ' - drawing', ext: (o) => o.to,
+    options: [select('to', 'Save as', [['pdf', 'PDF'], ['svg', 'SVG'], ['dxf', 'DXF'], ['png', 'PNG']]), select('views', 'Views', [['four', 'Front, top, side and 3D'], ['three', 'Front, top and side'], ['front', 'Front only'], ['iso', '3D only']]),
+      toggle('hidden', 'Hidden lines', true), select('sheet', 'Sheet', [['a3', 'A3'], ['a4', 'A4'], ['a2', 'A2'], ['a1', 'A1'], ['tabloid', 'Tabloid'], ['letter', 'Letter']], 'a3'),
+      select('scale', 'Scale', [['', 'Largest that fits'], ['1', '1:1'], ['0.5', '1:2'], ['0.2', '1:5'], ['0.1', '1:10'], ['0.05', '1:20'], ['2', '2:1'], ['5', '5:1']], ''),
+      select('angle', 'Projection', [['first', 'First angle (ISO)'], ['third', 'Third angle (US)']], 'first', { advanced: true }), text('title', 'Title', '', { advanced: true, placeholder: 'The file name' })],
+    run: each((f, o, c) => cad().drawing(f, o, c)) },
+  { id: 'repair-model', cat: 'cad', name: 'Repair mesh', desc: 'Merges doubled points, removes broken and doubled triangles and turns every triangle outwards.', accepts: ['cad3d'], suffix: '-repaired', ext: (o, files) => sameModel(files),
+    run: each((f, o, c) => cad().repairModel(f, o, c)) },
+  { id: 'simplify-model', cat: 'cad', name: 'Simplify model', desc: 'Fewer triangles in the same shape, for big scans and slow prints.', accepts: ['cad3d'], suffix: '-simplified', ext: (o, files) => sameModel(files),
+    options: [range('keep', 'Triangles kept (%)', 50, 1, 99)], run: each((f, o, c) => cad().simplifyModel(f, o, c)) },
+  { id: 'merge-models', cat: 'cad', name: 'Merge models', desc: 'Several 3D models in one file, each keeping its colours.', accepts: ['cad3d'], min: 2, ordered: true, suffix: ' - merged', ext: (o) => o.to,
+    options: [select('to', 'Save as', MERGE_OUT), toggle('arrange', 'Side by side', false), select('units', 'Units', MODEL_UNITS, 'mm', { when: { to: ['stl', 'step', 'obj', '3mf', 'ply'] }, advanced: true })], run: async (files, o, c) => [await cad().mergeModels(files, o, c)] },
   { id: 'cad-info', cat: 'cad', name: 'Measure', desc: 'Size, area, volume, layers and entity counts.', accepts: ['cad2d', 'cad3d'], save: 'none',
     options: [toggle('save', 'Save a report', false)], run: each((f, o, c) => cad().report(f, o, c)) },
 
@@ -591,12 +612,13 @@ const WHEELS = {
     tools: [W('edit-vector', 'Edit', 'VectorCraft'), ZIP, HASH],
   },
   cad2d: {
-    convert: [W('convert-cad', 'PDF', 'Sheet', { to: 'pdf' }), W('convert-cad', 'SVG', 'Vector', { to: 'svg' }), W('convert-cad', 'PNG', 'Image', { to: 'png' }), W('convert-cad', 'DXF', 'R12', { to: 'dxf' }), W('convert-cad', 'AI', 'Illustrator', { to: 'ai' }), W('convert-cad', 'EPS', 'Print', { to: 'eps' }), W('convert-cad', 'JPG', 'Photo', { to: 'jpg' })],
+    convert: [W('convert-cad', 'PDF', 'Sheet', { to: 'pdf' }), W('convert-cad', 'SVG', 'Vector', { to: 'svg' }), W('convert-cad', 'PNG', 'Image', { to: 'png' }), W('convert-cad', 'DXF', 'AutoCAD', { to: 'dxf' }), W('convert-cad', 'AI', 'Illustrator', { to: 'ai' }), W('convert-cad', 'EPS', 'Print', { to: 'eps' }), W('convert-cad', 'JPG', 'Photo', { to: 'jpg' })],
     tools: [W('cad-info', 'Measure', 'Size'), W('convert-cad', 'Mono', 'Black PDF', { to: 'pdf', mono: true }), ZIP],
   },
   cad3d: {
-    convert: [W('convert-model', 'STL', '3D print', { to: 'stl' }), W('convert-model', 'OBJ', 'Universal', { to: 'obj' }), W('convert-model', 'GLB', 'Web & AR', { to: 'glb' }), W('convert-model', '3MF', 'Print', { to: '3mf' }), W('convert-model', 'PLY', 'Scan', { to: 'ply' }), W('convert-model', 'PNG', 'Render', { to: 'png' }), W('convert-model', 'PDF', 'Render', { to: 'pdf' })],
-    tools: [W('cad-info', 'Measure', 'Volume'), ZIP],
+    convert: [W('convert-model', 'STL', '3D print', { to: 'stl' }), W('convert-model', 'STEP', 'CAD', { to: 'step' }), W('convert-model', 'OBJ', 'Universal', { to: 'obj' }), W('convert-model', 'GLB', 'Web & AR', { to: 'glb' }), W('convert-model', '3MF', 'Print', { to: '3mf' }),
+      W('convert-model', 'IGES', 'Older CAD', { to: 'iges' }), W('convert-model', 'PLY', 'Scan', { to: 'ply' }), W('convert-model', 'PNG', 'Render', { to: 'png' }), W('convert-model', 'PDF', 'Render', { to: 'pdf' })],
+    tools: [W('cad-info', 'Measure', 'Volume'), W('model-drawing', 'Drawing', 'Views', { to: 'pdf' }), W('repair-model', 'Repair', 'Mesh'), W('simplify-model', 'Simplify', 'Half', { keep: 50 }), ZIP],
   },
   layout: {
     convert: [W('convert-layout', 'PDF', 'Print', { to: 'pdf' }), W('convert-layout', 'PNG', 'Pages', { to: 'png' }), W('convert-layout', 'EPUB', 'eBook', { to: 'epub' }), W('convert-layout', 'PPTX', 'Slides', { to: 'pptx' }), W('convert-layout', 'IDML', 'InDesign', { to: 'idml' })],
@@ -644,13 +666,14 @@ const MULTI = {
   pdf: [W('merge-pdf', 'Merge', 'One PDF'), W('compare-pdf', 'Compare', 'Changes'), W('compress-pdf', 'Compress', 'Each')],
   image: [W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' }), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('collage', 'Collage', 'Grid'), W('images-to-gif', 'GIF', 'Animate'), W('images-to-video', 'Slideshow', 'MP4'), W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('images-to-cbz', 'CBZ', 'Comic')],
   raw: [W('hdr-merge', 'HDR', 'Merge'), W('panorama', 'Panorama', 'Stitch'), W('jpg-to-pdf', 'PDF', 'One file', { combine: 'one' })],
+  cad3d: [W('merge-models', 'Merge', 'One model')],
   video: [W('merge-media', 'Merge', 'One video')],
   audio: [W('merge-media', 'Merge', 'One track')],
   sheet: [W('merge-sheets', 'Merge', 'One workbook')],
   mixed: [W('merge-documents', 'One PDF', 'Merge all')],
   media: [W('add-audio', 'Soundtrack', 'Replace', { mode: 'replace' }), W('add-audio', 'Mix', 'Add music', { mode: 'mix' }), W('merge-media', 'Merge', 'One video')],
 };
-const SINGLE_OUTPUT = new Set(['hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
+const SINGLE_OUTPUT = new Set(['hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama', 'merge-models']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const get = (id) => TOOLS.find((t) => t.id === id);

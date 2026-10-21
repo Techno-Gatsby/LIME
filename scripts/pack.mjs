@@ -26,6 +26,9 @@ export async function pack(platform, arch, opts) {
     const ort = path.join(nm, 'onnxruntime-node/bin/napi-v3');
     for (const os of ls(ort)) for (const a of ls(path.join(ort, os))) if (`${os}-${a}` !== T) rm(ort, os, a);
     for (const f of ls(path.join(nm, 'tesseract.js-core'))) if (/^tesseract-core/.test(f) && !/simd-lstm/.test(f)) rm(nm, 'tesseract.js-core', f);
+    // Open CASCADE for STEP, IGES and BREP out: only the 32-bit kernel Lime loads, not the 64-bit ones or the modelling API.
+    for (const d of ['lib', 'bitbybit-dev-occt-64-bit', 'bitbybit-dev-occt-64-bit-mt']) rm(nm, '@bitbybit-dev', 'occt', d);
+    if (!ls(path.join(nm, '@bitbybit-dev', 'occt', 'bitbybit-dev-occt')).some((f) => f.endsWith('.wasm'))) console.warn('! @bitbybit-dev/occt has no kernel, so exact STEP, IGES and BREP saving won’t work in this build');
   };
   const [dir] = await packager({
     dir: ROOT, out: OUT, platform, arch, overwrite: true, asar: false, prune: true, quiet: true,

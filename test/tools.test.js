@@ -1045,6 +1045,144 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   });
   T('stl→ply without colours', 'convert-model', ['box.stl'], { to: 'ply' }, ([o]) => { const { h, V, F } = plyOut(o); ok(!/red/.test(h) && F.length === 12 && Math.abs(vol(V, F) - 6000) < 1e-3, `${F.length} faces, volume ${vol(V, F)}`); });
   T('measure model', 'cad-info', ['cube.stl'], { save: false }, (o, r) => ok(/Volume: 1(\.0+)? cm³|Volume: 1 cm/.test(r[0].text), r[0].text));
+  // Saving the way FreeCAD does: STEP, IGES and BREP (exact through Open CASCADE, faceted solids from meshes), more mesh
+  // formats, units, repair, simplify, merge and drawings. Every result is read back (by Open CASCADE, Lime or an XML parser) and measured.
+  const cadInfo = (o) => E('cad').info(o);
+  const ents = (t, e) => (t.match(new RegExp(`=${e}\\(`, 'g')) || []).length;
+  T('stl→step: a flat face per side, one closed solid', 'convert-model', ['box.stl'], { to: 'step' }, async ([o]) => {
+    const t = txt(o);
+    ok(/^ISO-10303-21;/.test(t) && /FILE_SCHEMA\(\('AUTOMOTIVE_DESIGN/.test(t) && /SI_UNIT\(\.MILLI\.,\.METRE\.\)/.test(t), 'header or units');
+    ok(ents(t, 'MANIFOLD_SOLID_BREP') === 1 && ents(t, 'CLOSED_SHELL') === 1 && ents(t, 'ADVANCED_FACE') === 6 && ents(t, 'PLANE') === 6 && ents(t, 'EDGE_CURVE') === 12 && ents(t, 'VERTEX_POINT') === 8, `${ents(t, 'ADVANCED_FACE')} faces, ${ents(t, 'EDGE_CURVE')} edges, ${ents(t, 'VERTEX_POINT')} vertices`);
+    const i = await cadInfo(o);
+    nearly([...i.size, i.volume], [10, 20, 30, 6000], 'read back by Open CASCADE');
+  });
+  T('stl→step without merging: a face per triangle', 'convert-model', ['box.stl'], { to: 'step', refine: false }, async ([o]) => { ok(ents(txt(o), 'ADVANCED_FACE') === 12 && ents(txt(o), 'EDGE_CURVE') === 18, `${ents(txt(o), 'ADVANCED_FACE')} faces`); nearly([(await cadInfo(o)).volume], [6000], 'volume'); });
+  T('stl→step in inches', 'convert-model', ['box.stl'], { to: 'step', units: 'in' }, async ([o]) => {
+    const t = txt(o), z = [...t.matchAll(/CARTESIAN_POINT\('',\(([^)]*)\)\)/g)].map((m) => +m[1].split(',')[2]);
+    ok(/CONVERSION_BASED_UNIT\('INCH',#\d+\)LENGTH_UNIT\(\)NAMED_UNIT\(#\d+\)/.test(t), 'no inch unit');
+    nearly([Math.max(...z)], [30 / 25.4], 'top in inches');
+    nearly((await cadInfo(o)).size, [10, 20, 30], 'read back in millimetres');
+  });
+  T('stl→iges: trimmed planes, grouped, in inches', 'convert-model', ['box.stl'], { to: 'iges', units: 'in' }, async ([o]) => {
+    const L = txt(o).split('\n').filter(Boolean), types = L.filter((l) => l[72] === 'D').filter((_, i) => i % 2 === 0).map((l) => +l.slice(0, 8)), g = L.filter((l) => l[72] === 'G').map((l) => l.slice(0, 72)).join('');
+    ok(L.every((l) => l.length === 80) && L[L.length - 1][72] === 'T', 'not 80-column IGES');
+    ok(types.filter((x) => x === 144).length === 6 && types.filter((x) => x === 108).length === 6 && types.filter((x) => x === 402).length === 1, `entities ${types}`);
+    ok(/1\.,1,4HINCH,/.test(g), `units: ${g}`);
+    const i = await cadInfo(o);
+    nearly([...i.size, i.volume], [10, 20, 30, 6000], 'read back by Open CASCADE');
+  });
+  T('stl→brep: Open CASCADE’s own format', 'convert-model', ['box.stl'], { to: 'brep' }, async ([o]) => { ok(/^DBRep_DrawableShape\n\nCASCADE Topology V1/.test(txt(o)) && /\nSo\n/.test(txt(o)), 'not a BREP solid'); nearly([(await cadInfo(o)).volume], [6000], 'volume'); });
+  for (const to of ['step', 'iges', 'brep']) {
+    T(`hollow mesh→${to} keeps its void`, 'convert-model', ['hollow.stl'], { to }, async ([o]) => {
+      if (to === 'step') ok(/BREP_WITH_VOIDS\(/.test(txt(o)) && /ORIENTED_CLOSED_SHELL\('',\*,#\d+,\.F\.\)/.test(txt(o)), 'no void');
+      const i = await cadInfo(o);
+      nearly([i.volume, ...i.size], [7000, 20, 20, 20], 'the solid less its void');
+    });
+    T(`step→${to} exact through Open CASCADE`, 'convert-model', ['part.stp'], { to }, async ([o]) => {
+      ok({ step: /Open CASCADE STEP processor/, iges: /Open CASCADE IGES processor/, brep: /^DBRep_DrawableShape\n\nCASCADE Topology V3/ }[to].test(txt(o)), 'not written by Open CASCADE');
+      const [a, b] = await Promise.all([cadInfo(fx('part.stp')), cadInfo(o)]);
+      ok(a.triangles === b.triangles, `${b.triangles} triangles, not ${a.triangles}`);
+      nearly([b.volume, ...b.size], [a.volume, ...a.size], 'the same solids');
+    });
+  }
+  T('iges→step exact', 'convert-model', ['cube.igs'], { to: 'step' }, async ([o]) => { ok(/Open CASCADE STEP processor/.test(txt(o)), 'not written by Open CASCADE'); nearly([(await cadInfo(o)).volume], [1000], 'volume'); });
+  T('step→step half size, centred on the ground', 'convert-model', ['part.stp'], { to: 'step', centre: 'floor', scale: 50 }, async ([o]) => {
+    const [a, b] = await Promise.all([cadInfo(fx('part.stp')), cadInfo(o)]);
+    nearly([...b.size, b.volume], [...a.size.map((v) => v / 2), a.volume / 8], 'half size');
+    ok(Math.abs(b.min[2]) < 1e-3 && Math.abs(b.min[0] + b.max[0]) < 1e-3 && Math.abs(b.min[1] + b.max[1]) < 1e-3, `box ${b.min} ${b.max}`);
+  });
+  T('3mf→off keeps face colours', 'convert-model', ['colors.3mf'], { to: 'off' }, async ([o]) => {
+    const L = txt(o).trim().split('\n'), F = L.slice(10).map((l) => l.split(' ').map(Number)), V = L.slice(2, 10).map((l) => l.split(' ').map(Number)), col = (c) => F.filter((f) => f.slice(4, 7).join() === c).length;
+    ok(L[0] === 'OFF' && L[1] === '8 12 0' && col('255,0,0') === 10 && col('0,0,255') === 2, `${L[1]}; ${col('255,0,0')} red, ${col('0,0,255')} blue`);
+    nearly([vol(V, F.map((f) => f.slice(1, 4)))], [1000], 'outward volume');
+    const m = await E('cad').readMesh(o);
+    ok(m.parts?.length === 2 && m.parts[1].color === 0x0000ff, `read back ${JSON.stringify(m.parts)}`);
+  });
+  T('3mf→amf: a volume per colour, in inches', 'convert-model', ['colors.3mf'], { to: 'amf', units: 'in' }, ([o]) => {
+    const d = xmlDoc(txt(o), 'AMF'), V = tags(d, 'vertex').map((v) => ['x', 'y', 'z'].map((k) => +tags(v, k)[0].textContent * 25.4)), vols = tags(d, 'volume');
+    const F = vols.flatMap((v) => tags(v, 'triangle').map((t) => ['v1', 'v2', 'v3'].map((k) => +tags(t, k)[0].textContent)));
+    ok(d.documentElement.getAttribute('unit') === 'inch' && vols.length === 2 && F.length === 12, `${vols.length} volumes, ${F.length} triangles`);
+    ok(vols.map((v) => ['r', 'g', 'b'].map((k) => tags(v, k)[0].textContent).join(' ')).join() === '1 0 0,0 0 1', 'colours');
+    nearly([vol(V, F)], [1000], 'volume');
+  });
+  T('3mf→wrl: VRML 97 in metres, Y up, colours', 'convert-model', ['colors.3mf'], { to: 'wrl' }, ([o]) => {
+    const t = txt(o), V = /point \[([^\]]*)\]/.exec(t)[1].split(',').map((p) => p.trim().split(/\s+/).map(Number)), F = [...t.matchAll(/coordIndex \[([^\]]*)\]/g)].flatMap((m) => m[1].split(',').map((f) => f.trim().split(/\s+/).map(Number).slice(0, 3)));
+    ok(/^#VRML V2\.0 utf8/.test(t) && /rotation 1 0 0 -1\.5707963/.test(t) && /scale 0\.001 0\.001 0\.001/.test(t) && /coord USE C/.test(t), 'transform or shared points');
+    ok(/diffuseColor 1 0 0/.test(t) && /diffuseColor 0 0 1/.test(t) && V.length === 8 && F.length === 12, `${V.length} points, ${F.length} faces`);
+    nearly([vol(V, F)], [1000], 'volume');
+  });
+  T('3mf→x3d: units and shared points', 'convert-model', ['colors.3mf'], { to: 'x3d' }, ([o]) => {
+    const d = xmlDoc(txt(o), 'X3D'), u = tags(d, 'unit')[0], sets = tags(d, 'IndexedFaceSet'), V = tags(d, 'Coordinate')[0].getAttribute('point').split(',').map((p) => p.trim().split(/\s+/).map(Number));
+    const F = sets.flatMap((s) => s.getAttribute('coordIndex').trim().split(/\s+/).map(Number).join(' ').split(' -1').filter((x) => x.trim()).map((x) => x.trim().split(' ').map(Number)));
+    ok(u.getAttribute('conversionFactor') === '0.001' && sets.length === 2 && tags(d, 'Coordinate')[1].getAttribute('USE') === 'C', 'units or shapes');
+    nearly([vol(V, F)], [1000], 'volume');
+  });
+  T('3mf→dae: Collada with units, Z up, a material per colour', 'convert-model', ['colors.3mf'], { to: 'dae' }, ([o]) => {
+    const d = xmlDoc(txt(o), 'COLLADA'), a = tags(d, 'float_array')[0], P = a.textContent.trim().split(/\s+/).map(Number), V = Array.from({ length: P.length / 3 }, (_, i) => P.slice(i * 3, i * 3 + 3)), tris = tags(d, 'triangles');
+    const F = tris.flatMap((t) => { const p = tags(t, 'p')[0].textContent.trim().split(/\s+/).map(Number); return Array.from({ length: p.length / 3 }, (_, i) => p.slice(i * 3, i * 3 + 3)); });
+    ok(tags(d, 'unit')[0].getAttribute('meter') === '0.001' && tags(d, 'up_axis')[0].textContent === 'Z_UP' && +a.getAttribute('count') === 24, 'units or points');
+    ok(tris.map((t) => t.getAttribute('count')).join() === '10,2' && tags(d, 'material').length === 2, 'triangles per material');
+    nearly([vol(V, F)], [1000], 'volume');
+  });
+  T('stl→ascii stl', 'convert-model', ['box.stl'], { to: 'stl', ascii: true }, async ([o]) => { ok(/^solid box\n/.test(txt(o)) && (txt(o).match(/facet normal/g) || []).length === 12, 'not ASCII STL'); nearly([(await cadInfo(o)).volume], [6000], 'volume'); });
+  T('stl→3mf in inches', 'convert-model', ['box.stl'], { to: '3mf', units: 'in' }, async ([o]) => { const m = mf(o); ok(m.unit === 'inch', m.unit); nearly(box3(m.v).slice(3), [10 / 25.4, 20 / 25.4, 30 / 25.4], 'inches'); nearly((await cadInfo(o)).size, [10, 20, 30], 'read back'); });
+  T('stl→obj centred at double size', 'convert-model', ['box.stl'], { to: 'obj', centre: 'centre', scale: 200 }, async ([o]) => { const i = await cadInfo(o); nearly([...i.min, ...i.max], [-10, -20, -30, 10, 20, 30], 'box'); });
+  T('repair mesh: turned, doubled and broken triangles', 'repair-model', ['broken.stl'], {}, async ([o], r) => {
+    ok(/^Removed 1 broken triangle, removed 1 doubled triangle, turned 1 triangle round\.$/.test(r[0].note), r[0].note);
+    const i = await cadInfo(o);
+    ok(i.triangles === 12 && i.watertight && /broken-repaired\.stl$/.test(o), `${i.triangles} triangles, watertight ${i.watertight}`);
+    nearly([i.volume], [1000], 'volume');
+  });
+  T('simplify: a fifth of the triangles, the same size', 'simplify-model', ['part.stp'], { keep: 20 }, async ([o], r) => {
+    const [a, b] = await Promise.all([cadInfo(fx('part.stp')), cadInfo(o)]);
+    ok(b.triangles < a.triangles / 2 && r[0].note.endsWith(`→ ${b.triangles.toLocaleString('en-US')}`), `${a.triangles} → ${b.triangles}: ${r[0].note}`);
+    nearly(b.size, a.size, 'size');
+  });
+  T('merge models side by side', 'merge-models', ['box.stl', 'cube.stl'], { to: 'stl', arrange: true }, async ([o]) => { const i = await cadInfo(o); ok(i.triangles === 24 && i.size[0] > 20, `${i.triangles} triangles, ${i.size}`); nearly([i.volume, i.size[1], i.size[2]], [7000, 20, 30], 'volume'); });
+  T('merge models→step: two solids', 'merge-models', ['box.stl', 'cube.stl'], { to: 'step', arrange: true }, async ([o]) => { ok(ents(txt(o), 'MANIFOLD_SOLID_BREP') === 2, `${ents(txt(o), 'MANIFOLD_SOLID_BREP')} solids`); nearly([(await cadInfo(o)).volume], [7000], 'volume'); });
+  const sheetLines = (o, cls) => [...txt(o).matchAll(new RegExp(`<path d="M([^"]+)"[^>]*class="${cls}"`, 'g'))].map((m) => m[1].split('L').map((p) => p.split(',').map(Number)));
+  const length = (ls) => ls.reduce((s, l) => s + l.slice(1).reduce((t, p, i) => t + Math.hypot(p[0] - l[i][0], p[1] - l[i][1]), 0), 0);
+  // The top-left view: an L (three heights of corner) in first angle, where the front view is; a plain rectangle (two) in third.
+  const cornerHeights = (o) => { const pts = sheetLines(o, 'Visible').flat(), x0 = Math.min(...pts.map((p) => p[0])), y0 = Math.min(...pts.map((p) => p[1])); return new Set(pts.filter((p) => p[0] <= x0 + 200.01 && p[1] <= y0 + 100.01).map((p) => Math.round(p[1] * 100))).size; };
+  T('drawing: three views at 5:1, the hidden step dashed', 'model-drawing', ['step.stl'], { to: 'svg', views: 'three' }, ([o]) => {
+    const t = txt(o), vis = sheetLines(o, 'Visible'), hid = sheetLines(o, 'Hidden');
+    ok(/width="420mm" height="297mm"/.test(t) && />5:1</.test(t) && />step</.test(t) && cornerHeights(o) === 3, 'sheet, scale, title or the front view’s place');
+    // Front: the L (120 mm round); top: 40 × 20 and the step's edge; left: 20 × 20; all five times over.
+    nearly([length(vis)], [(120 + 140 + 80) * 5], 'visible lines');
+    ok(hid.length === 1 && hid[0].length === 2 && Math.abs(hid[0][0][1] - hid[0][1][1]) < 1e-3, `hidden ${JSON.stringify(hid)}`);
+    nearly([length(hid)], [100], 'the hidden step across the side view');
+  });
+  T('drawing: third angle puts the top view above', 'model-drawing', ['step.stl'], { to: 'svg', views: 'three', angle: 'third' }, ([o]) => {
+    ok(!sheetLines(o, 'Hidden').length && cornerHeights(o) === 2, `the view from the right hides nothing and the top view comes first (${cornerHeights(o)})`);
+  });
+  T('drawing→pdf: an A3 sheet at 1:50', 'model-drawing', ['part.stp'], { to: 'pdf' }, async ([o], r) => {
+    const { doc } = await E('pdf').readPdf(o), b = doc.loadPage(0).getBounds(), t = await pdfText(o);
+    nearly([b[2] - b[0], b[3] - b[1]], [420 / 25.4 * 72, 297 / 25.4 * 72], 'A3 landscape');
+    ok(['1:50', 'part', 'part.stp', 'mm', 'A3'].every((w) => t.includes(w)) && r[0].note === '4 views at 1:50 on A3', `text ${t.replace(/\s+/g, ' ')} · ${r[0].note}`);
+  });
+  T('drawing→dxf: AutoCAD 2000, hidden lines on their own layer', 'model-drawing', ['step.stl'], { to: 'dxf', views: 'three' }, async ([o]) => {
+    const t = txt(o), d = new (require('dxf-parser'))().parseSync(t);
+    ok(/\$ACADVER\r\n {2}1\r\nAC1015/.test(t) && d.tables.lineType.lineTypes.HIDDEN?.pattern?.join() === '3,-1.5', 'version or linetype');
+    const hid = d.entities.filter((e) => e.layer === 'Hidden'), lay = d.tables.layer.layers;
+    ok(hid.length === 1 && lay.Hidden && lay.Visible && d.entities.some((e) => e.type === 'TEXT' && e.text === '5:1'), `${hid.length} hidden`);
+    const items = E('cad').flatten(await E('cad').readDrawing(o));
+    ok(items.some((i) => i.layer === 'Hidden' && i.dash?.join() === '3,-1.5'), 'hidden line not dashed when read back');
+  });
+  F('drawing refuses a scale that doesn’t fit', 'model-drawing', ['box.stl'], { scale: '50' }, /don’t fit on A3/);
+  // AutoCAD 2000 DXF from drawings: read back, the same geometry, layers, colours and weights as the source (a filled
+  // SOLID or wide polyline band comes back as a solid HATCH); R12 still there.
+  const dxfSig = (items) => { const e = E('cad').extents(items), k = {}; for (const it of items) k[it.k + (it.fill ? 'F' : '')] = (k[it.k + (it.fill ? 'F' : '')] || 0) + 1; return JSON.stringify({ e: [e.x0, e.y0, e.x1, e.y1].map((v) => +v.toFixed(3)), k, c: [...new Set(items.map((i) => `${i.layer}:${i.rgb}:${i.fill ? 'fill' : i.lw ?? null}`))].sort(), t: items.filter((i) => i.k === 'text').map((i) => i.text) }); };
+  for (const f of ['layers.dxf', 'test.dxf', 'unicode.dxf', 'widths.dxf', 'ocs.dxf', 'lines.dxf', 'sample_2018.dwg']) {
+    T(`${f}→dxf 2000 reads back the same`, 'convert-cad', [f], { to: 'dxf' }, async ([o]) => {
+      const t = txt(o), handles = [...t.matchAll(/\r\n {2}5\r\n([0-9A-F]+)\r\n/g)].map((m) => m[1]);
+      ok(/\$ACADVER\r\n {2}1\r\nAC1015/.test(t) && handles.length && new Set(handles).size === handles.length, 'version or handles');
+      const [a, b] = await Promise.all([fx(f), o].map(async (p) => dxfSig(E('cad').flatten(await E('cad').readDrawing(p)))));
+      ok(a === b, `differs:\n${a}\n${b}`);
+      if (f === 'test.dxf') ok(/\r\nCIRCLE\r\n/.test(t) && /\r\nARC\r\n/.test(t) && /\r\nMTEXT\r\n/.test(t), 'circles, arcs or MTEXT flattened');
+      if (f === 'unicode.dxf') ok(/\\U\+041F/.test(t), 'non-Latin text not escaped');
+    });
+  }
+  T('dxf→dxf R12 still available', 'convert-cad', ['layers.dxf'], { to: 'dxf', dxf: 'r12' }, ([o]) => ok(/\$ACADVER\r\n1\r\nAC1009/.test(txt(o)), 'not R12'));
   for (const [src, to, chk] of [['logo.svg', 'pdf', (o) => magic(o, '%PDF')], ['logo.svg', 'ai', (o) => magic(o, '%PDF')], ['logo.svg', 'eps', (o) => ok(/^%!PS/.test(txt(o)) || read(o).readUInt32BE(0) === 0xc5d0d3c6, 'eps')], ['logo.svg', 'png', async (o) => fmt(o, 'png')], ['logo.svg', 'dxf', (o) => ok(txt(o).includes('SECTION'), 'dxf')], ['logo.svg', 'emf', (o) => ok(read(o).readUInt32LE(0) === 1, 'emf')], ['logo.ai', 'svg', (o) => ok(txt(o).includes('<svg'), 'svg')], ['logo.eps', 'pdf', (o) => magic(o, '%PDF')]]) {
     T(`vector ${src}→${to}`, 'convert-vector', [src], { to, scale: 2 }, async ([o]) => chk(o));
   }
@@ -1178,11 +1316,11 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'blur-faces': [['faces.png']], 'animation-speed': [['anim.gif']], 'gif-to-video': [['anim.gif']], 'extract-subtitles': [['subs.mkv']], 'burn-subtitles': [0, { subtitles: fx('sub.srt') }],
     'trim-media': [0, { end: '0.5' }], 'merge-media': [['tone.mp3', 'sweep.m4a']], 'add-audio': [['sweep.mp4', 'tone.wav']], 'render-motion': [0, { resolution: 'quarter' }],
     'merge-documents': [['doc.md', 'photo2.jpg']], 'merge-sheets': [['sheet.xlsx', 'sheet.csv']], 'json-to-sheet': [['data.json']], 'decompress-file': [['notes.txt.gz']], 'rename-files': [0, { pattern: '{name} {n}' }],
-    'overlay-pdf': [0, { overlay: fx('v1.pdf') }], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
+    'overlay-pdf': [0, { overlay: fx('v1.pdf') }], 'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
   };
   // Choices that refuse this input on purpose: the same format again, several files into a one-file compressor, or ODT where
   // neither LibreOffice nor macOS's text converter is there to write it.
-  const SWEEP_REFUSE = { 'convert-document to=docx': /already DOCX/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
+  const SWEEP_REFUSE = { 'convert-document to=docx': /already DOCX/, 'model-drawing scale=5': /don’t fit on A3/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   // Tools that take files by extension rather than by kind (the ArtCraft actions) get the first sample their extensions match.
@@ -1200,7 +1338,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const PIXEL_EXT = new Set(['heic', 'heif', 'bmp', 'ico', 'icns', 'cur', 'jxl', 'jp2', 'tga', 'qoi', 'dds', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xpm', 'xbm', 'wbmp', 'psd']);
   const TEXT_EXT = { csv: /\S/, tsv: /\S/, txt: /\S/, md: /\S/, html: /<(html|body|table|p|div|h1)\b/i, srt: /-->/, vtt: /^\ufeff?WEBVTT/, ass: /\[Script Info\]/, lrc: /\[\d\d:\d\d/, sub: /^\{\d+\}\{\d+\}/m,
     smi: /<SAMI>/i, edl: /^(TITLE|001)/m, rtf: /^\{\\rtf/, eml: /^[\w-]+: /m, vcf: /BEGIN:VCARD/, obj: /^v /m, dxf: /SECTION[\s\S]*EOF/ };
-  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2']);
+  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2', 'amf', 'x3d', 'dae']);
   const ZIP_MAIN = { docx: 'word/document.xml', xlsx: 'xl/workbook.xml', pptx: 'ppt/presentation.xml', odt: 'content.xml', ods: 'content.xml', epub: 'META-INF/container.xml', htmlz: 'index.html', txtz: 'index.txt',
     '3mf': '3D/3dmodel.model', idml: 'designmap.xml', designcraft: 'mimetype' };
   const utf8 = (b) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch (_) { return null; } };
@@ -1232,11 +1370,17 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     if (e === 'jsonl') return text().split('\n').filter((l) => l.trim()).forEach((l) => JSON.parse(l));
     if (e === 'yaml' || e === 'yml') return require('yaml').parse(text());
     if (e === 'toml') return require('smol-toml').parse(text());
-    if (XML_EXT.has(e)) { const d = xmlDoc(text(), name); return ok(e !== 'svg' || d.documentElement.localName === 'svg', `${name} is not an SVG`); }
+    if (XML_EXT.has(e)) { const d = xmlDoc(text(), name), root = { svg: 'svg', amf: 'amf', x3d: 'X3D', dae: 'COLLADA' }[e]; return ok(!root || d.documentElement.localName === root, `${name} is not ${e.toUpperCase()}`); }
     if (TEXT_EXT[e]) return ok(TEXT_EXT[e].test(text()), `${name} does not look like ${e.toUpperCase()}`);
     if (e === 'stl') return ok((b.length > 84 && b.length === 84 + 50 * b.readUInt32LE(80)) || /^solid[\s\S]*facet/.test(text()), `${name} is not an STL`);
     if (e === 'glb') return ok(head.startsWith('glTF') && b.readUInt32LE(8) === b.length, `${name} is not a GLB`);
     if (e === 'ply') return ok(head.startsWith('ply'), `${name} is not a PLY`);
+    if (e === 'off') return ok(/^C?OFF\n\d+ \d+ 0\n/.test(text()), `${name} is not an OFF`);
+    if (e === 'wrl') return ok(/^#VRML V2\.0 utf8\n/.test(text()), `${name} is not VRML`);
+    if (['step', 'stp', 'iges', 'igs', 'brep'].includes(e)) {
+      ok({ step: /^ISO-10303-21;/, stp: /^ISO-10303-21;/, iges: /^.{72}S0000001/, igs: /^.{72}S0000001/, brep: /^DBRep_DrawableShape/ }[e].test(text()), `${name} is not ${e.toUpperCase()}`);
+      return ok((await E('cad').info(o)).triangles > 0, `${name} does not read back`);
+    }
     if (e === 'eps' || e === 'ai') return ok(head.startsWith('%!PS') || b.readUInt32BE(0) === 0xc5d0d3c6, `${name} is not PostScript`);
     if (e === 'emf') return ok(b.readUInt32LE(0) === 1 && head.slice(40, 44) === ' EMF', `${name} is not an EMF`);
     if (e === 'dng') return ok(/^(II\*\0|MM\0\*)/.test(head), `${name} is not a DNG`);
@@ -1495,7 +1639,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^convert-slides paper=(letter|a4)$/, 'Automatic picks the local paper size'], [/^pages-per-sheet orientation=portrait$/, 'four portrait pages fit best on a portrait sheet'],
     [/^pdf-page-size orientation=portrait$/, 'the pages are portrait already'] [/^overlay-pdf scale=actual$/, 'the overlay is the same size as the pages'],
     [/^export-layers hidden=true$/, 'the PSD has no hidden layers'], [/^split-scenes sensitivity=(1|100)$/, 'hard cuts are found at any sensitivity, as FilmCraft’s own tests expect'],
-    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
+    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^convert-model (repair=true|keep=1)$/, 'the box is a clean mesh of 12 triangles, the fewest Simplify keeps'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
   ];
   await check('option sweep covers the catalogue', () => {
     const names = new Set(C.filter((c) => c.par).map((c) => c.name.replace(/^sweep /, ''))), runnable = tools.catalog().filter((t) => !t.editor && !t.noFiles);

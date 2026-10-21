@@ -58,7 +58,7 @@ function fromDxf(dxf, text = '') {
       case 'ARC': return { ...base, t: 'arc', c: P(e.center), r: e.radius, a0: e.startAngle, a1: e.endAngle, ocs: ocs(N(e), e.center?.z) };
       case 'ELLIPSE': return { ...base, t: 'ellipse', c: P(e.center), m: P(e.majorAxisEndPoint), ratio: e.axisRatio * (N(e).z < 0 ? -1 : 1), a0: e.startAngle ?? 0, a1: e.endAngle ?? Math.PI * 2 };
       case 'SPLINE': return { ...base, t: 'spline', ctrl: (e.controlPoints || []).map(P), fit: (e.fitPoints || []).map(P), degree: e.degreeOfSplineCurve || 3, knots: e.knotValues || [] };
-      case 'TEXT': return { ...base, t: 'text', p: P(e.halign || e.valign ? e.endPoint || e.startPoint : e.startPoint), h: e.textHeight || 1, rot: deg(e.rotation || 0), text: e.text || '', align: e.halign || 0, ocs: ocs(N(e), e.startPoint?.z) };
+      case 'TEXT': return { ...base, t: 'text', p: P(e.halign || e.valign ? e.endPoint || e.startPoint : e.startPoint), h: e.textHeight || 1, rot: deg(e.rotation || 0), text: uni(e.text || ''), align: e.halign || 0, ocs: ocs(N(e), e.startPoint?.z) };
       case 'MTEXT': return { ...base, t: 'text', p: { x: 0, y: 0 }, h: e.height || 1, rot: 0, ocs: frame(N(e), e.directionVector, deg(e.rotation || 0), P(e.position)), text: mtext(e.text || ''), attach: e.attachmentPoint || 1, multi: true };
       case 'INSERT': return { ...base, t: 'insert', name: e.name, p: P(e.position), sx: e.xScale ?? 1, sy: e.yScale ?? 1, rot: deg(e.rotation || 0), cols: e.columnCount || 1, rows: e.rowCount || 1, cs: e.columnSpacing || 0, rs: e.rowSpacing || 0, ocs: ocs(N(e), e.position?.z) };
       case 'DIMENSION': return e.block ? { ...base, t: 'insert', name: e.block, p: { x: 0, y: 0 }, sx: 1, sy: 1, rot: 0 } : null;
@@ -195,8 +195,9 @@ class DxfHatch {
 }
 const area = (l) => l.reduce((a, p, k) => { const q = l[(k + 1) % l.length]; return a + p.x * q.y - q.x * p.y; }, 0) / 2;
 const inside = (p, l) => { let c = false; for (let k = 0, j = l.length - 1; k < l.length; j = k++) if ((l[k].y > p.y) !== (l[j].y > p.y) && p.x < ((l[j].x - l[k].x) * (p.y - l[k].y)) / (l[j].y - l[k].y) + l[k].x) c = !c; return c; };
+const uni = (s) => s.replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 function mtext(s) {
-  return s.replace(/\\P/g, '\n').replace(/\\[ACcFfHhLlOoQqTtWw][^;\\]*;?/g, '').replace(/\\S([^^;]*)\^([^;]*);/g, '$1/$2').replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/\\\\/g, '\\');
+  return uni(s).replace(/\\P/g, '\n').replace(/\\[ACcFfHhLlOoQqTtWw][^;\\]*;?/g, '').replace(/\\S([^^;]*)\^([^;]*);/g, '$1/$2').replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/\\\\/g, '\\');
 }
 
 const ident = [1, 0, 0, 1, 0, 0];
@@ -291,7 +292,11 @@ function flatten(model) {
       const scale = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2]));
       const lw = weightOf(e, lay, inh), lt = typeOf(e, lay, inh), pat = model.ltypes?.[String(lt).toUpperCase()];
       const dash = pat?.length >= 2 && pat.some((v) => v < 0) && pat.every(Number.isFinite) ? pat.map((v) => v * (model.ltscale || 1) * (e.lts || 1) * scale) : null;
-      const item = (pts, closed, fill, ww) => ({ k: 'path', pts, closed, fill, rgb, lw, dash: fill ? null : dash, aci: typeof col === 'number' ? col : null, layer: lay, ...(ww ? { ww } : {}) });
+      const item = (pts, closed, fill, ww) => ({ k: 'path', pts, closed, fill, rgb, lw, lt, dash: fill ? null : dash, aci: typeof col === 'number' ? col : null, layer: lay, ...(ww ? { ww } : {}) });
+      // Circles and arcs under a uniform scale stay exact for DXF out.
+      const similar = Math.abs(M[0] * M[0] + M[1] * M[1] - M[2] * M[2] - M[3] * M[3]) < 1e-9 * (M[0] * M[0] + M[1] * M[1]) && Math.abs(M[0] * M[2] + M[1] * M[3]) < 1e-9 * (M[0] * M[0] + M[1] * M[1]);
+      const exact = (geo) => { if (similar && out.length) out[out.length - 1].geo = geo; };
+      const turn = Math.atan2(M[1], M[0]), flip = M[0] * M[3] - M[1] * M[2] < 0;
       const push = (pts, closed, fill, ww) => pts.length > 1 && out.push(item(pts.map((p) => ap(M, p)), closed, fill, ww));
       switch (e.t) {
         case 'line': push([e.a, e.b]); break;
@@ -312,8 +317,8 @@ function flatten(model) {
           push(run);
           break;
         }
-        case 'circle': push(arcPts(e.c, e.r, 0, Math.PI * 2), true); break;
-        case 'arc': push(arcPts(e.c, e.r, e.a0, e.a1)); break;
+        case 'circle': push(arcPts(e.c, e.r, 0, Math.PI * 2), true); exact({ t: 'circle', c: ap(M, e.c), r: e.r * scale }); break;
+        case 'arc': push(arcPts(e.c, e.r, e.a0, e.a1)); exact({ t: 'arc', c: ap(M, e.c), r: e.r * scale, a0: flip ? turn - e.a1 : turn + e.a0, a1: flip ? turn - e.a0 : turn + e.a1 }); break;
         case 'ellipse': {
           const R = Math.hypot(e.m.x, e.m.y), rot = Math.atan2(e.m.y, e.m.x), r2 = R * e.ratio;
           let d = e.a1 - e.a0;
@@ -551,6 +556,28 @@ function drawingDxf(items, layers) {
   return `${L.join('\r\n')}\r\n`;
 }
 
+// Release 2000 DXF of the laid-out drawing: blocks exploded, colours, lineweights and linetypes kept, circles and arcs
+// exact, fills as solid hatches.
+function drawingDxf2000(items, model) {
+  const r2d = (a) => ((((a * 180) / Math.PI) % 360) + 360) % 360, ents = [];
+  for (const it of items) {
+    const base = { layer: it.layer || '0', color: it.aci > 0 && it.aci < 256 ? it.aci : it.rgb != null ? { rgb: it.rgb } : null, lw: typeof it.lw === 'number' ? it.lw : null, lt: it.lt && !/^(continuous|bylayer|byblock)$/i.test(it.lt) ? it.lt : null };
+    if (it.k === 'path') {
+      if (it.geo && !it.ww) { ents.push(it.geo.t === 'circle' ? { ...base, ...it.geo } : { ...base, ...it.geo, a0: r2d(it.geo.a0), a1: r2d(it.geo.a1) }); continue; }
+      if (it.fill && !it.tint) { ents.push({ ...base, t: 'hatch', loops: it.sub || [it.pts] }); continue; }
+      for (const l of it.sub || [it.pts]) ents.push(l.length === 2 && !it.closed && !it.ww ? { ...base, t: 'line', a: l[0], b: l[1] } : { ...base, t: 'poly', pts: l, closed: !!it.closed, w: it.ww || 0 });
+    } else if (it.k === 'point') ents.push({ ...base, t: 'point', p: it.p });
+    else if (it.k === 'text' && it.multi) ents.push({ ...base, t: 'mtext', p: it.p, h: it.h, rot: it.rot, text: it.text, attach: it.attach || 1 });
+    else if (it.k === 'text') {
+      const anchor = [0, 1, 2, 0, 1, 0][it.align || 0] ?? 0, c = Math.cos(it.rot), sn = Math.sin(it.rot);
+      it.text.split('\n').forEach((line, i) => { if (!line.trim()) return; const down = i * it.h * 1.4; ents.push({ ...base, t: 'text', p: { x: it.p.x + sn * down, y: it.p.y - c * down }, h: it.h, rot: r2d(it.rot), text: line, align: anchor }); });
+    }
+  }
+  const layers = Object.entries(model.layers || {}).map(([name, l]) => ({ name, color: l.color, rgb: l.rgb, lt: l.lt, lw: l.lw, off: l.off, frozen: l.frozen, plot: l.plot }));
+  const ltypes = Object.entries(model.ltypes || {}).filter(([, p]) => p.length >= 2 && p.every(Number.isFinite)).map(([name, pattern]) => ({ name, desc: name, pattern }));
+  return require('./dxf').write({ layers, ltypes, ents, units: Number(model.units) || 0 });
+}
+
 async function readMesh(p) {
   const e = U.ext(p);
   const buf = await fsp.readFile(p);
@@ -668,13 +695,19 @@ function readMtl(names, dir, lib) {
   }
 }
 function readOff(text) {
-  const t = text.replace(/#.*$/gm, '').trim().split(/\s+/);
-  let i = t[0].toUpperCase().endsWith('OFF') ? 1 : 0;
-  const nv = +t[i++], nf = +t[i++]; i++;
-  const v = [], idx = [];
-  for (let k = 0; k < nv; k++) v.push(+t[i++], +t[i++], +t[i++]);
-  for (let k = 0; k < nf; k++) { const c = +t[i++]; triangulate(v, t.slice(i, i + c).map(Number), idx); i += c; }
-  return mesh(v, idx);
+  const L = text.replace(/#.*$/gm, '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean), head = L[0].split(/\s+/);
+  let i = /OFF$/i.test(head[0]) ? 1 : 0;
+  const counts = (i && head.length > 1 ? head.slice(1) : L[i++].split(/\s+/)).map(Number), [nv, nf] = counts;
+  const v = [], groups = new Map();
+  for (let k = 0; k < nv; k++) { const w = L[i++].split(/\s+/).map(Number); v.push(w[0], w[1], w[2]); }
+  for (let k = 0; k < nf && i < L.length; k++) {
+    const w = L[i++].split(/\s+/).map(Number), c = w[0], f = w.slice(1, 1 + c), col = w.slice(1 + c);
+    if (f.some((j) => !(j >= 0 && j < nv))) throw new Error(`A face of this OFF file refers to a vertex it doesn’t have (there are ${nv}).`);
+    const s = col.some((x) => x > 1) ? 1 / 255 : 1, color = col.length >= 3 ? rgb(col[0] * s, col[1] * s, col[2] * s) : null, alpha = col.length >= 4 ? Math.min(1, col[3] * s) : 1, key = `${color}/${alpha}`;
+    if (!groups.has(key)) groups.set(key, { idx: [], color, alpha });
+    triangulate(v, f, groups.get(key).idx);
+  }
+  return meshOf(v, groups.values());
 }
 function readPly(buf) {
   const end = buf.indexOf('end_header');
@@ -841,14 +874,24 @@ async function readOcct(buf, e) {
   const fn = e === 'brep' ? 'ReadBrepFile' : e === 'iges' || e === 'igs' ? 'ReadIgesFile' : 'ReadStepFile';
   const r = occt[fn](new Uint8Array(buf), { linearUnit: 'millimeter', linearDeflectionType: 'bounding_box_ratio', linearDeflection: 0.001, angularDeflection: 0.4 });
   if (!r.success || !r.meshes.length) throw new Error(`This ${e.toUpperCase()} file has no solid geometry Lime can read.`);
-  const pos = [], idx = [], parts = [];
+  const pos = [], idx = [], parts = [], faces = [], c8 = (c) => (c ? (Math.round(c[0] * 255) << 16) | (Math.round(c[1] * 255) << 8) | Math.round(c[2] * 255) : null);
+  let face = 0;
   for (const m of r.meshes) {
-    const start = pos.length / 3;
+    const start = pos.length / 3, nt = m.index.array.length / 3, base = idx.length;
     pos.push(...m.attributes.position.array);
-    parts.push({ start: idx.length, color: m.color ? (Math.round(m.color[0] * 255) << 16) | (Math.round(m.color[1] * 255) << 8) | Math.round(m.color[2] * 255) : null });
     for (const i of m.index.array) idx.push(start + i);
+    // Each B-rep face keeps an id (drawings use them to tell real edges from tessellation) and its own colour.
+    const bf = m.brep_faces?.length ? m.brep_faces : [{ first: 0, last: nt - 1 }];
+    for (const f of bf) {
+      const color = c8(f.color) ?? c8(m.color), at = base + f.first * 3;
+      if (!parts.length || parts[parts.length - 1].color !== color) parts.push({ start: at, color });
+      for (let t = f.first; t <= f.last; t++) faces[base / 3 + t] = face;
+      face++;
+    }
   }
-  return mesh(pos, idx, parts.some((p) => p.color != null) ? parts : null);
+  const out = mesh(pos, idx, parts.some((p) => p.color != null) ? parts : null);
+  out.faces = Int32Array.from(faces, (v) => v ?? -1);
+  return out;
 }
 
 function meshInfo(m) {
@@ -954,10 +997,12 @@ function writeGltf(src, embed) {
   return Buffer.concat([h, c(js.length, 0x4e4f534a), js, c(bin.length, 0x004e4942), bin]);
 }
 const writeGlb = (m) => writeGltf(m, false);
-function write3mf(m) {
+const MF_NAMES = { mm: 'millimeter', cm: 'centimeter', m: 'meter', in: 'inch', ft: 'foot' };
+function write3mf(m, unit = 'mm') {
   const { zipSync, strToU8 } = require('fflate');
   const v = [], t = [], weld = new Map(), pal = m.parts?.some((q) => q.color != null) ? palette(m.parts) : null, at = new Map(pal?.map((q, k) => [ck(q), k]));
-  const key = (i) => `x="${fmt(m.pos[i * 3])}" y="${fmt(m.pos[i * 3 + 1])}" z="${fmt(m.pos[i * 3 + 2])}"`;
+  const q = 10 ** ({ cm: 4, m: 6, in: 5, ft: 6 }[unit] || 3), f = (n) => String(Math.round(n * q) / q);
+  const key = (i) => `x="${f(m.pos[i * 3])}" y="${f(m.pos[i * 3 + 1])}" z="${f(m.pos[i * 3 + 2])}"`;
   const vert = (k) => { if (!weld.has(k)) { weld.set(k, weld.size); v.push(`<vertex ${k}/>`); } return weld.get(k); };
   const def = pal ? at.get(ck(m.parts[0])) : null;
   for (const s of spans(m)) {
@@ -972,7 +1017,7 @@ function write3mf(m) {
   return Buffer.from(zipSync({
     '[Content_Types].xml': strToU8('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'),
     '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'),
-    '3D/3dmodel.model': strToU8(`<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">Lime</metadata><resources>${mats}<object id="2" type="model"${pal ? ` pid="1" pindex="${def}"` : ''}><mesh><vertices>${v.join('')}</vertices><triangles>${t.join('')}</triangles></mesh></object></resources><build><item objectid="2"/></build></model>`),
+    '3D/3dmodel.model': strToU8(`<?xml version="1.0" encoding="UTF-8"?><model unit="${MF_NAMES[unit] || 'millimeter'}" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata name="Application">Lime</metadata><resources>${mats}<object id="2" type="model"${pal ? ` pid="1" pindex="${def}"` : ''}><mesh><vertices>${v.join('')}</vertices><triangles>${t.join('')}</triangles></mesh></object></resources><build><item objectid="2"/></build></model>`),
   }));
 }
 
@@ -1058,7 +1103,7 @@ async function convert(p, opts, ctx) {
   const to = opts.to || 'png';
   const e = U.ext(p);
   const is2d = KINDS.cad2d.includes(e);
-  const out = ctx.out.file(p, `${U.base(p)}${e === to ? '-converted' : ''}.${to}`);
+  const out = ctx.out.file(p, `${U.base(p)}${opts.suffix ?? (e === to ? '-converted' : '')}.${to}`);
   ctx.progress?.(0.1, 'Reading drawing');
   if (is2d) {
     const model = await readDrawing(p);
@@ -1068,7 +1113,7 @@ async function convert(p, opts, ctx) {
     ctx.progress?.(0.7, `Writing ${to.toUpperCase()}`);
     if (to === 'svg') { await fsp.writeFile(out, drawingSvg(items, opts).svg); return out; }
     if (to === 'pdf') return drawingPdf(items, out, opts);
-    if (to === 'dxf') { await fsp.writeFile(out, drawingDxf(items, model.layers)); return out; }
+    if (to === 'dxf') { await fsp.writeFile(out, opts.dxf === 'r12' ? drawingDxf(items, model.layers) : drawingDxf2000(items, model)); return out; }
     if (['png', 'jpg', 'webp'].includes(to)) {
       const px = Number(opts.size) || 3000;
       const { svg } = drawingSvg(items, { ...opts, pxWidth: px, width: px / 2 });
@@ -1084,30 +1129,76 @@ async function convert(p, opts, ctx) {
     }
     throw new Error(`Drawings can be saved as SVG, PDF, PNG, JPG or DXF, not ${to.toUpperCase()}.`);
   }
-  const m = await readMesh(p);
+  if (!MODEL_OUT.includes(to)) throw new Error(`Models can be saved as ${MODEL_OUT.filter((x) => !['stp', 'igs', 'jpg'].includes(x)).map((x) => x.toUpperCase()).join(', ')}, not ${to.toUpperCase()}.`);
+  const X = require('./mesh'), B = require('./brep');
+  // A B-rep model stays exact through Open CASCADE unless its triangles are to be changed.
+  if (B_REP.includes(to) && B_REP.includes(e) && !opts.repair && !(opts.keep < 100)) {
+    ctx.progress?.(0.3, 'Open CASCADE');
+    const box = opts.centre ? X.box((await readMesh(p)).pos) : null;
+    try { return await B.exact(p, to, out, { ...opts, box }); } catch (err) { if (/couldn’t read/.test(err.message)) throw err; }
+  }
+  let m = await readMesh(p);
   if (!m.idx.length) throw new Error('This model has no triangles.');
+  if (opts.repair) { ctx.progress?.(0.4, 'Repairing'); m = X.repair(m).mesh; }
+  if (opts.keep && opts.keep < 100) { ctx.progress?.(0.5, 'Simplifying'); m = X.simplify(m, opts.keep / 100); }
+  return saveModel(X.place(m, opts), to, out, opts, U.base(p), ctx);
+}
+async function saveModel(m, to, out, opts, name, ctx) {
+  const X = require('./mesh'), u = X.UNITS[opts.units] ? opts.units : 'mm', mu = X.inUnits(m, u);
   ctx.progress?.(0.6, `Writing ${to.toUpperCase()}`);
-  if (to === 'stl') await fsp.writeFile(out, writeStl(m));
+  if (to === 'stl') await fsp.writeFile(out, opts.ascii ? X.writeStlAscii(mu, name.replace(/\s+/g, '_')) : writeStl(mu));
   else if (to === 'obj') {
     const stem = path.join(path.dirname(out), U.base(out).replace(/\s+/g, '_'));
     let mtl = m.parts?.some((q) => q.color != null) ? `${stem}.mtl` : null;
     for (let i = 1; mtl && fs.existsSync(mtl); i++) mtl = `${stem}_${i}.mtl`;
-    const r = writeObj(m, mtl && path.basename(mtl));
+    const r = writeObj(mu, mtl && path.basename(mtl));
     await fsp.writeFile(out, r.obj);
     if (mtl) { await fsp.writeFile(mtl, r.mtl); return { path: out, paths: [out, mtl] }; }
   }
-  else if (to === 'ply') await fsp.writeFile(out, writePly(m));
+  else if (to === 'ply') await fsp.writeFile(out, writePly(mu));
+  else if (to === 'off') await fsp.writeFile(out, X.writeOff(mu));
+  else if (to === 'amf') await fsp.writeFile(out, u === 'cm' ? X.writeAmf(m, 'mm') : X.writeAmf(mu, u));
+  else if (to === 'wrl') await fsp.writeFile(out, X.writeWrl(mu, u));
+  else if (to === 'x3d') await fsp.writeFile(out, X.writeX3d(mu, u));
+  else if (to === 'dae') await fsp.writeFile(out, X.writeDae(mu, u, name));
+  else if (B_REP.includes(to)) { ctx.progress?.(0.7, 'Making faces'); await fsp.writeFile(out, require('./brep').write(m, to, { unit: u, name, refine: opts.refine !== false })); }
   else if (to === 'glb' || to === 'gltf') await fsp.writeFile(out, writeGltf(m, to === 'gltf'));
-  else if (to === '3mf') await fsp.writeFile(out, write3mf(m));
+  else if (to === '3mf') await fsp.writeFile(out, write3mf(mu, u));
   else if (to === 'png' || to === 'jpg') { await renderPng(m, out, { ...opts, background: to === 'jpg' ? '#ffffff' : opts.background }); if (to === 'jpg') { const b = await require('sharp')(out).jpeg({ quality: 92 }).toBuffer(); await fsp.writeFile(out, b); } }
   else if (to === 'pdf') {
     const tmp = path.join(await U.tmpDir('cad'), 'view.png');
     await renderPng(m, tmp, opts);
     await require('./pdf').imagesToPdf([tmp], { pageSize: 'fit' }, out);
-  } else throw new Error(`Models can be saved as STL, OBJ, PLY, GLB, glTF, 3MF, PNG or PDF, not ${to.toUpperCase()}.`);
+  }
   return out;
 }
+const B_REP = ['step', 'stp', 'iges', 'igs', 'brep'];
+const MODEL_OUT = ['stl', 'obj', 'glb', 'gltf', '3mf', 'ply', 'step', 'stp', 'iges', 'igs', 'brep', 'off', 'amf', 'wrl', 'x3d', 'dae', 'png', 'jpg', 'pdf'];
 async function render(p, opts, ctx) { return convert(p, { ...opts, to: 'png' }, ctx); }
+const sameModel = (p) => (['stl', 'obj', 'ply', 'off', '3mf', 'glb', 'gltf'].includes(U.ext(p)) ? U.ext(p) : 'stl');
+const count = (v, one, many) => `${v.toLocaleString('en-US')} ${v === 1 ? one : many}`;
+async function meshFrom(p) { const m = await readMesh(p); if (!m.idx.length) throw new Error('This model has no triangles.'); return m; }
+async function repairModel(p, opts, ctx) {
+  const to = sameModel(p), { mesh: m, report: r } = require('./mesh').repair(await meshFrom(p));
+  const out = await saveModel(m, to, ctx.out.file(p, `${U.base(p)}-repaired.${to}`), opts, U.base(p), ctx);
+  const done = [r.points && `merged ${count(r.points, 'point', 'points')}`, r.degenerate && `removed ${count(r.degenerate, 'broken triangle', 'broken triangles')}`, r.duplicates && `removed ${count(r.duplicates, 'doubled triangle', 'doubled triangles')}`, r.flipped && `turned ${count(r.flipped, 'triangle', 'triangles')} round`].filter(Boolean);
+  return { path: out.path || out, paths: out.paths, note: done.length ? `${done.join(', ').replace(/^./, (c) => c.toUpperCase())}.` : 'Nothing needed repairing.' };
+}
+async function simplifyModel(p, opts, ctx) {
+  const to = sameModel(p), m = await meshFrom(p), keep = Math.min(99, Math.max(1, Number(opts.keep) || 50)), s = require('./mesh').simplify(m, keep / 100);
+  const out = await saveModel(s, to, ctx.out.file(p, `${U.base(p)}-simplified.${to}`), opts, U.base(p), ctx);
+  return { path: out.path || out, paths: out.paths, note: `${count(m.idx.length / 3, 'triangle', 'triangles')} → ${(s.idx.length / 3).toLocaleString('en-US')}` };
+}
+async function mergeModels(files, opts, ctx) {
+  const list = [], to = opts.to || 'stl';
+  for (const [i, f] of files.entries()) { ctx.progress?.((i / files.length) * 0.5, `Reading ${path.basename(f)}`); list.push(await meshFrom(f)); }
+  return saveModel(require('./mesh').merge(list, { arrange: !!opts.arrange }), to, ctx.out.file(files[0], `${U.base(files[0])} - merged.${to}`), opts, `${U.base(files[0])} merged`, ctx);
+}
+async function drawing(p, opts, ctx) {
+  const m = await readMesh(p);
+  if (!m.idx.length) throw new Error('This model has no triangles.');
+  return require('./views').drawing(m, p, opts, ctx);
+}
 async function info(p) {
   const e = U.ext(p);
   if (KINDS.cad2d.includes(e)) {
@@ -1144,4 +1235,4 @@ async function thumbnail(p, size = 240) {
   } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
 }
 
-module.exports = { KINDS, convert, render, info, report, thumbnail, readDrawing, readMesh, flatten, drawingSvg, meshInfo, writeStl, writeGlb, triangulate, meshOf, rgb };
+module.exports = { KINDS, convert, render, repairModel, simplifyModel, mergeModels, drawing, info, report, thumbnail, readDrawing, readMesh, flatten, drawingSvg, meshInfo, writeStl, writeGlb, triangulate, meshOf, rgb, mesh, spans, palette, ck, alpha8, hex, textFonts, onLight, aci, extents, MF_UNITS };

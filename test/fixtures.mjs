@@ -801,6 +801,18 @@ fs.writeFileSync(P('lines.dxf'), ['0', 'SECTION', '2', 'HEADER', '9', '$LTSCALE'
 const box = { pos: cube.pos.map((v, i) => v * [1, 2, 3][i % 3]), idx: cube.idx };
 fs.writeFileSync(P('box.stl'), cad.writeStl(box));
 fs.writeFileSync(P('box.glb'), cad.writeGlb(box));
+// A 20 mm cube with a 10 mm hollow (its faces turned inwards), for solids with voids.
+const shifted = (k, d, inward) => ({ pos: cube.pos.map((v) => v * k + d), idx: inward ? cube.idx.map((_, i) => cube.idx[i - (i % 3) + [0, 2, 1][i % 3]]) : cube.idx });
+{ const a = shifted(2, 0), b = shifted(1, 5, true); fs.writeFileSync(P('hollow.stl'), cad.writeStl({ pos: Float32Array.from([...a.pos, ...b.pos]), idx: Uint32Array.from([...a.idx, ...b.idx.map((i) => i + 8)]) })); }
+// A stepped block, an L of 40 × 20 mm drawn along Y for 20 mm: from the left its lower step hides behind the tall part.
+{
+  const L = [[0, 0], [40, 0], [40, 10], [20, 10], [20, 20], [0, 20]], pos = [...L.flatMap(([x, z]) => [x, 0, z]), ...L.flatMap(([x, z]) => [x, 20, z])], idx = [];
+  cad.triangulate(pos, [0, 1, 2, 3, 4, 5], idx); cad.triangulate(pos, [11, 10, 9, 8, 7, 6], idx);
+  for (let i = 0; i < 6; i++) { const j = (i + 1) % 6; idx.push(i, i + 6, j + 6, i, j + 6, j); }
+  fs.writeFileSync(P('step.stl'), cad.writeStl({ pos: Float32Array.from(pos), idx: Uint32Array.from(idx) }));
+}
+// The 10 mm cube with one triangle turned the wrong way, one doubled and one with two corners in the same place.
+{ const t = Array.from(cube.idx); [t[3], t[4]] = [t[4], t[3]]; fs.writeFileSync(P('broken.stl'), cad.writeStl({ pos: cube.pos, idx: Uint32Array.from([...t, t[15], t[16], t[17], 0, 0, 6]) })); }
 fs.writeFileSync(P('box-inch.3mf'), require('fflate').zipSync({ '_rels/.rels': Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="r" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'), '3D/3dmodel.model': Buffer.from(`<?xml version="1.0"?><model unit="inch" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${Array.from({ length: 8 }, (_, i) => `<vertex x="${box.pos[i * 3] / 10}" y="${box.pos[i * 3 + 1] / 10}" z="${box.pos[i * 3 + 2] / 10}"/>`).join('')}</vertices><triangles>${Array.from({ length: 12 }, (_, i) => `<triangle v1="${cube.idx[i * 3]}" v2="${cube.idx[i * 3 + 1]}" v3="${cube.idx[i * 3 + 2]}"/>`).join('')}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`) }));
 fs.writeFileSync(P('mesh.obj'), `v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n`);
 fs.writeFileSync(P('lshape.obj'), '# concave L face with an MTL colour, and a vertex-coloured triangle\nmtllib lshape.mtl\no tri\nv 30 0 0 0 1 0\nv 40 0 0 0 1 0\nv 30 10 0 0 1 0\nf -3 -2 -1\no L\nv 20 0 0\nv 20 10 0\nv 10 10 0\nv 10 20 0\nv 0 20 0\nv 0 0 0\nusemtl orange\nf 4 5 6 \\\n  7 8 9\n');
