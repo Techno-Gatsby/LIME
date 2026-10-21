@@ -271,5 +271,52 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
     return `P3 kept in ${out.join(', ')}`;
   });
 
+  const fromLime = (m) => require(require.resolve(m, { paths: [path.join(__dirname, '..', 'src', 'main')] }));
+  const BOX = [0, 0, 0, 20, 0, 0, 20, 10, 0, 0, 10, 0, 0, 0, 5, 20, 0, 5, 20, 10, 5, 0, 10, 5].map((v, i) => v + [3, -4, 7][i % 3]);
+  const TRIS = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
+  const glb = (json, bin) => {
+    const pad = (b, c) => Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4, c)]), j = pad(Buffer.from(JSON.stringify(json)), 0x20), b = pad(bin, 0);
+    const head = Buffer.alloc(12), ch = (t, d) => { const h = Buffer.alloc(8); h.writeUInt32LE(d.length); h.writeUInt32LE(t, 4); return Buffer.concat([h, d]); };
+    head.writeUInt32LE(0x46546c67); head.writeUInt32LE(2, 4); head.writeUInt32LE(12 + 8 + j.length + 8 + b.length, 8);
+    return Buffer.concat([head, ch(0x4e4f534a, j), ch(0x004e4942, b)]);
+  };
+  const scene = { asset: { version: '2.0' }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }] };
+  const posAcc = { componentType: 5126, count: 8, type: 'VEC3', min: [3, -4, 7], max: [23, 6, 12] };
+  const modelBox = async (file, name) => {
+    const [o] = await run('convert-model', [file], { to: 'stl' }, name), i = await E('cad').info(o), m = await E('cad').readMesh(o);
+    const mn = [0, 1, 2].map((k) => Math.min(...m.pos.filter((_, j) => j % 3 === k))), mx = [0, 1, 2].map((k) => Math.max(...m.pos.filter((_, j) => j % 3 === k)));
+    return { triangles: i.triangles, size: mx.map((v, k) => v - mn[k]) };
+  };
+  const plainGlb = path.join(OUT, 'box.glb');
+  fs.writeFileSync(plainGlb, glb({ ...scene, meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }], buffers: [{ byteLength: 96 + 72 }], bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 96 }, { buffer: 0, byteOffset: 96, byteLength: 72 }], accessors: [{ ...posAcc, bufferView: 0 }, { bufferView: 1, componentType: 5123, count: 36, type: 'SCALAR' }] }, Buffer.concat([Buffer.from(new Float32Array(BOX).buffer), Buffer.from(new Uint16Array(TRIS).buffer)])));
+  await check('Draco-compressed GLB opens', async () => {
+    const D = await fromLime('draco3dgltf').createEncoderModule({}), enc = new D.Encoder(), mb = new D.MeshBuilder(), mesh = new D.Mesh(), out = new D.DracoInt8Array();
+    mb.AddFacesToMesh(mesh, 12, new Uint32Array(TRIS));
+    const id = mb.AddFloatAttributeToMesh(mesh, D.POSITION, 8, 3, new Float32Array(BOX));
+    enc.SetAttributeQuantization(D.POSITION, 14);
+    const len = enc.EncodeMeshToDracoBuffer(mesh, out), data = Buffer.from(Int8Array.from({ length: len }, (_, i) => out.GetValue(i)).buffer);
+    D.destroy(out); D.destroy(mesh); D.destroy(mb); D.destroy(enc);
+    const file = path.join(OUT, 'box-draco.glb');
+    fs.writeFileSync(file, glb({ ...scene, extensionsUsed: ['KHR_draco_mesh_compression'], extensionsRequired: ['KHR_draco_mesh_compression'], meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1, extensions: { KHR_draco_mesh_compression: { bufferView: 0, attributes: { POSITION: id } } } }] }], buffers: [{ byteLength: data.length }], bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: data.length }], accessors: [posAcc, { componentType: 5123, count: 36, type: 'SCALAR' }] }, data));
+    const a = await modelBox(file, 'draco'), b = await modelBox(plainGlb, 'plain-glb');
+    ok(a.triangles === 12, `${a.triangles} triangles`);
+    ok(far(a.size, b.size) <= Math.max(...b.size) / (1 << 14), `size ${fmt(a.size)} against ${fmt(b.size)}, more than 14-bit quantisation explains`);
+    return `${fs.statSync(file).size} bytes: 12 triangles, ${fmt(a.size)} mm against ${fmt(b.size)} uncompressed (within 14-bit quantisation)`;
+  });
+  await check('meshopt-compressed GLB opens', async () => {
+    const { MeshoptEncoder: M } = await import(require.resolve('meshoptimizer', { paths: [path.join(__dirname, '..', 'src', 'main')] }));
+    await M.ready;
+    const v = Buffer.from(M.encodeGltfBuffer(new Uint8Array(new Float32Array(BOX).buffer), 8, 12, 'ATTRIBUTES')), ix = Buffer.from(M.encodeGltfBuffer(new Uint8Array(new Uint32Array(TRIS).buffer), 36, 4, 'TRIANGLES'));
+    const vb = Buffer.concat([v, Buffer.alloc((4 - (v.length % 4)) % 4)]), data = Buffer.concat([vb, ix]);
+    const file = path.join(OUT, 'box-meshopt.glb');
+    fs.writeFileSync(file, glb({ ...scene, extensionsUsed: ['EXT_meshopt_compression'], extensionsRequired: ['EXT_meshopt_compression'], meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+      buffers: [{ byteLength: data.length }, { byteLength: 96 + 144, extensions: { EXT_meshopt_compression: { fallback: true } } }],
+      bufferViews: [{ buffer: 1, byteOffset: 0, byteLength: 96, byteStride: 12, extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: 0, byteLength: v.length, byteStride: 12, count: 8, mode: 'ATTRIBUTES' } } }, { buffer: 1, byteOffset: 96, byteLength: 144, extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: vb.length, byteLength: ix.length, byteStride: 4, count: 36, mode: 'TRIANGLES' } } }],
+      accessors: [{ ...posAcc, bufferView: 0 }, { bufferView: 1, componentType: 5125, count: 36, type: 'SCALAR' }] }, data));
+    const a = await modelBox(file, 'meshopt'), b = await modelBox(plainGlb, 'plain-glb-2');
+    ok(a.triangles === 12 && far(a.size, b.size) < 1e-4, `${a.triangles} triangles, size ${fmt(a.size)} against ${fmt(b.size)}`);
+    return `${fs.statSync(file).size} bytes: 12 triangles, ${a.size.join(' × ')} mm, the same as uncompressed`;
+  });
+
   return results;
 };

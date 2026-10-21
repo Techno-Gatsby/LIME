@@ -31,6 +31,8 @@ Bundled engines
   Noto Sans Arabic, Noto Sans Devanagari, Noto Sans Thai fonts ... SIL Open Font License 1.1
   bidi-js .................. MIT             Jason Johnston         https://github.com/lojjic/bidi-js  (Unicode bidirectional algorithm for text in the PDF editor)
   regenerator-runtime ...... MIT             Ben Newman / Meta      https://github.com/facebook/regenerator
+  draco3dgltf (Draco) ...... Apache-2.0      Google                 https://github.com/google/draco
+  meshoptimizer ............ MIT             Arseny Kapoulkine      https://github.com/zeux/meshoptimizer
   Tesseract trained data (tessdata_best, tessdata_fast) ... Apache-2.0
 
 ArtCraft engines (unmodified command-line builds from github.com/storytold)
