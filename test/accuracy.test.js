@@ -109,5 +109,82 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
   ocr.engines.os = realOs;
   ocr.engines.note = realNote;
 
+  const edit = require(path.join(__dirname, '..', 'src', 'main', 'pdfedit'));
+  const { PDFDocument, PDFName, decodePDFRawStream } = require('pdf-lib');
+  const FONTS = path.join(E('util').cfg.data, 'fonts');
+  const blank = path.join(OUT, 'blank.pdf');
+  const typed = async (name, text, font) => {
+    if (!fs.existsSync(blank)) { const d = await PDFDocument.create(); d.addPage([500, 120]); fs.writeFileSync(blank, await d.save()); }
+    const s = await edit.open(blank);
+    await edit.apply(s.id, [{ type: 'text', page: 0, x: 30, y: 60, size: 28, text, font, color: '#000000' }]);
+    const out = path.join(OUT, `typed-${name}.pdf`);
+    await edit.save(s.id, out);
+    edit.close(s.id);
+    const P = E('pdf'), m = await P.mupdf(), { doc } = await P.readPdf(out), page = doc.loadPage(0);
+    const chars = [];
+    page.toStructuredText('preserve-whitespace').walk({ onChar: (c, origin) => chars.push([c, origin[0]]) });
+    return { out, text: page.toStructuredText('').asText().trim(), chars, png: Buffer.from(page.toPixmap(m.Matrix.scale(3, 3), m.ColorSpace.DeviceRGB, false, true).asPNG()) };
+  };
+  const pango = (fam, file, text, extra = '') => sharp({ text: { text: `<span font="${fam} 28" foreground="black"${extra}>${text}</span>`, fontfile: path.join(FONTS, file), dpi: 216, rgba: true } }).flatten({ background: '#ffffff' }).png().toBuffer();
+  const ink = async (png) => {
+    const { data, info } = await sharp(png).greyscale().raw().toBuffer({ resolveWithObject: true });
+    let x0 = info.width, y0 = info.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) if (data[y * info.width + x] < 128) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    return { left: x0, top: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 };
+  };
+  const overlap = async (a, b) => {
+    const W = 600, H = 80, pix = async (png) => sharp(png).extract(await ink(png)).greyscale().resize(W, H, { fit: 'fill' }).raw().toBuffer();
+    const A = await pix(a), B = await pix(b);
+    let both = 0, any = 0;
+    for (let i = 0; i < W * H; i++) { const x = A[i] < 128, y = B[i] < 128; if (x && y) both++; if (x || y) any++; }
+    return both / any;
+  };
+  const pct = (v) => `${Math.round(v * 100)}%`;
+  await check('Arabic, Devanagari, Thai and ligatures in edited text', async () => {
+    const fontkit = require('@pdf-lib/fontkit'), notes = [];
+    for (const [name, fam, file, text, font] of [['arabic', 'Noto Sans Arabic', 'NotoSansArabic-Regular.ttf', 'سلام عليكم يا عالم', 'sans'], ['devanagari', 'Noto Sans Devanagari', 'NotoSansDevanagari-Regular.ttf', 'नमस्ते क्षत्रिय हिन्दी', 'sans'], ['thai', 'Noto Sans Thai', 'NotoSansThai-Regular.ttf', 'สวัสดี ภาษาไทย', 'sans'], ['latin', 'Carlito', 'Carlito-Regular.ttf', 'office fifi flow', 'carlito']]) {
+      const r = await typed(name, text, font);
+      ok(r.text === text, `${name} reads back as ${JSON.stringify(r.text)}`);
+      const same = await overlap(r.png, await pango(fam, file, text));
+      ok(same >= 0.85, `${name}: ${pct(same)} of the ink agrees with HarfBuzz's rendering`);
+      let control = '';
+      if (name === 'arabic') { const iso = await overlap(r.png, await pango(fam, file, [...text].join('\u200c'))); ok(iso < 0.4, `isolated forms would agree ${pct(iso)}`); control = `, ${pct(iso)} with isolated letters`; }
+      if (name === 'latin') { const plain = await overlap(r.png, await pango(fam, file, text, ' font_features="liga=0"')); ok(plain < same - 0.05, `without ligatures ${pct(plain)}`); control = `, ${pct(plain)} without ligatures`; }
+      if (name === 'devanagari') ok(/k_ssa/.test(fontkit.create(fs.readFileSync(path.join(FONTS, file))).layout('क्ष').glyphs[0].name), 'no conjunct glyph in the font');
+      notes.push(`${name} ${pct(same)}${control}`);
+    }
+    return `read back exactly; ink agreeing with HarfBuzz: ${notes.join('; ')}`;
+  });
+  await check('right-to-left lines keep numbers and brackets in place', async () => {
+    const r = await typed('bidi', 'سلام عليكم (2024) يا عالم', 'sans'), at = (c) => r.chars.filter(([x]) => x === c).map(([, x]) => x);
+    const digits = r.chars.filter(([c]) => /\d/.test(c)).map(([c, x]) => [c, x]);
+    ok(digits.map(([c]) => c).join('') === '2024' && digits.every(([, x], i) => !i || x > digits[i - 1][1]), `digits ${JSON.stringify(digits)}`);
+    ok(at('س')[0] > at('ك')[0] && at('ك')[0] > at('(')[0] && at('(')[0] > digits[3][1] && digits[0][1] > at(')')[0] && at(')')[0] > at('ي').find((x) => x < at(')')[0]) && at('ا')[0] < at(')')[0], `order by x: ${r.chars.filter(([c]) => c.trim()).sort((a, b) => a[1] - b[1]).map(([c, x]) => `${c}@${x.toFixed(0)}`).join(' ')}`);
+    const doc = await PDFDocument.load(fs.readFileSync(r.out)), noto = require('@pdf-lib/fontkit').create(fs.readFileSync(path.join(FONTS, 'NotoSans-Regular.ttf')));
+    let mirrored = 0;
+    for (const [, obj] of doc.context.enumerateIndirectObjects()) {
+      if (!(obj instanceof require('pdf-lib').PDFDict) || String(obj.get(PDFName.of('Subtype'))) !== '/Type0') continue;
+      const cid = obj.lookup(PDFName.of('DescendantFonts')).lookup(0), map = Buffer.from(decodePDFRawStream(cid.lookup(PDFName.of('CIDToGIDMap'))).decode());
+      const sub = require('@pdf-lib/fontkit').create(Buffer.from(decodePDFRawStream(cid.lookup(PDFName.of('FontDescriptor')).lookup(PDFName.of('FontFile2'))).decode()));
+      const cmap = Buffer.from(decodePDFRawStream(obj.lookup(PDFName.of('ToUnicode'))).decode()).toString('latin1');
+      for (const [, code, hex] of cmap.matchAll(/<([0-9a-f]{4})> <([0-9a-f]+)>/gi)) {
+        const ch = Buffer.from(hex, 'hex').swap16().toString('utf16le');
+        if (ch !== '(' && ch !== ')') continue;
+        const gid = map.readUInt16BE(2 * parseInt(code, 16));
+        ok(sub.getGlyph(gid).path.toSVG() === noto.glyphForCodePoint(ch === '(' ? 0x29 : 0x28).path.toSVG(), `${ch} is drawn with its own glyph, not the mirrored one`);
+        mirrored++;
+      }
+    }
+    ok(mirrored === 2, `${mirrored} bracket codes`);
+    return `digits read left to right inside the Arabic line, both brackets drawn mirrored, words ordered right to left`;
+  });
+  await check('a script no bundled font has comes from an installed font', async () => {
+    const text = 'שלום עולם', r = await typed('hebrew', text, 'sans');
+    ok(r.text === text, `reads back as ${JSON.stringify(r.text)}`);
+    const box = await ink(r.png);
+    ok(box.width > 100 && box.height > 20, `ink ${JSON.stringify(box)}`);
+    return `Hebrew typed with the Noto Sans choice reads back exactly and shows ${box.width}×${box.height} px of ink at 3×`;
+  });
+
   return results;
 };

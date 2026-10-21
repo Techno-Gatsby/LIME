@@ -3,6 +3,7 @@
 const { PDFDocument, rgb, degrees, BlendMode, LineCapStyle, setCharacterSpacing, endMarkedContent, PDFOperator, PDFOperatorNames, PDFName, PDFNumber, PDFArray, PDFDict, PDFHexString } = require('pdf-lib');
 const P = require('./engines/pdf');
 const U = require('./engines/util');
+const shape = require('./engines/shape');
 const { fsp, path } = U;
 
 const sessions = new Map();
@@ -29,14 +30,12 @@ async function open(file, password) {
   const bytes = new Uint8Array(await fsp.readFile(file));
   const m = await P.mupdf();
   const probe = m.Document.openDocument(bytes, 'application/pdf');
-  // Asked once: asking again after the password went in tries an empty one, which leaves later objects unreadable.
   const locked = probe.needsPassword();
   if (locked && (!password || !probe.authenticatePassword(password))) {
     const e = new Error(password ? 'That password is wrong.' : 'This PDF is password-protected.');
     e.code = 'PASSWORD';
     throw e;
   }
-  // The working copy is unlocked; the password is kept to lock the saved file again.
   const s = { id: ++seq, path: file, password: locked ? password : '', undo: [], redo: [], dirty: false };
   const clean = locked ? Buffer.from(probe.saveToBuffer('encrypt=none,garbage=compact').asUint8Array()) : bytes;
   await loadState(s, clean);
@@ -52,16 +51,7 @@ async function render(id, index, scale) {
   const pix = page.toPixmap(m.Matrix.scale(scale, scale), m.ColorSpace.DeviceRGB, false, true);
   return Buffer.from(pix.asPNG());
 }
-// The page under one line, drawn without its text. The editor shows this where a line is being edited, so cell
-// shading, rules and pictures behind it stay exactly as they are; saving removes only the text too.
-// With mode 'erase' it shows what removing everything in the box leaves, as saving does it: drawings wholly inside
-// go, and text and pictures lose what is inside the box.
 const boundPath = (m, path, stroke, ctm) => { try { return path.getBounds(stroke || null, ctm); } catch (_) { return path.getBounds(new m.StrokeState(), ctm); } };
-// MuPDF's redaction takes out every glyph whose box (the font's bounding box, set at the glyph's baseline) touches
-// a rectangle, and those boxes reach well into the lines above and below. So text is taken out with a band across
-// the middle of each line instead, which every glyph of the line crosses and none of its neighbours' does, even at
-// single spacing. With `whole`, only lines whose middle is in the box count (an edited line or paragraph); otherwise
-// any line whose ink the box touches does, within the box's width (a white-out or a redaction).
 function textBands(lines, box, whole) {
   const out = [];
   for (const l of lines) {
@@ -72,14 +62,12 @@ function textBands(lines, box, whole) {
   }
   return out.length ? out : [[box[0] - 0.3, box[1] - 0.3, box[2] + 0.3, box[3] + 0.3]];
 }
-// Whether a glyph drawn with its origin at (x, y) belongs to one of the bands' lines.
 const inBands = (bands, x, y) => bands.some((r) => { const h = (r[3] - r[1]) * 0.4; return x >= r[0] && x <= r[2] && y >= r[1] - h && y <= r[3] + h; });
 async function patch(id, index, bbox, scale, mode = 'text') {
   const s = get(id);
   const m = await P.mupdf();
   const page = s.doc.loadPage(index), area = page.getBounds(), erase = mode === 'erase';
   const bands = erase ? null : textBands(await text(id, index), bbox, true);
-  // The text drawn in the patch, less the glyphs of the line being edited.
   const without = (t, ctm) => { const keep = new m.Text(); t.walk({ showGlyph: (font, trm, gid, uni, wmode) => { if (!inBands(bands, trm[4] * ctm[0] + trm[5] * ctm[2] + ctm[4], trm[4] * ctm[1] + trm[5] * ctm[3] + ctm[5])) keep.showGlyph(font, trm, gid, uni, wmode); } }); return keep; };
   const [x0, y0, x1, y1] = [bbox[0] - 1, bbox[1] - 1, bbox[2] + 1, bbox[3] + 1];
   const pix = new m.Pixmap(m.ColorSpace.DeviceRGB, [0, 0, Math.max(1, Math.ceil((x1 - x0) * scale)), Math.max(1, Math.ceil((y1 - y0) * scale))], false);
@@ -105,9 +93,6 @@ async function patch(id, index, bbox, scale, mode = 'text') {
   dev.close();
   return Buffer.from(pix.asPNG());
 }
-// The page's own content as things to pick in the editor: each picture, each drawing (paths that touch are one
-// drawing, so a table's rules and cell fills come together, with the text inside them), and each block of text.
-// Page-filling backgrounds are left out, so a click never picks the whole page.
 async function objects(id, index) {
   const s = get(id);
   if (s.objCache.has(index)) return s.objCache.get(index);
@@ -123,7 +108,6 @@ async function objects(id, index) {
     fillImage: (img, t) => keep(images, m.Rect.transform([0, 0, 1, 1], t)),
     fillImageMask: (img, t) => keep(images, m.Rect.transform([0, 0, 1, 1], t)),
   }), m.Matrix.identity);
-  // Paths within 2 pt of each other join one drawing (sorted by left edge, so only neighbours are compared).
   const near = (a, b, g = 2) => a[0] - g <= b[2] && b[0] - g <= a[2] && a[1] - g <= b[3] && b[1] - g <= a[3];
   const groups = [];
   for (const r of paths.sort((a, b) => a[0] - b[0])) {
@@ -149,7 +133,6 @@ async function objects(id, index) {
   }
   for (const b of blocks) if (!items.some((it) => it.kind === 'table' && within(b.bbox, it.bbox))) items.push({ kind: 'text', bbox: clip(b.bbox), text: b.text.trim().slice(0, 80) });
   for (const r of images) items.push({ kind: 'image', bbox: r });
-  // Largest first, so smaller things drawn later sit on top and a click inside a table can still pick a picture in it.
   const out = items.filter((it) => size(it.bbox) > 1).sort((a, b) => size(b.bbox) - size(a.bbox)).map((it, i) => ({ id: `${index}:o${i}`, ...it }));
   s.objCache.set(index, out);
   return out;
@@ -178,7 +161,6 @@ async function search(id, needle) {
 
 function pushUndo(s) {
   s.undo.push(s.bytes);
-  // Thirty steps back, or fewer for big files: the copies kept for undo stay under 256 MB.
   for (let n = 0, i = s.undo.length - 1; i >= 0; i--) { n += s.undo[i].length; if (i && (n > 256e6 || s.undo.length - i >= 30)) { s.undo.splice(0, i); break; } }
   s.redo = [];
   s.dirty = true;
@@ -186,12 +168,10 @@ function pushUndo(s) {
 async function undo(id) { const s = get(id); if (!s.undo.length) return info(s); s.redo.push(s.bytes); await loadState(s, s.undo.pop()); s.dirty = true; return info(s); }
 async function redo(id) { const s = get(id); if (!s.redo.length) return info(s); s.undo.push(s.bytes); await loadState(s, s.redo.pop()); s.dirty = true; return info(s); }
 
-// Turns a point of the page (y down) clockwise by deg about (cx, cy), as CSS rotate() does on screen.
 const turner = (deg, cx, cy) => {
   const a = (deg * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a);
   return deg ? (u, v) => [cx + (u - cx) * c - (v - cy) * sn, cy + (u - cx) * sn + (v - cy) * c] : (u, v) => [u, v];
 };
-// Ticks and crosses as strokes across a unit box; the editor draws the same ones.
 const MARK_LINES = { check: [[[0.1, 0.55], [0.4, 0.85], [0.92, 0.15]]], cross: [[[0.15, 0.15], [0.85, 0.85]], [[0.85, 0.15], [0.15, 0.85]]] };
 const BUILT_IN = ['sans', 'serif', 'mono', 'carlito', 'helvetica', 'times', 'courier', 'caveat', 'dancing'];
 function fontKey(e) {
@@ -206,13 +186,10 @@ function fontKey(e) {
   return f === 'caveat' || f === 'dancing' ? f : `${f}${style}`;
 }
 
-// Fonts installed on this computer, grouped by family with a file per style. Only each file's name and OS/2 tables are
-// read, so a few hundred fonts take a moment; fonts whose licence forbids embedding are left out.
 const FONT_DIRS = () => (process.platform === 'darwin' ? ['/System/Library/Fonts', '/System/Library/Fonts/Supplemental', '/Library/Fonts', path.join(U.os.homedir(), 'Library', 'Fonts')]
   : process.platform === 'win32' ? [path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts'), process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'Windows', 'Fonts')].filter(Boolean)
     : ['/usr/share/fonts', '/usr/local/share/fonts', path.join(U.os.homedir(), '.fonts'), path.join(U.os.homedir(), '.local', 'share', 'fonts')]);
 const utf16 = (b) => { let t = ''; for (let i = 0; i + 1 < b.length; i += 2) t += String.fromCharCode(b.readUInt16BE(i)); return t; };
-// The faces in a font file: one, or several in a collection (.ttc, which is what most of macOS's own fonts are).
 function fontNames(file) {
   const fd = U.fs.openSync(file, 'r');
   try {
@@ -223,6 +200,7 @@ function fontNames(file) {
       const n = head.readUInt16BE(4), dir = read(16 * n, at + 12), table = {};
       for (let i = 0; i < n; i++) table[dir.toString('latin1', i * 16, i * 16 + 4)] = [dir.readUInt32BE(i * 16 + 8), dir.readUInt32BE(i * 16 + 12)];
       if (table['OS/2'] && (read(2, table['OS/2'][0] + 8).readUInt16BE(0) & 0x000f) === 0x0002) return null;
+      const bits = table['OS/2'] && table['OS/2'][1] >= 58 ? Array.from({ length: 4 }, (_, i) => read(4, table['OS/2'][0] + 42 + 4 * i).readUInt32BE(0)) : null;
       if (!table.name || table.name[1] > 1 << 20) return null;
       const t = read(table.name[1], table.name[0]), count = t.readUInt16BE(2), base = t.readUInt16BE(4), got = {};
       for (let i = 0; i < count; i++) {
@@ -231,7 +209,7 @@ function fontNames(file) {
         const v = plat === 3 || plat === 0 ? utf16(raw) : plat === 1 && enc === 0 ? raw.toString('latin1') : null, rank = plat === 3 && lang === 0x409 ? 3 : plat === 1 ? 1 : 2;
         if (v && (!got[id] || got[id].rank < rank)) got[id] = { v: v.trim(), rank };
       }
-      return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular' } : null;
+      return got[1] ? { family: got[1].v, style: got[2]?.v || 'Regular', bits } : null;
     };
     if (read(4, 0).readUInt32BE(0) !== 0x74746366) { const f = face(0); return f ? [{ ...f, at: file }] : []; }
     const n = Math.min(read(4, 8).readUInt32BE(0), 64), offs = read(4 * n, 12), out = [];
@@ -256,6 +234,7 @@ async function fonts() {
       if (!slot) continue;
       if (!map.has(n.family)) map.set(n.family, {});
       map.get(n.family)[slot] ||= n.at;
+      if (slot === 'regular') map.get(n.family).bits ||= n.bits;
     }
   }
   const list = [...map.entries()].filter(([, v]) => v.regular).map(([family, v]) => ({ family, bold: !!v.bold, italic: !!v.italic })).sort((a, b) => a.family.localeCompare(b.family));
@@ -263,14 +242,18 @@ async function fonts() {
   return list;
 }
 
-// Words wrapped to a paragraph's width, keeping the line breaks typed; a word wider than the box gets a line of its own.
-function wrapLines(str, width, widthOf) {
+async function covering(bit) {
+  await fonts();
+  for (const f of installed.map.values()) if (f.regular && f.bits && (f.bits[bit >> 5] >>> (bit & 31)) & 1) return `file:${f.regular}`;
+  return null;
+}
+async function wrapLines(str, width, widthOf) {
   const out = [];
   for (const para of String(str).split(/\r?\n/)) {
     let cur = '';
     for (const w of para.split(/ +/)) {
       const next = cur ? `${cur} ${w}` : w;
-      if (cur && widthOf(next) > width + 0.5) { out.push(cur); cur = w; } else cur = next;
+      if (cur && await widthOf(next) > width + 0.5) { out.push(cur); cur = w; } else cur = next;
     }
     out.push(cur);
   }
@@ -300,8 +283,6 @@ function addAnnot(page, e) {
     a = page.createAnnotation('Ink');
     a.setInkList([e.points]);
   } else if (e.type === 'measure') {
-    // A distance is a dimension line with its length as the caption; a perimeter or an area is an open or closed
-    // outline with the result as its comment.
     const pts = e.points || [];
     if (e.kind === 'distance') {
       a = page.createAnnotation('Line');
@@ -323,13 +304,10 @@ function addAnnot(page, e) {
   a.update();
 }
 
-// A Figure element with alternative text in the document's structure (made if the file has none), tied to the page
-// through the parent tree; returns the marked-content id the picture is drawn under.
 function tagFigure(doc, page, alt) {
   const ctx = doc.context, cat = doc.catalog, K = PDFName.of('K'), num = (o) => (o instanceof PDFNumber ? o.asNumber() : null);
   let rootRef = cat.get(PDFName.of('StructTreeRoot')), root = cat.lookup(PDFName.of('StructTreeRoot'));
   if (!(root instanceof PDFDict)) { root = ctx.obj({ Type: 'StructTreeRoot', K: [] }); rootRef = ctx.register(root); cat.set(PDFName.of('StructTreeRoot'), rootRef); }
-  // The figure goes under the Document element when there is one, else straight under the root.
   let parentRef = rootRef, parent = root;
   const top = root.lookup(K), first = top instanceof PDFArray ? top.lookup(0) : top;
   if (first instanceof PDFDict && /Document/.test(String(first.get(PDFName.of('S'))))) { parentRef = top instanceof PDFArray ? top.get(0) : root.get(K); parent = first; }
@@ -343,7 +321,6 @@ function tagFigure(doc, page, alt) {
   if (!(list instanceof PDFArray)) {
     key = Math.max(max + 1, num(root.get(PDFName.of('ParentTreeNextKey'))) ?? 0);
     list = ctx.obj([]);
-    // A new page key goes at the end of the last leaf, which then reaches up to it.
     const leaf = leaves[leaves.length - 1] || tree;
     if (!(leaf.lookup(PDFName.of('Nums')) instanceof PDFArray)) leaf.set(PDFName.of('Nums'), ctx.obj([]));
     const nums = leaf.lookup(PDFName.of('Nums')), limits = leaf.lookup(PDFName.of('Limits'));
@@ -372,9 +349,6 @@ async function apply(id, edits) {
   for (const [pi, list] of byPage) {
     const page = work.loadPage(pi);
     transforms.set(pi, m.Matrix.invert(page.getTransform()));
-    // Removing a picture, table, drawing or text block from the page: everything wholly inside the box goes, pictures
-    // lose their pixels inside it, and text inside it is taken out. Done first, on its own, because text edits below
-    // keep every drawing and picture.
     const erase = list.filter((e) => e.type === 'erase');
     if (erase.length) {
       for (const e of erase) { const a = page.createAnnotation('Redact'); a.setRect([e.rect[0] - 1, e.rect[1] - 1, e.rect[0] + e.rect[2] + 1, e.rect[1] + e.rect[3] + 1]); }
@@ -389,15 +363,11 @@ async function apply(id, edits) {
       for (const r of rects) { const a = page.createAnnotation('Redact'); a.setRect(r); }
       page.applyRedactions(false, 0, 0, 0);
     }
-    // Redaction marks: everything under them (text, pictures, drawings) goes for good, with a black box in its place
-    // unless the marks asked for none.
     const marks = list.filter((e) => e.type === 'redact');
     if (marks.length) {
       for (const e of marks) { const a = page.createAnnotation('Redact'); a.setRect([e.rect[0], e.rect[1], e.rect[0] + e.rect[2], e.rect[1] + e.rect[3]]); }
       page.applyRedactions(marks[0].boxes !== false, 2, 2, 1);
     }
-    // Markup, shapes, drawings and measurements become comments (annotations) as Acrobat makes them, so they stay
-    // editable in any viewer; Save can flatten them into the page instead.
     for (const e of list) if (ANNOTS.has(e.type)) addAnnot(page, e);
   }
   const redacted = Buffer.from(work.saveToBuffer('garbage=compact').asUint8Array());
@@ -419,17 +389,15 @@ async function apply(id, edits) {
           const str = String(e.text ?? '');
           if (!str.trim()) break;
           if (String(e.font).startsWith('sys:')) await fonts();
-          const font = await fonts_(fontKey(e), str);
           const size = Number(e.size) || 12;
           const lh = size * (Number(e.lineHeight) || 1.2), sp = Number(e.spacing) || 0;
-          const widthOf = (ln) => font.widthOfTextAtSize(ln, size) + sp * Math.max(0, [...ln].length - 1);
-          const lines = e.wrap ? wrapLines(str, Number(e.wrap), widthOf) : str.split(/\r?\n/);
-          const boxW = e.wrap ? Number(e.wrap) : Math.max(...lines.map(widthOf)), shift = { center: 0.5, right: 1 }[e.align] || 0;
-          // Turned text turns about the middle of its box, as the editor shows it.
+          const o = { chosen: await fonts_(fontKey(e), str), size, spacing: sp, fontFor: (k) => fonts_(k, str), covering, color, opacity };
+          const widthOf = (ln) => shape.width(doc, ln, o);
+          const lines = e.wrap ? await wrapLines(str, Number(e.wrap), widthOf) : str.split(/\r?\n/);
+          const widths = await Promise.all(lines.map(widthOf));
+          const boxW = e.wrap ? Number(e.wrap) : Math.max(...widths), shift = { center: 0.5, right: 1 }[e.align] || 0;
           const turn = turner(Number(e.rotate) || 0, e.x + boxW / 2, (e.y - size * 0.86 + e.y + (lines.length - 1) * lh + size * 0.28) / 2);
           const at = (u, v) => map(...turn(u, v)), trot = degrees(angle - (Number(e.rotate) || 0));
-          // A background colour behind the words, a little wider and taller than them, and a border around that with
-          // rounded corners (how stamps are drawn).
           const bg = e.bg && e.bg !== 'none' ? P.hex(e.bg) : undefined, border = e.border && e.border !== 'none' ? P.hex(e.border) : undefined;
           const pad = size * 0.18, boxH = (lines.length - 1) * lh + size * 1.14 + pad * 2;
           if (border) {
@@ -441,14 +409,14 @@ async function apply(id, edits) {
             page.drawRectangle({ x: bx, y: by, width: boxW + pad * 2, height: boxH, color: bg, opacity, rotate: trot });
           }
           if (sp) page.pushOperators(setCharacterSpacing(sp));
-          lines.forEach((ln, i) => {
-            const w = widthOf(ln), x0 = e.x + (boxW - w) * shift, base = e.y + i * lh;
+          for (const [i, ln] of lines.entries()) {
+            const w = widths[i], x0 = e.x + (boxW - w) * shift, base = e.y + i * lh;
             const [x, y] = at(x0, base);
-            page.drawText(ln, { x, y, size, font, color, opacity, rotate: trot });
+            await shape.draw(page, ln, { ...o, x, y, rotate: angle - (Number(e.rotate) || 0) });
             const rule = (dy) => { const [x1, y1] = at(x0, base + dy), [x2, y2] = at(x0 + w, base + dy); page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: size / 16, color, opacity }); };
             if (e.underline) rule(size * 0.12);
             if (e.strike) rule(-size * 0.3);
-          });
+          }
           if (sp) page.pushOperators(setCharacterSpacing(0));
           break;
         }
@@ -460,7 +428,6 @@ async function apply(id, edits) {
         }
         case 'highlight': {
           const [x, y, w, h] = e.rect;
-          // Underline and strike-out: a line along the bottom of what was marked, or through its middle.
           if (e.markup === 'underline' || e.markup === 'strike') {
             const th = Math.max(1, h * 0.08), at = e.markup === 'underline' ? y + h - th / 2 : y + h * 0.55, [x1, y1] = map(x, at), [x2, y2] = map(x + w, at);
             page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: th, color: P.hex(e.color || '#d13438') });
@@ -522,7 +489,6 @@ async function apply(id, edits) {
           const bytes = Buffer.from(m2[2], 'base64');
           const im = m2[1] === 'png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
           const [ax, ay] = map(x, y + h);
-          // With alternative text the picture is a tagged figure, so screen readers say what it shows.
           const mcid = e.alt ? tagFigure(doc, page, String(e.alt)) : null;
           if (mcid != null) page.pushOperators(PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [PDFName.of('Figure'), doc.context.obj({ MCID: mcid })]));
           page.drawImage(im, { x: ax, y: ay, width: w, height: h, rotate: rot, opacity });
@@ -533,14 +499,13 @@ async function apply(id, edits) {
       }
     }
   }
+  await shape.finish(doc);
   const next = await doc.save({ useObjectStreams: true });
   pushUndo(s);
   await loadState(s, next);
   return info(s);
 }
 
-// Page changes keep what belongs to the whole document (bookmarks, form fields, properties, labels): pages are moved
-// and deleted in place, and copies and new pages are added to the same file.
 async function pageOp(id, op) {
   const s = get(id);
   const m = await P.mupdf();
@@ -562,8 +527,6 @@ async function pageOp(id, op) {
     work.rearrangePages(order);
     out = Buffer.from(work.saveToBuffer('garbage=compact').asUint8Array());
   } else if (op.type === 'crop' || op.type === 'uncrop') {
-    // The box is drawn on the page as shown; each page gets it in its own view (clipped to the page), or with auto,
-    // the area its content covers plus a small margin.
     const work = m.Document.openDocument(s.bytes, 'application/pdf');
     for (const i of sel) {
       const page = work.loadPage(i);
@@ -580,7 +543,6 @@ async function pageOp(id, op) {
     const src = await PDFDocument.load(s.bytes, { updateMetadata: false });
     if (op.type === 'rotate') sel.forEach((i) => { const p = src.getPage(i); p.setRotation(degrees((((p.getRotation().angle || 0) + (op.angle || 90)) % 360 + 360) % 360)); });
     if (op.type === 'duplicate') {
-      // Each copy lands after the last selected page, in order, as its own page (nothing shared with the original).
       let at = Math.max(...sel) + 1;
       for (const p of await src.copyPages(src, sel)) src.insertPage(at++, p);
     }
@@ -605,7 +567,6 @@ async function pageOp(id, op) {
   await loadState(s, out);
   return info(s);
 }
-// The area a page's text, pictures and drawings cover (a page-filling background doesn't count), or null when empty.
 function contentBox(m, page, margin) {
   const b = page.getBounds(), whole = (b[2] - b[0]) * (b[3] - b[1]);
   let r = null;
@@ -621,8 +582,6 @@ function contentBox(m, page, margin) {
   return r && [r[0] - margin, r[1] - margin, r[2] + margin, r[3] + margin];
 }
 
-// Saving writes the working copy, flattening comments or form fields into the page when asked, and keeps the file's
-// password (or sets a new one) unless the protection is taken off.
 async function save(id, outPath, opts = {}) {
   const s = get(id);
   const target = outPath || s.path;
@@ -648,9 +607,6 @@ async function exportPages(id, pages, outPath) {
   return outPath;
 }
 
-// ── Comments, links, bookmarks, forms and the document's own settings ─────────────────────────────────────────
-// These change the working copy at once (one undo step each), while what is drawn on pages waits in the editor
-// until it is applied.
 async function mutate(s, fn) {
   const m = await P.mupdf();
   const work = m.Document.openDocument(s.bytes, 'application/pdf');
@@ -660,8 +616,6 @@ async function mutate(s, fn) {
   await loadState(s, next);
   return res;
 }
-// PdfCraft's automation tools on the working copy: the steps run on doc 1, and with save the result replaces it
-// (unless it is only a preview).
 async function craft(s, steps, { save: keep = true, label = '', preview: look = false } = {}) {
   const dir = await U.tmpDir('edcraft'), src = path.join(dir, 'in.pdf'), out = path.join(dir, 'out.pdf');
   try {
@@ -710,8 +664,6 @@ async function annotOp(id, op) {
       return a.getObject().asIndirect();
     }
     if (op.type === 'reply') {
-      // A reply is a note tied to its comment that draws nothing of its own, as Acrobat writes them (the appearance
-      // isn't quite empty: an empty stream doesn't survive AES encryption in MuPDF).
       const parent = find(op.to), a = page.createAnnotation('Text');
       a.setRect(parent.getBounds());
       a.setContents(String(op.text || ''));
@@ -733,7 +685,6 @@ async function annotOp(id, op) {
       return op.num;
     }
     if (op.type === 'delete') {
-      // The comment goes with its replies and pop-up.
       const gone = new Set([op.num]);
       for (let grew = true; grew;) {
         grew = false;
@@ -750,7 +701,6 @@ async function annotOp(id, op) {
   return { ...info(s), num };
 }
 
-// Links: a web address or a page of this document over an area of a page.
 function links(id) {
   const s = get(id), out = [];
   for (let i = 0; i < s.doc.countPages(); i++) {
@@ -784,7 +734,6 @@ async function linkOp(id, op) {
   return { ...info(s), index };
 }
 
-// Bookmarks as a tree of { title, page, kids }; saving one rewrites the whole outline in that order.
 function outline(id) {
   const s = get(id);
   const walk = (items) => (items || []).map((it) => {
@@ -811,8 +760,6 @@ async function setOutline(id, tree) {
   return info(s);
 }
 
-// Paragraphs for editing as a whole: the lines of each text block, in order, with the look of the first line and the
-// spacing between them.
 async function paragraphs(id, index) {
   const s = get(id);
   const lines = await text(id, index), blocks = [];
@@ -836,7 +783,6 @@ async function paragraphs(id, index) {
   return out;
 }
 
-// Form fields as their widgets on each page, with what the editor needs to show a matching input.
 function fields(id) {
   const s = get(id), out = [];
   const js = (o, k) => { for (let d = o, n = 0; d && !d.isNull() && n < 4; d = d.get('Parent'), n++) { const a = d.get('AA').get(k).get('JS'); if (!a.isNull()) return a.isStream() ? a.readStream().asString() : a.asString(); } return ''; };
@@ -858,13 +804,11 @@ function fields(id) {
   }
   return out;
 }
-// Typed-in values go through PdfCraft, which runs the form's own formats and draws each field so every viewer shows it.
 async function fill(id, values) {
   const s = get(id);
   if (values && Object.keys(values).length) await craft(s, [{ tool: 'form_fill', args: { values } }], { label: 'Filling in the form' });
   return info(s);
 }
-// Prepare a form: add, change and delete fields, named and drawn as Acrobat does.
 async function fieldOp(id, op) {
   const s = get(id);
   if (op.type === 'add') {
@@ -884,7 +828,6 @@ async function fieldOp(id, op) {
   if (op.type === 'flatten') { await craft(s, [{ tool: 'doc_flatten', args: { comments: !!op.comments, fields: op.fields !== false } }], { label: 'Flattening' }); return info(s); }
   if (op.type === 'reset') { await craft(s, [{ tool: 'form_reset', args: {} }], { label: 'Clearing the form' }); return info(s); }
   if (op.type === 'detect') {
-    // Acrobat's automatic field detection: underscore runs, boxes and table cells become fields, named from their labels.
     const before = s.bytes, { results: [r] } = await craft(s, [{ tool: 'form_detect_fields', args: { add: true } }], { label: 'Finding blanks' });
     const added = r?.fields?.length || 0;
     if (!added && s.bytes !== before) { s.undo.pop(); await loadState(s, before); }
@@ -893,14 +836,11 @@ async function fieldOp(id, op) {
   throw new Error(`Unknown field change ${op.type}`);
 }
 
-// Document properties and how the file opens.
 async function props(id) {
   const s = get(id), d = s.doc;
   const meta = (k) => d.getMetaData(`info:${k}`) || '';
   let view = {};
   try { view = (await craft(s, [{ tool: 'doc_initial_view', args: {} }], { save: false })).results[0]?.initial_view || {}; } catch (_) {}
-  // PdfCraft reports the view in its own names (SinglePageContinuous, Bookmarks, FitWidth); the editor uses the names
-  // it takes (continuous, bookmarks, fit_width).
   const snake = (v, def) => String(v || def).replace(/CoverPage$/, 'Cover').replace(/^SinglePageContinuous$/, 'continuous').replace(/^SinglePage$/, 'single').replace(/^PageOnly$/, 'page').replace(/^ActualSize$/, 'actual')
     .replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
   return { title: meta('Title'), author: meta('Author'), subject: meta('Subject'), keywords: meta('Keywords'), creator: meta('Creator'), producer: meta('Producer'), lang: view.language || '',
@@ -922,8 +862,6 @@ async function setProps(id, p) {
   return info(s);
 }
 
-// Headers and footers, page numbers, Bates numbers, watermarks and backgrounds, with PdfCraft (so they can be
-// replaced or removed later, in Lime or Acrobat). preview draws one page with the change, leaving the file as it is.
 const pagesArg = (o, n) => { const list = U.parseRanges(o.pages || 'all', n).map((i) => i + 1); return list.length && list.length < n ? { pages: list } : {}; };
 function docSteps(op, n) {
   const o = op.opts || {}, pages = pagesArg(o, n);
@@ -963,7 +901,6 @@ async function preview(id, op, index, scale) {
   const page = m.Document.openDocument(bytes, 'application/pdf').loadPage(U.clamp(index, 0, s.doc.countPages() - 1));
   return Buffer.from(page.toPixmap(m.Matrix.scale(scale, scale), m.ColorSpace.DeviceRGB, false, true).asPNG());
 }
-// Checks on the working copy: accessibility or print readiness, as the wheel's tools report them.
 async function check(id, kind) {
   const s = get(id);
   const dir = await U.tmpDir('edcheck'), f = path.join(dir, path.basename(s.path));
@@ -973,8 +910,6 @@ async function check(id, kind) {
     return kind === 'print' ? await C.printCheck(f, {}, ctx) : await C.accessCheck(f, {}, ctx);
   } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
-// Recognise text on scanned pages: the words go over the page as invisible text, so it can be searched, copied and
-// edited, while the page itself stays as it was (Acrobat's Recognize Text).
 async function recognise(id, { lang = 'eng', all = false } = {}) {
   const s = get(id);
   const m = await P.mupdf();
@@ -989,7 +924,6 @@ async function recognise(id, { lang = 'eng', all = false } = {}) {
     const res = await ocr.imageToTextPdf(png, lang);
     if (!res.text.trim()) continue;
     const [layer] = await doc.embedPdf(res.pdf, [0]);
-    // Drawn over the page as it is shown, whatever its rotation.
     const inv = m.Matrix.invert(page.getTransform()), map = (u, v) => [u * inv[0] + v * inv[2] + inv[4], u * inv[1] + v * inv[3] + inv[5]];
     const [ax, ay] = map(0, h), pg = doc.getPage(i);
     pg.drawPage(layer, { x: ax, y: ay, width: w, height: h, rotate: degrees((Math.atan2(inv[1], inv[0]) * 180) / Math.PI) });
@@ -999,7 +933,6 @@ async function recognise(id, { lang = 'eng', all = false } = {}) {
   if (done) { pushUndo(s); await loadState(s, await doc.save({ useObjectStreams: true })); }
   return { ...info(s), recognised: done, words };
 }
-// Text to redact: every match of the words, or of the patterns the Redact tool offers, as a box per match.
 async function findRedact(id, { terms = [], patterns = [] } = {}) {
   const s = get(id);
   const m = await P.mupdf();

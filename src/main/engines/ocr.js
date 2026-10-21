@@ -147,8 +147,7 @@ async function layer(r, png) {
   for (let f = 0; f * PER_FONT < chars.length; f++) {
     const mine = chars.slice(f * PER_FONT, (f + 1) * PER_FONT);
     const cid = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'CIDFontType2', BaseFont: 'GlyphLessFont', CIDSystemInfo: { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('Identity'), Supplement: 0 }, FontDescriptor: descriptor, DW: 500, W: [1, mine.map((c) => c.width)], CIDToGIDMap: gids }));
-    const cmap = `/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CIDSystemInfo <</Registry (Adobe) /Ordering (UCS) /Supplement 0>> def /CMapName /Adobe-Identity-UCS def /CMapType 2 def 1 begincodespacerange <0000> <ffff> endcodespacerange\n${mine.map((c, i) => `${i % 100 ? '' : `${i ? 'endbfchar\n' : ''}${Math.min(100, mine.length - i)} beginbfchar\n`}<${hex(i + 1)}> <${Buffer.from(c.c, 'utf16le').swap16().toString('hex')}>`).join('\n')}\nendbfchar endcmap CMapName currentdict /CMap defineresource pop end end`;
-    const font = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type0', BaseFont: 'GlyphLessFont', Encoding: 'Identity-H', DescendantFonts: [cid], ToUnicode: ctx.register(ctx.flateStream(cmap)) }));
+    const font = ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type0', BaseFont: 'GlyphLessFont', Encoding: 'Identity-H', DescendantFonts: [cid], ToUnicode: ctx.register(ctx.flateStream(require('./shape').toUnicode(mine.map((c) => c.c)))) }));
     page.node.setFontDictionary(PDFName.of(`F${f}`), font);
   }
   page.pushOperators(...ops);
