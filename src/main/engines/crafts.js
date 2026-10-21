@@ -633,7 +633,7 @@ const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 
 const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'vectorcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft' };
 let bundled = null;
 const bundledApps = () => { if (!bundled) { try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
-const appSource = (id) => path.join(U.cfg.apps, U.isWin ? `${id}.exe.br` : `${id}.app.tar.br`);
+const appSource = (id) => path.join(U.cfg.apps, `${id}.app.tar.br`);
 // Whether the full app can be opened: installed on this computer, or shipped inside Lime.
 const hasApp = (id) => !!APPS[id] && (!!installedApp(id) || (!!bundledApps()[id] && fs.existsSync(appSource(id))));
 const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)));
@@ -666,18 +666,17 @@ async function bundledApp(id) {
       const part = `${dir}.part-${process.pid}-${Date.now()}`;
       await fsp.mkdir(part, { recursive: true });
       const unbrotli = () => fs.createReadStream(appSource(id)).pipe(zlib.createBrotliDecompress());
-      if (U.isWin) await pipeline(unbrotli(), fs.createWriteStream(path.join(part, m.file)));
-      else {
-        await new Promise((ok, no) => {
-          const tar = spawn('/usr/bin/tar', ['-xf', '-', '-C', part], { stdio: ['pipe', 'ignore', 'pipe'] });
-          let err = '';
-          tar.stderr.on('data', (d) => { err += d; });
-          tar.on('error', no);
-          tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-          pipeline(unbrotli(), tar.stdin).catch(no);
-        });
-        await new Promise((r) => { const x = spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', part], { stdio: 'ignore' }); x.on('error', r); x.on('close', r); });
-      }
+      // The app's folder (a .app on a Mac) comes out of a tar; Windows has had bsdtar since 2018.
+      const tarExe = U.isWin ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : '/usr/bin/tar';
+      await new Promise((ok, no) => {
+        const tar = spawn(tarExe, ['-xf', '-', '-C', part], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+        let err = '';
+        tar.stderr.on('data', (d) => { err += d; });
+        tar.on('error', (e) => no(e.code === 'ENOENT' ? new Error('tar.exe is missing: Windows 10 (1803) or later is needed') : e));
+        tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
+        pipeline(unbrotli(), tar.stdin).catch(no);
+      });
+      if (!U.isWin) await new Promise((r) => { const x = spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', part], { stdio: 'ignore' }); x.on('error', r); x.on('close', r); });
       if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
       await settle(() => fsp.rm(dir, { recursive: true, force: true }));
       await settle(() => fsp.rename(part, dir));

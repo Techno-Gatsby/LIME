@@ -205,9 +205,13 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const ring = await lime('return { labels: L.S.ring.map((x) => x.label), back: document.querySelector(".pill [data-a=home]")?.textContent, cap: document.querySelector(".center .cap").textContent };');
     if (!ring.labels.includes('Optimize')) throw new Error(`PdfCraft ring ${ring.labels}`);
     if (!/All apps/.test(ring.back || '')) throw new Error('no way back to the apps');
+    // The middle of the ring is the app itself: a click there opens it (or says why it can't) and stays on its ring.
+    await click('.center');
+    if (!(await until('return L.S.app === "pdfcraft" && /PdfCraft/.test(document.querySelector(".caption .meta").textContent)', 3000))) throw new Error(`a click on the middle: app ${await lime('return L.S.app')}, caption “${await lime('return document.querySelector(".caption .meta").textContent')}”`);
+    const said = await lime('return document.querySelector(".caption .meta").textContent');
     wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
     if (!(await until('return !L.S.app && L.S.ring.length === 8', 2000))) throw new Error('Esc did not go back to the apps');
-    return `${home.labels.join(', ')} · PdfCraft: ${ring.labels.join(', ')}`;
+    return `${home.labels.join(', ')} · PdfCraft: ${ring.labels.join(', ')} · middle: ${said}`;
   });
   if (fs.existsSync(fx('photo.jpg'))) await check('hovering and progress update the middle in place', async () => {
     await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);

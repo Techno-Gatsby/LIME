@@ -311,6 +311,7 @@ function drawCenter() {
   const files = S.files.length ? S.files : S.peek || [];
   const hot = it ? esc(it.label) : '';
   const app = currentApp();
+  center.title = app && ['ready', 'open'].includes(S.state) ? `Open ${app.name}` : '';
   cBadge.hidden = !(files.length > 1 && ['open', 'ready', 'busy'].includes(S.state) && !app);
   if (!cBadge.hidden) cBadge.textContent = files.length;
   cTick.hidden = S.state !== 'done';
@@ -665,6 +666,11 @@ sounds.play = (kind, c, t = c.currentTime + 0.01) => {
   else if (kind === 'done') for (const [f, dt] of [[659.3, 0], [880, 0.17]]) { tone('sine', f, f, 0.11, 0.015, 0.24, t + dt); tone('sine', f * 2, f * 2, 0.025, 0.015, 0.14, t + dt); }
 };
 let flashT = null;
+// The middle of an app's ring is the app itself: it opens, with the files on the wheel if there are any.
+async function launchApp(app) {
+  flash(`Opening ${app.name}…`);
+  try { await api.invoke('apps:open', app.id, S.files.length ? S.files : S.peek || []); } catch (e) { flash(String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); }
+}
 function flash(msg) {
   const keep = capMeta.textContent;
   capMeta.textContent = msg;
@@ -923,9 +929,10 @@ window.addEventListener('pointerup', async (e) => {
   if (d.onPetal) { const i = petalAt(e); if (i === d.i) pick(S.ring[i], { options: e.altKey }); return; }
   if (S.state === 'idle' && e.target.closest('.tab')) { expand('click'); return; }
   if (d.onBtn || e.target.closest('.center')) {
-    if (atHome() && S.app) back();
+    const app = currentApp();
+    if (S.state === 'busy' && S.job) api.invoke('jobs:cancel', S.job.id);
+    else if (app && ['ready', 'open'].includes(S.state)) launchApp(app);
     else if (S.state === 'ready') { S.asking = true; const files = await api.invoke('dialog:open', { title: 'Choose files for Lime' }).finally(() => { S.asking = false; }); if (files.length) openWith(files); }
-    else if (S.state === 'busy' && S.job) api.invoke('jobs:cancel', S.job.id);
     else if (S.ring[S.hot]) pick(S.ring[S.hot]);
     else if (canBack()) back();
     else if (S.state === 'done' && S.result?.outs?.[0]) api.invoke('shell:show', S.result.outs[0]);

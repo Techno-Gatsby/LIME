@@ -145,20 +145,25 @@ async function apps() {
   const file = path.join(APPS, 'manifest.json');
   const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   for (const [id, v] of Object.entries(CRAFT)) {
-    const dest = path.join(APPS, WIN ? `${id}.exe.br` : `${id}.app.tar.br`);
+    const dest = path.join(APPS, `${id}.app.tar.br`);
     if (has(dest) && manifest[id]?.version === v) continue;
     const rel = `https://github.com/storytold/${id}/releases/download/v${v}`;
+    const tmp = path.join(CACHE, `${id}-app`);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    let app;
     if (WIN) {
-      await brotli(Buffer.from(unzipOne(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`), new RegExp(`/${id}\\.exe$`))), dest, 9);
-      manifest[id] = { version: v, file: `${id}.exe` };
-    } else {
-      const tmp = path.join(CACHE, `${id}-app`);
-      fs.rmSync(tmp, { recursive: true, force: true });
-      const app = appFromDmg(await get(`${rel}/${id}-${v}-macos-universal.dmg`), mk(tmp));
-      await brotli(execFileSync(TAR, ['-cf', '-', '-C', path.dirname(app), path.basename(app)], { maxBuffer: 2 ** 31 }), dest, 9);
-      fs.rmSync(tmp, { recursive: true, force: true });
-      manifest[id] = { version: v, file: path.basename(app) };
-    }
+      // The whole portable folder, less the CLI (Lime ships its own copy) and portable.txt, so the app keeps its
+      // settings in its usual per-user folders rather than inside Lime's. PdfCraft's OCR models come along.
+      const skip = new RegExp(`/(${id}-cli\\.exe|portable\\.txt)$`);
+      const zip = unzipSync(fs.readFileSync(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`)), { filter: (f) => !f.name.endsWith('/') && !skip.test(f.name) });
+      app = mk(path.join(tmp, id));
+      for (const [name, data] of Object.entries(zip)) { const out = path.join(app, ...name.split('/').slice(1)); mk(path.dirname(out)); fs.writeFileSync(out, data); }
+    } else app = appFromDmg(await get(`${rel}/${id}-${v}-macos-universal.dmg`), mk(tmp));
+    const tar = path.join(tmp, 'app.tar');
+    sh(TAR, ['-cf', tar, '-C', path.dirname(app), path.basename(app)]);
+    await brotli(fs.readFileSync(tar), dest, 9);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    manifest[id] = { version: v, file: WIN ? `${id}/${id}.exe` : path.basename(app) };
     console.log('▣', manifest[id].file, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   }
@@ -183,8 +188,10 @@ async function natives() {
   }
 }
 
-await Promise.all([binaries(), data(), natives()]);
-await crafts();
-await apps();
+// A third argument runs one step alone: engines, crafts or apps.
+const only = process.argv[3];
+if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
+if (!only || only === 'crafts') await crafts();
+if (!only || only === 'apps') await apps();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);

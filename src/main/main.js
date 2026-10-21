@@ -728,7 +728,7 @@ function registerIpc() {
   h('settings:set', (patch) => setSettings(patch));
   h('prefs:open', (tab) => openPrefs(tab));
   h('engines:status', () => call('enginesStatus'));
-  h('apps:open', async (id) => { await crafts.openApp(id, []); return true; });
+  h('apps:open', async (id, files) => { await crafts.openApp(id, Array.isArray(files) ? files : []); return true; });
   h('recent:list', () => settings.recent.filter((r) => fs.existsSync(r.path)));
 }
 
