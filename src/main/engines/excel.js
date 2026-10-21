@@ -35,7 +35,7 @@ const outFor = (file, ctx, suffix) => ctx.out.file(file, `${U.base(file)}${suffi
 // ───────── Formulas to values ─────────
 function cellsToValues(xml, keep = () => true) {
   let done = 0, kept = 0;
-  const out = xml.replace(/<c\b([^>]*?)>([\s\S]*?)<\/c>/g, (m, a, inner) => {
+  const out = xml.replace(/<c\b([^>]*?)(?<!\/)>([\s\S]*?)<\/c>/g, (m, a, inner) => {
     const f = /<f\b[^>]*\/>|<f\b[^>]*>[\s\S]*?<\/f>/.exec(inner);
     if (!f || !keep(f[0])) return m;
     const v = /<v>([\s\S]*?)<\/v>/.exec(inner);
@@ -62,7 +62,7 @@ async function toValues(file, o, ctx) {
     }
     dropCalcChain(pkg);
   }
-  if (!done) throw new Error(kept ? 'The formulas in this workbook have no saved results to keep. Open it in Excel and save it once first.' : 'This workbook has no formulas.');
+  if (!done) return { note: kept ? 'The formulas in this workbook have no saved results to keep. Open it in Excel and save it once first.' : 'This workbook has no formulas.' };
   const out = outFor(file, ctx, '-values');
   await pkg.save(out);
   return { path: out, note: `${done} formula${done === 1 ? '' : 's'} replaced by ${done === 1 ? 'its value' : 'their values'}${kept ? `; ${kept} without a saved result left as they were` : ''}` };
@@ -102,7 +102,7 @@ async function unhide(file, o, ctx) {
   }
   const parts = [n.sheets && `${n.sheets} sheet${n.sheets === 1 ? '' : 's'}`, n.rows && `${n.rows} row${n.rows === 1 ? '' : 's'}`, n.cols && `${n.cols} column${n.cols === 1 ? '' : 's'}`].filter(Boolean);
   const msg = [parts.length && `Showed ${parts.join(', ')}`, n.unprotected && `removed protection from ${n.unprotected} ${n.unprotected === 1 ? 'place' : 'places'}`, n.locked && `${n.locked} protected with a password ${n.locked === 1 ? 'stays' : 'stay'} protected`].filter(Boolean);
-  if (!parts.length && !n.unprotected) throw new Error(n.locked ? 'Nothing is hidden, and the protection here has a password. Lime doesn’t remove passwords.' : 'Nothing in this workbook is hidden or protected.');
+  if (!parts.length && !n.unprotected) return { note: n.locked ? 'Nothing is hidden, and the protection here has a password. Lime doesn’t remove passwords.' : 'Nothing in this workbook is hidden or protected.' };
   const out = outFor(file, ctx, '-unhidden');
   await pkg.save(out);
   return { path: out, note: msg.join('; ').replace(/^./, (c) => c.toUpperCase()) };
@@ -138,7 +138,7 @@ async function splitSheets(file, o, ctx) {
   };
   if (pkg.odf) {
     const tables = all(pkg.dom('content.xml'), T, 'table').filter((t) => t.parentNode.localName === 'spreadsheet');
-    if (tables.length < 2) throw new Error('This workbook has only one sheet.');
+    if (tables.length < 2) return { note: 'This workbook has only one sheet.' };
     for (const [i, t] of tables.entries()) {
       const name = attr(t, T, 'name'), copy = pkg.clone(), d = copy.dom('content.xml');
       const mine = all(d, T, 'table').filter((x) => x.parentNode.localName === 'spreadsheet');
@@ -153,8 +153,8 @@ async function splitSheets(file, o, ctx) {
     return { path: folder, note: `${names.length} sheets` };
   }
   const main = pkg.main(), sheets = sheetsOf(pkg).filter((s) => s.part && pkg.has(s.part)), wanted = sheets.filter((s) => o.hidden || s.state === 'visible');
-  if (sheets.length < 2) throw new Error('This workbook has only one sheet.');
-  if (!wanted.length) throw new Error('Every sheet in this workbook is hidden.');
+  if (sheets.length < 2) return { note: 'This workbook has only one sheet.' };
+  if (!wanted.length) return { note: 'Every sheet in this workbook is hidden; turn on Hidden sheets too.' };
   for (const [k, s] of wanted.entries()) {
     const copy = pkg.clone(), others = sheets.filter((x) => x !== s);
     let wb = copy.text(main);
@@ -186,7 +186,7 @@ const colNum = (s) => [...s.toUpperCase()].reduce((n, c) => n * 26 + c.charCodeA
 function shiftRefs(formula, rows, mine) {
   const first = (r) => { for (let x = r; x <= rows.max; x++) if (rows.map(x) != null) return rows.map(x); return null; };
   const last = (r) => { for (let x = Math.min(r, rows.max); x >= 1; x--) if (rows.map(x) != null) return rows.map(x); return r > rows.max ? rows.map(r) : null; };
-  const re = /(?<![\w.$\]])((?:'(?:[^']|'')+'|[A-Za-z_À-￿][\w.À-￿]*)!)?(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?::(\$?)([A-Za-z]{1,3})(\$?)(\d+))?(?![\w(!])|(?<![\w.$\]])((?:'(?:[^']|'')+'|[A-Za-z_À-￿][\w.À-￿]*)!)?(\$?)(\d+):(\$?)(\d+)(?![\w(])/g;
+  const re = /(?<![\w.$\]!])((?:'(?:[^']|'')+'|[A-Za-z_À-￿][\w.À-￿]*)!)?(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?::(\$?)([A-Za-z]{1,3})(\$?)(\d+))?(?![\w(!])|(?<![\w.$\]!])((?:'(?:[^']|'')+'|[A-Za-z_À-￿][\w.À-￿]*)!)?(\$?)(\d+):(\$?)(\d+)(?![\w(])/g;
   return String(formula).split(/("(?:[^"]|"")*")/).map((part, i) => (i % 2 ? part : part.replace(re, (m, sh, d1, c1, d2, r1, d3, c2, d4, r2, rsh, e1, ra, e2, rb) => {
     const sheet = sh ?? rsh;
     if (!mine(sheet ? sheet.slice(0, -1).replace(/^'|'$/g, '').replace(/''/g, "'") : null)) return m;
@@ -251,11 +251,12 @@ async function tidy(file, o, ctx) {
   }
   for (const { s, gone } of changed) removeRows(pkg, s, gone, sheets);
   if (changed.length) dropCalcChain(pkg);
-  if (!n.trimmed && !n.dup && !n.empty) throw new Error('Nothing to tidy: no duplicate or empty rows, and no extra spaces.');
+  if (!n.trimmed && !n.dup && !n.empty) return { note: NOTHING };
   const out = outFor(file, ctx, '-tidy');
   await pkg.save(out);
   return { path: out, note: tidyNote(n) };
 }
+const NOTHING = 'Nothing to tidy: no duplicate or empty rows, and no extra spaces.';
 const tidyNote = (n) => [n.dup && `${n.dup} duplicate row${n.dup === 1 ? '' : 's'} removed`, n.empty && `${n.empty} empty row${n.empty === 1 ? '' : 's'} removed`, n.trimmed && `${n.trimmed} text${n.trimmed === 1 ? '' : 's'} trimmed`].filter(Boolean).join(', ').replace(/^./, (c) => c.toUpperCase());
 // Takes rows out of one sheet and moves everything below them up, in this sheet and wherever other parts point at it.
 function removeRows(pkg, s, gone, sheets) {
@@ -271,11 +272,14 @@ function removeRows(pkg, s, gone, sheets) {
     return nr === r ? m : m.replace(/<row\b[^>]*?\sr="\d+"/, (t) => t.replace(/\sr="\d+"/, ` r="${nr}"`)).replace(/(<c\b[^>]*?\sr=")([A-Z]+)(\d+)"/g, (t, p, c) => `${p}${c}${nr}"`);
   });
   x = fixF(x, here).replace(/(<f\b[^>]*\sref=")([^"]+)"/g, (m, p, r) => `${p}${shiftRange(r, rows) || r}"`);
-  x = x.replace(/(<(?:dimension|autoFilter|hyperlink|mergeCell|selection)\b[^>]*?\s(?:ref|sqref)=")([^"]+)"/g, (m, p, r) => `${p}${shiftRange(r, rows) || 'A1'}"`)
-    .replace(/<mergeCell\b[^>]*ref="A1"\/>/g, '').replace(/(<(?:conditionalFormatting|dataValidation)\b[^>]*?\ssqref=")([^"]+)"/g, (m, p, r) => `${p}${shiftRange(r, rows)}"`)
+  // Whatever covered only removed rows goes with them.
+  x = x.replace(/(<(?:dimension|autoFilter|selection)\b[^>]*?\s(?:ref|sqref)=")([^"]+)"/g, (m, p, r) => `${p}${shiftRange(r, rows) || 'A1'}"`)
+    .replace(/(<(?:hyperlink|mergeCell|conditionalFormatting|dataValidation)\b[^>]*?\s(?:ref|sqref)=")([^"]+)"/g, (m, p, r) => `${p}${shiftRange(r, rows)}"`)
+    .replace(/<(hyperlink|mergeCell|dataValidation)\b[^>]*\s(?:ref|sqref)=""[^>]*?(?:\/>|>[\s\S]*?<\/\1>)/g, '').replace(/<conditionalFormatting\b[^>]*\ssqref=""[^>]*>[\s\S]*?<\/conditionalFormatting>/g, '')
     .replace(/(<formula\d?>)([\s\S]*?)(<\/formula\d?>)/g, (m, a, f, b) => `${a}${O.xmlEsc(shiftRefs(unxml(f), rows, here)).replace(/&quot;/g, '"')}${b}`)
     .replace(/<brk\b([^>]*?)id="(\d+)"/g, (m, a, id) => (rows.map(Number(id)) == null ? m : `<brk${a}id="${rows.map(Number(id))}"`));
-  x = x.replace(/<mergeCells count="\d+">/, `<mergeCells count="${(x.match(/<mergeCell\b/g) || []).length}">`).replace(/<mergeCells count="0"><\/mergeCells>/, '');
+  x = x.replace(/<mergeCells count="\d+">/, `<mergeCells count="${(x.match(/<mergeCell\b/g) || []).length}">`).replace(/<mergeCells count="0"><\/mergeCells>/, '')
+    .replace(/<dataValidations count="\d+">/, `<dataValidations count="${(x.match(/<dataValidation\b/g) || []).length}">`).replace(/<dataValidations count="0"><\/dataValidations>|<hyperlinks><\/hyperlinks>/g, '');
   pkg.set(s.part, x);
   for (const r of pkg.rels(s.part)) {
     if (r.type === 'table' && pkg.has(r.target)) pkg.set(r.target, pkg.text(r.target).replace(/(<(?:table|autoFilter)\b[^>]*?\sref=")([^"]+)"/g, (m, p, v) => `${p}${shiftRange(v, rows) || v}"`));
@@ -308,7 +312,7 @@ async function tidyCsv(file, o, ctx) {
   const D = require('./data'), { decodeText } = require('./textcodec'), bytes = await fsp.readFile(file), src = decodeText(bytes);
   const d = U.ext(file) === 'csv' ? D.detectDelimiter(src) : '\t', n = { trimmed: 0, dup: 0, empty: 0 };
   const rows = tidyRows(D.parseCsv(src, d), o, n);
-  if (!n.trimmed && !n.dup && !n.empty) throw new Error('Nothing to tidy: no duplicate or empty rows, and no extra spaces.');
+  if (!n.trimmed && !n.dup && !n.empty) return { note: NOTHING };
   const out = outFor(file, ctx, '-tidy');
   await fsp.writeFile(out, D.csvText(rows, d));
   return { path: out, note: tidyNote(n) };
@@ -322,7 +326,7 @@ async function tidyRebuild(file, o, ctx) {
     if (ws['!cols']) fresh['!cols'] = ws['!cols'];
     wb.Sheets[name] = fresh;
   }
-  if (!n.trimmed && !n.dup && !n.empty) throw new Error('Nothing to tidy: no duplicate or empty rows, and no extra spaces.');
+  if (!n.trimmed && !n.dup && !n.empty) return { note: NOTHING };
   const out = outFor(file, ctx, '-tidy'), e = U.ext(file);
   XLSX.writeFile(wb, out, { bookType: e === 'xls' ? 'biff8' : e === 'fods' ? 'fods' : e === 'xlsb' ? 'xlsb' : 'ods', compression: true });
   return { path: out, note: `${tidyNote(n)} (cell formatting isn’t kept for ${e.toUpperCase()})` };
@@ -345,7 +349,7 @@ async function formulas(file, o, ctx) {
   const order = (a) => { const m = /^([A-Z]+)(\d+)$/.exec(a.cell); return m ? Number(m[2]) * 20000 + colNum(m[1]) : 0; };
   list.sort((a, b) => wb.SheetNames.indexOf(a.sheet) - wb.SheetNames.indexOf(b.sheet) || order(a) - order(b));
   const count = list.filter((x) => x.formula).length, errors = list.filter((x) => /^Error|Broken/.test(x.problem));
-  if (!list.length) throw new Error('This workbook has no formulas or errors.');
+  if (!list.length) return { note: 'This workbook has no formulas or errors.' };
   const sheetsWith = new Set(list.filter((x) => x.formula).map((x) => x.sheet)).size;
   const head = `${count} formula${count === 1 ? '' : 's'} on ${sheetsWith} sheet${sheetsWith === 1 ? '' : 's'}; ${errors.length ? `${errors.length} error${errors.length === 1 ? '' : 's'}` : 'no errors'}`;
   const text = [head, ...list.filter((x) => x.problem).slice(0, 40).map((x) => `${x.sheet}!${x.cell}  ${x.problem}${x.formula ? `  ${x.formula}` : ''}`)].join('\n');

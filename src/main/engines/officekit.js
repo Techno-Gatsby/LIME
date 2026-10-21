@@ -35,6 +35,7 @@ async function replaceText(file, o, ctx) {
   }
   const pkg = await O.Package.open(file), fam = O.familyOf(pkg);
   for (const part of storyParts(pkg, fam, o.everywhere !== false)) {
+    if (/worksheets\//.test(part) && !/<is>/.test(pkg.text(part))) continue;
     for (const { segs } of O.paragraphs(pkg.dom(part))) n += O.replaceAcross(segs, re, rep);
   }
   if (!n) throw notFound(find);
@@ -73,7 +74,7 @@ function cleanWord(pkg, o, n) {
   }
   if (o.properties !== false) {
     for (const p of pkg.list(/^word\/[^/]+\.xml$/)) {
-      const x = pkg.text(p), y = x.replace(/\sw:rsid\w*="[0-9A-Fa-f]+"/g, '').replace(/(<w:(?:ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|comment)\b[^>]*?)\sw:author="[^"]*"/g, '$1 w:author="Author"').replace(/(<w:(?:ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|comment)\b[^>]*?)\sw:(?:date|initials)="[^"]*"/g, '$1');
+      const x = pkg.text(p), y = x.replace(/\sw:rsid\w*="[0-9A-Fa-f]+"/g, '').replace(/(<w:(?:ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|comment)\b[^>]*?)\sw:author="[^"]*"/g, '$1 w:author="Author"').replace(/<w:(?:ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|comment)\b[^>]*>/g, (t) => t.replace(/\sw:(?:date|initials)="[^"]*"/g, ''));
       if (x !== y) pkg.set(p, y);
     }
     if (pkg.has('word/settings.xml')) {
@@ -190,7 +191,7 @@ async function extractMedia(file, o, ctx) {
   const pkg = await O.Package.open(file), want = o.what || 'media';
   const items = mediaInOrder(pkg).map((m) => ({ ...m, kind: KIND(pkg.odf ? '' : pkg.typeOf(m.part), path.posix.extname(m.part).slice(1).toLowerCase()) }))
     .filter((m) => m.kind === 'picture' || (want !== 'pictures' && (m.kind !== 'file' || want === 'all')));
-  if (!items.length) throw new Error(`This file has no ${want === 'pictures' ? 'pictures' : 'pictures or media'} inside.`);
+  if (!items.length) return { note: `This file has no ${want === 'pictures' ? 'pictures' : 'pictures or media'} inside.` };
   const folder = ctx.out.folder(file, `${U.base(file)} - media`), counts = {}, used = new Set();
   for (const m of items) {
     const key = `${m.label}|${m.kind}`;
@@ -209,6 +210,7 @@ async function compressPictures(file, o, ctx) {
   const sharp = require('sharp'), pkg = await O.Package.open(file), max = Number(o.size) || 1600, q = Math.round(Number(o.quality) || 80);
   if (!pkg.odf) pkg.prune();
   const pics = pkg.list(pkg.odf ? /^Pictures\/[^/]+\.(jpe?g|png)$/i : /^(word|xl|ppt)\/media\/[^/]+\.(jpe?g|png)$/i);
+  if (!pics.length) return { note: 'This file has no JPEG or PNG pictures to compress.' };
   let before = 0, after = 0, smaller = 0;
   for (const [i, p] of pics.entries()) {
     ctx.progress?.(i / Math.max(1, pics.length), 'Compressing pictures');
@@ -224,7 +226,6 @@ async function compressPictures(file, o, ctx) {
     if (best !== buf) { pkg.set(p, new Uint8Array(best)); smaller++; }
     after += best.length;
   }
-  if (!pics.length) throw new Error('This file has no JPEG or PNG pictures to compress.');
   const out = ctx.out.file(file, `${U.base(file)}-compressed.${U.ext(file)}`);
   await pkg.save(out);
   return { path: out, note: smaller ? `Pictures ${U.fmtBytes(before)} → ${U.fmtBytes(after)} (${smaller} of ${pics.length} made smaller)` : 'The pictures are already as small as these settings make them' };

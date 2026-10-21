@@ -885,6 +885,228 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   T('slides→html', 'convert-slides', ['deck.pptx'], { to: 'html' }, ([o]) => ok(txt(o).includes('class="slide"'), 'html'));
   T('merge docs', 'merge-documents', ['doc.docx', 'doc.pdf', 'photo2.jpg', 'deck.pptx'], {}, async ([o]) => ok((await pages(o)) >= 7, 'pages'));
   T('merge sheets', 'merge-sheets', ['sheet.csv', 'sheet2.csv'], { mode: 'stack', skipHeaders: true }, ([o]) => ok(require('xlsx').utils.sheet_to_json(require('xlsx').readFile(o).Sheets.Combined).length === 3, 'rows'));
+  // Word, Excel and PowerPoint tools: each result opened and its content checked; a package check that every
+  // relationship leads to a part that exists and every part has a content type.
+  const zipOf = (p) => require('fflate').unzipSync(new Uint8Array(read(p)));
+  const partOf = (p, f) => { const z = zipOf(p); return z[f] ? Buffer.from(z[f]).toString() : ''; };
+  const opcCheck = (p) => {
+    const z = zipOf(p), names = Object.keys(z), s = (k) => Buffer.from(z[k]).toString(), ct = s('[Content_Types].xml');
+    const defaults = [...ct.matchAll(/<Default\b[^>]*\sExtension="([^"]+)"/g)].map((m) => m[1].toLowerCase()), overrides = new Set([...ct.matchAll(/<Override\b[^>]*\sPartName="\/([^"]+)"/g)].map((m) => m[1]));
+    for (const o of overrides) ok(z[o], `content type for a missing part ${o}`);
+    for (const n of names.filter((x) => !x.endsWith('/') && x !== '[Content_Types].xml')) ok(overrides.has(n) || defaults.includes(n.split('.').pop().toLowerCase()), `${n} has no content type`);
+    for (const r of names.filter((x) => x.endsWith('.rels'))) {
+      const owner = r.replace(/(^|\/)_rels\/([^/]+)\.rels$/, '$1$2'), dir = r === '_rels/.rels' ? '' : path.posix.dirname(owner);
+      for (const m of s(r).matchAll(/<Relationship\b[^>]*>/g)) {
+        if (/TargetMode="External"/.test(m[0])) continue;
+        const t = /Target="([^"]+)"/.exec(m[0])[1], abs = t.startsWith('/') ? t.slice(1) : path.posix.normalize(path.posix.join(dir === '.' ? '' : dir, decodeURIComponent(t)));
+        ok(z[abs], `${r} points at a missing ${abs}`);
+      }
+    }
+    return z;
+  };
+  const insTexts = (x) => [...x.matchAll(/<w:ins\b[^>]*>([\s\S]*?)<\/w:ins>/g)].map((m) => xmlText(m[1])).filter(Boolean);
+  const delTexts = (x) => [...x.matchAll(/<w:del\b[^>]*>([\s\S]*?)<\/w:del>/g)].map((m) => (m[1].match(/<w:delText[^>]*>[^<]*<\/w:delText>/g) || []).map((t) => t.replace(/<[^>]+>/g, '')).join('')).filter(Boolean);
+  const octx = () => { const d = fs.mkdtempSync(path.join(OUT, 'engine-')); return { out: U.outputPlanner({ dest: { kind: 'dir', path: d } }), progress: () => {} }; };
+  const settled = async (p, action) => paras((await E('word').trackChanges(p, { action }, octx())).path);
+  const odfText = (p, f = 'content.xml') => partOf(p, f).replace(/<text:tracked-changes>[\s\S]*?<\/text:tracked-changes>/g, '').replace(/<office:annotation>[\s\S]*?<\/office:annotation>/g, '').replace(/<\/text:p>/g, '\n').replace(/<[^>]+>/g, '').trim();
+  const V1 = ['Quarterly report', 'The quick brown fox jumps over the lazy dog.', 'Total: 100 dollars.', 'This paragraph will be removed entirely.', 'Closing words stay.'];
+  const V2 = ['Quarterly report', 'The quick red fox jumps over the lazy dog.', 'Total: 120 dollars.', 'Closing Words stay.', 'A brand new paragraph appears here.'];
+  T('compare docs → tracked changes', 'compare-docs', ['v1.docx', 'v2.docx'], { output: 'docx' }, async ([o], r) => {
+    ok(path.basename(o) === 'v2 - compared.docx', path.basename(o));
+    const x = docxPart(o), ins = insTexts(x), del = delTexts(x);
+    for (const t of ['red', '120', 'Words', 'A brand new paragraph appears here.', '4.80']) ok(ins.includes(t), `“${t}” not marked inserted: ${ins}`);
+    for (const t of ['brown', '100', 'words', 'This paragraph will be removed entirely.', '4.20']) ok(del.includes(t), `“${t}” not marked deleted: ${del}`);
+    ok(!ins.some((t) => /quick|lazy|Quarterly/.test(t)) && !del.some((t) => /quick|lazy|Quarterly/.test(t)), 'unchanged words marked');
+    ok(/w:author="Ben Example"/.test(x), 'changes not credited to the newer version’s author');
+    same((await settled(o, 'accept')).slice(0, 5), V2, 'accepting every change');
+    same((await settled(o, 'reject')).slice(0, 5), V1, 'rejecting every change');
+    ok(/5 insertions and 5 deletions/.test(r[0].note), r[0].note);
+    opcCheck(o);
+  });
+  T('compare docs: by character, ignoring case', 'compare-docs', ['v1.docx', 'v2.docx'], { output: 'docx', level: 'char', ignoreCase: true, author: 'Reviewer' }, async ([o]) => {
+    const x = docxPart(o), ins = insTexts(x), del = delTexts(x);
+    ok(ins.includes('2') && del.includes('0') && !ins.includes('120'), `100→120 not marked by character: ${ins} / ${del}`);
+    const closing = (x.match(/<w:p\b(?:(?!<\/w:p>)[\s\S])*?Closing(?:(?!<\/w:p>)[\s\S])*?<\/w:p>/) || [''])[0];
+    ok(closing && !/<w:(ins|del)\b/.test(closing), 'a change of case marked');
+    ok(/w:author="Reviewer"/.test(x) && !/w:author="Ben/.test(x), 'author option ignored');
+    same((await settled(o, 'reject')).slice(0, 5), V1.map((t, i) => (i === 4 ? 'Closing Words stay.' : t)), 'rejecting every change');
+  });
+  T('compare docs → marked-up PDF', 'compare-docs', ['v1.docx', 'v2.docx'], { output: 'pdf' }, async ([o]) => { const t = (await pdfText(o)).replace(/\s+/g, ' '); has(t, 'Changes from v1.docx to v2.docx', 'brown', 'red', 'This paragraph will be removed entirely.', 'A brand new paragraph'); });
+  T('compare text with Markdown', 'compare-docs', ['doc.txt', 'doc.md'], {}, async ([o]) => { const a = (await settled(o, 'accept')).join('\n'), b = (await settled(o, 'reject')).join('\n'); has(a, 'Lime Notes', 'Alpha item'); ok(!a.includes('Lime plain text') && b.includes('Lime plain text') && !b.includes('Alpha item'), `rejected: ${b}`); });
+  T('accept tracked changes', 'track-changes', ['tracked.docx'], { action: 'accept' }, ([o], r) => {
+    same(paras(o), ['The quick brown fox.', 'A new line by Ana.', 'Format change', 'This is commented.', 'Keep visible. SECRET NOTE'], 'text');
+    const x = docxPart(o);
+    ok(!/<w:(ins|del|rPrChange)\b/.test(x), 'changes left');
+    ok(/<w:b\/><\/w:rPr><w:t>change/.test(x), 'the new formatting is not kept');
+    ok(!/trackRevisions/.test(docxPart(o, 'word/settings.xml')), 'still tracking changes');
+    ok(/Accepted 5 changes by Ana \(3\), Ben \(2\)/.test(r[0].note), r[0].note);
+  });
+  T('reject tracked changes', 'track-changes', ['tracked.docx'], { action: 'reject', stopTracking: false }, ([o]) => {
+    same(paras(o), ['The brown fox jumps.', 'Format change', 'This is commented.', 'Keep visible. SECRET NOTE'], 'text');
+    ok(/<w:i\/><\/w:rPr><w:t>change/.test(docxPart(o)), 'the old formatting is not back');
+    ok(/trackRevisions/.test(docxPart(o, 'word/settings.xml')), 'tracking turned off');
+  });
+  T('accept tracked changes in ODT', 'track-changes', ['tracked.odt'], { action: 'accept' }, ([o]) => { same(odfText(o), 'The quick brown fox.\nSecond paragraph.'); ok(!/tracked-changes|change-start/.test(partOf(o, 'content.xml')), 'markers left'); });
+  T('reject tracked changes in ODT', 'track-changes', ['tracked.odt'], { action: 'reject' }, ([o]) => same(odfText(o), 'The brown fox jumps.\nSecond paragraph.'));
+  const noted = (re) => (outs, r) => { ok(!outs.length, `saved ${outs}`); ok(re.test(r[0]?.note || ''), r[0]?.note); };
+  T('accept changes: none to accept', 'track-changes', ['doc.docx'], {}, noted(/^This document has no tracked changes\.$/));
+  T('mail merge: a file per row', 'mail-merge', ['letter.docx'], { data: fx('merge.csv'), name: '{FirstName} {Last Name}' }, ([o], r) => {
+    same(files(o).sort(), ['Ada Lovelace.docx', 'Alan Turing.docx', '민지 김.docx'], 'files');
+    const ada = path.join(o, 'Ada Lovelace.docx'), x = docxPart(ada);
+    same(paras(ada).slice(0, 2), ['Dear Ada Lovelace,', 'Your order of 4.20 ships to London.'], 'Ada’s letter');
+    ok(/12 St James Square<\/w:t><w:br\/><w:t[^>]*>London/.test(x), 'line break in the address lost');
+    ok(!/MERGEFIELD|«|\{\{/.test(x), 'fields or placeholders left');
+    ok(/<w:b\/><\/w:rPr><w:t[^>]*>4\.20/.test(x), 'the merge field’s bold formatting lost');
+    ok(!/mailMerge/.test(docxPart(ada, 'word/settings.xml')), 'the data source link is still there');
+    same(paras(path.join(o, '민지 김.docx')).slice(0, 2), ['Dear 민지 김,', 'Your order of 1,200 ships to 서울.'], 'Korean letter');
+    ok(r[0].note === '3 copies', r[0].note);
+  });
+  T('mail merge: one document', 'mail-merge', ['letter.docx'], { data: fx('merge.csv'), combine: 'one' }, ([o]) => {
+    const x = docxPart(o), p = paras(o);
+    ok(p.filter((t) => t.startsWith('Dear ')).length === 3 && p.includes('Your order of 7 ships to Manchester.'), `letters: ${p}`);
+    ok((x.match(/<w:type w:val="nextPage"\/>/g) || []).length === 2, 'each letter does not start a new page');
+    ok(new Set((x.match(/wp:docPr id="\d+"/g) || [])).size === (x.match(/wp:docPr id="\d+"/g) || []).length, 'duplicate drawing ids');
+    opcCheck(o);
+  });
+  T('mail merge: one PDF', 'mail-merge', ['letter.docx'], { data: fx('merge.csv'), combine: 'one', to: 'pdf' }, async ([o]) => { const t = (await pdfText(o)).replace(/\s+/g, ' '); has(t, 'Dear Ada Lovelace', 'Alan Turing', 'Manchester'); });
+  F('mail merge needs a list', 'mail-merge', ['letter.docx'], { data: '' }, /Choose the list/);
+  F('mail merge needs fields', 'mail-merge', ['doc.docx'], { data: fx('merge.csv') }, /no merge fields/);
+  T('document statistics', 'doc-stats', ['doc.docx'], {}, (outs, r) => {
+    const st = r[0].stats;
+    ok(st.words === 29 && st.headings === 1 && st.tables === 1 && st.pictures === 1 && st.paragraphs === 8, JSON.stringify(st));
+    ok(st.readingEase > 50 && st.readingEase < 100 && st.grade > 0, `readability ${st.readingEase} / ${st.grade}`);
+    has(r[0].text, 'Words: 29', 'Flesch reading ease', 'Reading time: under a minute');
+    ok(!outs.length, 'saved a report without being asked');
+  });
+  T('document statistics: slides, saved', 'doc-stats', ['notes.pptx'], { save: true }, ([o], r) => { has(txt(o), 'Slides: 3', 'Words: 24'); ok(r[0].stats.slides === 3, JSON.stringify(r[0].stats)); });
+  T('split at headings', 'split-doc', ['chapters.docx'], { level: '1' }, ([o]) => {
+    same(files(o).sort(), ['1 Start.docx', '2 Chapter One.docx', '3 Chapter Two.docx'], 'parts');
+    same(paras(path.join(o, '2 Chapter One.docx')), ['Chapter One', 'Text of chapter one.', 'Section 1.1', 'Text of section one point one.'], 'chapter one');
+    same(paras(path.join(o, '3 Chapter Two.docx')), ['Chapter Two', 'Text of chapter two.'], 'chapter two');
+    const pics = (f) => Object.keys(opcCheck(path.join(o, f))).filter((k) => k.startsWith('word/media/')).length;
+    ok(pics('2 Chapter One.docx') === 1 && pics('1 Start.docx') === 0 && pics('3 Chapter Two.docx') === 0, 'the picture went to the wrong parts');
+  });
+  T('split at headings, level 2', 'split-doc', ['chapters.docx'], { level: '2' }, ([o]) => same(files(o).sort(), ['1 Start.docx', '2 Chapter One.docx', '3 Section 1.1.docx', '4 Chapter Two.docx'], 'parts'));
+  T('watermark and page numbers', 'watermark-doc', ['doc.docx'], { text: 'DRAFT', pageNumbers: true, numberAlign: 'right' }, async ([o]) => {
+    const z = opcCheck(o), s = (k) => Buffer.from(z[k]).toString(), x = s('word/document.xml');
+    const hdr = /<w:headerReference w:type="default" r:id="(rId\d+)"/.exec(x), ftr = /<w:footerReference w:type="default" r:id="(rId\d+)"/.exec(x);
+    ok(hdr && ftr, 'no header or footer in the section');
+    const target = (id) => 'word/' + new RegExp(`Id="${id}"[^>]*Target="([^"]+)"`).exec(s('word/_rels/document.xml.rels'))[1];
+    ok(/<v:textpath\b[^>]*string="DRAFT"/.test(s(target(hdr[1]))) && /rotation:315/.test(s(target(hdr[1]))), 'no diagonal watermark in the header');
+    ok(/ PAGE /.test(s(target(ftr[1]))) && /<w:jc w:val="right"\/>/.test(s(target(ftr[1]))), 'no page number on the right of the footer');
+    ok((await docxText(o)).includes('Lime Report'), 'document text lost');
+  });
+  T('watermark into an existing header', 'watermark-doc', ['v2.docx'], { text: 'CONFIDENTIAL', layout: 'horizontal' }, ([o]) => {
+    const z = opcCheck(o), headers = Object.keys(z).filter((k) => /^word\/header\d*\.xml$/.test(k));
+    ok(headers.length === 1, `${headers.length} headers`);
+    const h = Buffer.from(z[headers[0]]).toString();
+    ok(h.includes('Lime header') && /string="CONFIDENTIAL"/.test(h) && !/rotation:315/.test(h), 'header not kept with a level watermark');
+  });
+  T('find and replace across runs', 'replace-text', ['letter.docx'], { find: '{{last name}}', replace: 'Smith' }, ([o], r) => {
+    ok(paras(o)[0] === 'Dear «FirstName» Smith,', paras(o)[0]);
+    ok((docxPart(o).match(/<w:r>/g) || []).length === (docxPart(fx('letter.docx')).match(/<w:r>/g) || []).length, 'runs (formatting) lost');
+    ok(r[0].note === 'Replaced 1 time', r[0].note);
+  });
+  T('find and replace whole words', 'replace-text', ['doc.docx'], { find: 'lime', replace: 'Kiwi', wholeWords: true }, ([o]) => { const t = xmlText(docxPart(o)); ok(t.includes('Kiwi Report') && t.includes('Limes') && !t.includes('Kiwis'), t); });
+  T('find and replace with a pattern', 'replace-text', ['doc.docx'], { find: '(\\d)\\.(\\d\\d)\\b', replace: '$1,$2', regex: true }, ([o]) => has(xmlText(docxPart(o)), '4,20', '$1,284,50'));
+  F('find and replace: match case', 'replace-text', ['doc.docx'], { find: 'lime', replace: 'x', matchCase: true }, /found no “lime”/);
+  T('find and replace in a workbook', 'replace-text', ['book.xlsx'], { find: 'Lime', replace: 'Lemon' }, ([o]) => { const ws = XLSX.readFile(o, { cellFormula: true }).Sheets.Data; ok(ws.A2.v === 'Lemon' && ws.A5.v === 'Lemon' && ws.D2.f === 'B2*C2', `${ws.A2.v} ${ws.D2.f}`); opcCheck(o); });
+  T('find and replace in slides and notes', 'replace-text', ['notes.pptx'], { find: 'Lime', replace: 'Kiwi' }, async ([o]) => { const d = await E('slides').readDeck(o); ok(d.slides[0].notes[0] === 'Greet everyone and introduce Kiwi.', d.slides[0].notes[0]); });
+  T('find and replace in ODT and text', 'replace-text', ['tracked.odt'], { find: 'brown', replace: 'grey' }, ([o]) => ok(odfText(o).startsWith('The quick grey fox'), odfText(o)));
+  T('find and replace in plain text', 'replace-text', ['doc.txt'], { find: 'plain', replace: 'simple' }, ([o]) => ok(txt(o).startsWith('Lime simple text'), txt(o)));
+  T('remove personal info', 'clean-office', ['tracked.docx'], {}, ([o], r) => {
+    const z = opcCheck(o), s = (k) => (z[k] ? Buffer.from(z[k]).toString() : ''), x = s('word/document.xml');
+    ok(!z['word/comments.xml'] && !z['docProps/custom.xml'] && !/comment(Reference|RangeStart)/.test(x), 'comments or custom properties left');
+    ok(!/Jay Example|Ben Example/.test(s('docProps/core.xml')) && !/Example Co|TotalTime/.test(s('docProps/app.xml')), 'authors or company left');
+    ok(!/w:rsid/.test(x + s('word/settings.xml')) && /removePersonalInformation/.test(s('word/settings.xml')), 'editing ids left');
+    ok(!/w:author="(Ana|Ben)"/.test(x) && /w:author="Author"/.test(x) && !/w:date=/.test(x), 'tracked-change authors left');
+    ok(!x.includes('SECRET NOTE') && x.includes('This is commented.'), 'hidden text kept or text lost');
+    ok(/1 comment/.test(r[0].note) && /hidden/.test(r[0].note), r[0].note);
+  });
+  T('remove personal info, keeping comments', 'clean-office', ['tracked.docx'], { comments: false, hidden: false }, ([o]) => { const z = zipOf(o); ok(z['word/comments.xml'] && Buffer.from(z['word/document.xml']).toString().includes('SECRET NOTE'), 'comments or hidden text removed'); });
+  T('remove personal info from ODT', 'clean-office', ['tracked.odt'], {}, ([o]) => { ok(!/Jay Example|Ben Example|editing-cycles/.test(partOf(o, 'meta.xml')), 'meta left'); const c = partOf(o, 'content.xml'); ok(!/office:annotation/.test(c) && /<dc:creator>Author<\/dc:creator>/.test(c) && /<dc:date>/.test(c), 'comment or change author left'); });
+  T('remove speaker notes', 'clean-office', ['notes.pptx'], { notes: true }, ([o]) => { const z = opcCheck(o); ok(!Object.keys(z).some((k) => /notesSlides\//.test(k)), 'notes left'); });
+  T('extract media from slides', 'office-media', ['deck2.pptx'], {}, async ([o]) => { same(files(o), ['Slide 2 - Image 1.jpg'], 'files'); ok((await sharp(path.join(o, files(o)[0])).metadata()).width === 400, 'not the original picture'); });
+  T('extract media from Word', 'office-media', ['big.docx'], { what: 'pictures' }, async ([o]) => { same(files(o).sort(), ['Image 1.jpg', 'Image 2.png'], 'files'); ok((await sharp(path.join(o, 'Image 2.png')).metadata()).width === 2400, 'PNG changed'); });
+  T('compress pictures', 'compress-office', ['big.docx'], { size: '1024', quality: 70 }, async ([o]) => {
+    const z = opcCheck(o), pics = Object.keys(z).filter((k) => k.startsWith('word/media/'));
+    ok(pics.length === 2 && read(o).length < read(fx('big.docx')).length / 3, `${read(o).length} vs ${read(fx('big.docx')).length}`);
+    for (const k of pics) { const m = await sharp(Buffer.from(z[k])).metadata(); ok(Math.max(m.width, m.height) <= 1024 && m.format === (k.endsWith('.png') ? 'png' : 'jpeg'), `${k}: ${m.width}×${m.height} ${m.format}`); }
+    ok((await docxText(o)).includes('Pictures to compress.'), 'text lost');
+  });
+  T('formulas to values', 'sheet-values', ['book.xlsx'], {}, ([o], r) => {
+    const z = opcCheck(o);
+    ok(!Object.keys(z).some((k) => /worksheets\/.*\.xml$/.test(k) && /<f\b/.test(Buffer.from(z[k]).toString())) && !z['xl/calcChain.xml'], 'formulas or calcChain left');
+    const wb = XLSX.readFile(o, { cellFormula: true });
+    ok(wb.Sheets.Data.D2.v === 4.8 && !wb.Sheets.Data.D2.f && wb.Sheets.Summary.B1.v === 16.1 && wb.Sheets.Summary.B2.v === '  Kiwi  ' && wb.Sheets.Data.D8.w === '#DIV/0!', 'values');
+    ok(r[0].note.startsWith('8 formulas'), r[0].note);
+  });
+  T('formulas to values in ODS', 'sheet-values', ['book.ods'], {}, ([o]) => { const c = partOf(o, 'content.xml'); ok(!/table:formula/.test(c) && /office:value="6"/.test(c), 'formula left or value lost'); });
+  T('formulas to values: none there', 'sheet-values', ['sheet.xlsx'], {}, noted(/no formulas/));
+  T('tidy rows: nothing to tidy', 'tidy-sheet', ['sheet.xlsx'], {}, noted(/^Nothing to tidy/));
+  T('unhide: nothing hidden', 'unhide-sheet', ['sheet.xlsx'], {}, noted(/Nothing in this workbook is hidden or protected/));
+  T('split at headings: one part', 'split-doc', ['doc.docx'], {}, noted(/^Nothing to split at Heading 1/));
+  T('compress pictures: none there', 'compress-office', ['sheet.xlsx'], {}, noted(/no JPEG or PNG pictures/));
+  T('pick slides: nothing to change', 'pick-slides', ['deck.pptx'], {}, noted(/no hidden slides/));
+  T('unhide and unprotect', 'unhide-sheet', ['book.xlsx'], {}, ([o], r) => {
+    const wb = partOf(o, 'xl/workbook.xml'), d = partOf(o, 'xl/worksheets/sheet1.xml'), s2 = partOf(o, 'xl/worksheets/sheet2.xml');
+    ok(!/state="hidden"/.test(wb) && !/hidden="1"/.test(d) && !/sheetProtection/.test(d), 'still hidden or protected');
+    ok(/<sheetProtection password="CC1A"/.test(s2), 'a password was removed');
+    ok(/1 sheet, 1 row, 1 column/.test(r[0].note) && /stays protected/.test(r[0].note), r[0].note);
+  });
+  T('unhide rows only', 'unhide-sheet', ['book.xlsx'], { sheets: false, protection: false }, ([o]) => { ok(/state="hidden"/.test(partOf(o, 'xl/workbook.xml')) && /sheetProtection/.test(partOf(o, 'xl/worksheets/sheet1.xml')) && !/hidden="1"/.test(partOf(o, 'xl/worksheets/sheet1.xml')), 'options ignored'); });
+  T('unhide and unprotect ODS', 'unhide-sheet', ['book.ods'], {}, ([o]) => { const c = partOf(o, 'content.xml'); ok(!/visibility="collapse"|table:protected/.test(c), 'still hidden or protected'); });
+  T('split workbook', 'split-sheets', ['book.xlsx'], {}, ([o]) => {
+    same(files(o).sort(), ['Data.xlsx', 'Summary.xlsx'], 'files');
+    const d = XLSX.readFile(path.join(o, 'Data.xlsx'), { cellFormula: true }), s = XLSX.readFile(path.join(o, 'Summary.xlsx'), { cellFormula: true });
+    same([d.SheetNames, s.SheetNames], [['Data'], ['Summary']], 'sheets');
+    ok(d.Sheets.Data.D2.f === 'B2*C2' && !s.Sheets.Summary.B1.f && s.Sheets.Summary.B1.v === 16.1, 'formulas');
+    ok((d.Workbook.Names || []).some((n) => n.Name === 'GrandTotal') && !(s.Workbook?.Names || []).some((n) => n.Name === 'GrandTotal'), 'names');
+    opcCheck(path.join(o, 'Data.xlsx')); opcCheck(path.join(o, 'Summary.xlsx'));
+  });
+  T('split workbook with hidden sheets', 'split-sheets', ['book.xlsx'], { hidden: true, values: false }, ([o]) => { same(files(o).sort(), ['Data.xlsx', 'Hidden.xlsx', 'Summary.xlsx'], 'files'); ok(XLSX.readFile(path.join(o, 'Summary.xlsx'), { cellFormula: true }).Sheets.Summary.B1.f === 'Data!D7', 'formula changed'); });
+  T('split ODS workbook', 'split-sheets', ['book.ods'], {}, ([o]) => { same(files(o).sort(), ['Data.ods', 'Other.ods'], 'files'); ok(!/table:formula/.test(partOf(path.join(o, 'Other.ods'), 'content.xml')) && /table:formula/.test(partOf(path.join(o, 'Data.ods'), 'content.xml')), 'formulas'); });
+  T('tidy rows', 'tidy-sheet', ['book.xlsx'], {}, ([o], r) => {
+    const wb = XLSX.readFile(o, { cellFormula: true }), d = wb.Sheets.Data, s = wb.Sheets.Summary;
+    same(XLSX.utils.sheet_to_json(d, { header: 1, defval: '' }).map((x) => x[0]), ['Name', 'Lime', 'Lemon', 'Kiwi', 'Total', 'Ratio', 'hidden row', 'Note'], 'rows');
+    same([d.D4.f, d.D5.f, d.D6.f, s.B1.f, s.B2.f], ['B4*C4', 'SUM(D2:D4)', 'D5/0', 'Data!D5', 'Data!A4'], 'formulas');
+    same((wb.Workbook.Names || []).map((n) => n.Ref), ['Data!$A$1:$D$6', 'Data!$D$5'], 'names');
+    same(d['!merges'].map((m) => XLSX.utils.encode_range(m)), ['A8:B8'], 'merged cells');
+    ok(/hidden="1"/.test(partOf(o, 'xl/worksheets/sheet1.xml').match(/<row r="7"[^>]*>/)[0]), 'row formatting did not move with the row');
+    same(r[0].note, '1 duplicate row removed, 1 empty row removed, 1 text trimmed');
+    opcCheck(o);
+  });
+  T('tidy rows: spaces only', 'tidy-sheet', ['book.xlsx'], { dedupe: false, emptyRows: false }, ([o], r) => { ok(XLSX.readFile(o).Sheets.Data.A6.v === 'Kiwi' && XLSX.readFile(o).Sheets.Data.A5.v === 'Lime', 'rows moved'); same(r[0].note, '1 text trimmed'); });
+  T('tidy CSV', 'tidy-sheet', ['dupes.csv'], {}, ([o]) => same(utf(o), 'Name,Qty\r\nLime,1\r\nKiwi,2\r\n'));
+  T('check formulas', 'sheet-formulas', ['book.xlsx'], { save: true }, ([o], r) => {
+    same(r[0].note, '8 formulas on 2 sheets; 1 error');
+    const rows = XLSX.utils.sheet_to_json(XLSX.readFile(o).Sheets.Formulas);
+    ok(rows.length === 8 && rows.some((x) => x.Cell === 'D8' && x.Value === '#DIV/0!' && x.Problem === 'Error #DIV/0!') && rows.some((x) => x.Sheet === 'Summary' && x.Formula === '=Data!D7'), JSON.stringify(rows).slice(0, 300));
+  });
+  T('speaker notes → Word', 'slide-notes', ['notes.pptx'], { to: 'docx', include: 'notes' }, ([o]) => same(paras(o), ['notes', 'Slide 1: Welcome', 'Greet everyone and introduce Lime.', 'Slide 2: Secret slide (hidden)', 'Skip this one on the day.'], 'paragraphs'));
+  T('slides and notes → Markdown', 'slide-notes', ['notes.pptx'], { to: 'md', include: 'both' }, ([o]) => has(txt(o), '## Slide 1: Welcome\n\n- First point\n- Second point\n\n**Notes**\n\nGreet everyone', '## Slide 3: Wrap up\n\n- Questions'));
+  F('speaker notes: none there', 'slide-notes', ['deck.pptx'], { include: 'notes' }, /no speaker notes/);
+  T('merge presentations', 'merge-slides', ['deck.pptx', 'deck2.pptx'], {}, async ([o], r) => {
+    const z = opcCheck(o), d = await E('slides').readDeck(o), p = Buffer.from(z['ppt/presentation.xml']).toString();
+    same(d.slides.map((s) => s.title || s.body[0]?.text), ['Lime Deck', 'Numbers', 'Appendix', 'Thanks'], 'slides');
+    ok(d.slides[2].notes[0] === 'Appendix notes here.', 'notes lost');
+    ok((p.match(/<p:sldMasterId\b/g) || []).length === 2, 'the second deck’s design is missing');
+    const ids = [...p.matchAll(/<p:(?:sldMasterId|sldLayoutId) id="(\d+)"/g), ...Object.keys(z).filter((k) => /slideMasters\/[^/]+\.xml$/.test(k)).flatMap((k) => [...Buffer.from(z[k]).toString().matchAll(/<p:sldLayoutId id="(\d+)"/g)])].map((m) => m[1]);
+    ok(new Set(ids).size === ids.length, 'master and layout ids repeat');
+    ok(r[0].note.startsWith('4 slides'), r[0].note);
+  });
+  T('merge presentations with the first design', 'merge-slides', ['notes.pptx', 'deck2.pptx'], { design: 'first' }, async ([o]) => {
+    const z = opcCheck(o), d = await E('slides').readDeck(o);
+    same(d.slides.map((s) => s.title), ['Welcome', 'Secret slide', 'Wrap up', 'Appendix', 'Thanks'], 'slides');
+    ok(Object.keys(z).filter((k) => /slideMasters\/[^/]+\.xml$/.test(k)).length === 1, 'designs copied');
+  });
+  T('pick slides', 'pick-slides', ['notes.pptx'], { slides: '3, 1-2', dropHidden: true }, async ([o], r) => {
+    const z = opcCheck(o), d = await E('slides').readDeck(o);
+    same(d.slides.map((s) => s.title), ['Wrap up', 'Welcome'], 'slides');
+    ok(Object.keys(z).filter((k) => /slides\/slide\d+\.xml$/.test(k)).length === 2 && Object.keys(z).filter((k) => /notesSlides\/[^/]+\.xml$/.test(k)).length === 2, 'parts of removed slides left');
+    same(r[0].note, '2 of 3 slides kept, 1 removed');
+  });
+  T('pick slides keeps hidden ones when asked', 'pick-slides', ['notes.pptx'], { slides: '2-3', dropHidden: false }, async ([o]) => same((await E('slides').readDeck(o)).slides.map((s) => s.title), ['Secret slide', 'Wrap up'], 'slides'));
   for (const to of ['pdf', 'png', 'epub', 'pptx']) T(`layout→${to}`, 'convert-layout', ['layout.idml'], { to }, async ([o]) => (to === 'pdf' ? pages(o, 4) : to === 'png' ? ok(files(o).length === 4, 'pages') : zipHas(o, to === 'epub' ? 'mimetype' : 'ppt/')));
 
   for (const [to, chk] of [['pdf', async (o) => pages(o, 1)], ['svg', (o) => ok(txt(o).includes('LIME CAD TEST'), 'svg text')], ['png', async (o) => fmt(o, 'png')], ['dxf', (o) => ok(txt(o).includes('ENTITIES') && txt(o).includes('LIME CAD TEST'), 'dxf')], ['ai', (o) => ok(read(o).subarray(0, 5).toString() === '%PDF-', 'ai')], ['eps', (o) => ok(/^%!PS/.test(txt(o)) || read(o).readUInt32BE(0) === 0xc5d0d3c6, 'eps')]]) {
@@ -1179,10 +1401,13 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'trim-media': [0, { end: '0.5' }], 'merge-media': [['tone.mp3', 'sweep.m4a']], 'add-audio': [['sweep.mp4', 'tone.wav']], 'render-motion': [0, { resolution: 'quarter' }],
     'merge-documents': [['doc.md', 'photo2.jpg']], 'merge-sheets': [['sheet.xlsx', 'sheet.csv']], 'json-to-sheet': [['data.json']], 'decompress-file': [['notes.txt.gz']], 'rename-files': [0, { pattern: '{name} {n}' }],
     'overlay-pdf': [0, { overlay: fx('v1.pdf') }], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
+    'compare-docs': [['v1.docx', 'v2.docx']], 'track-changes': [['tracked.docx']], 'mail-merge': [['letter.docx'], { data: fx('merge.csv') }], 'split-doc': [['chapters.docx']], 'watermark-doc': [['doc.docx']],
+    'replace-text': [['doc.docx'], { find: 'lime', replace: 'Kiwi' }], 'clean-office': [['tracked.docx']], 'office-media': [['doc.docx']], 'compress-office': [['big.docx']], 'sheet-values': [['book.xlsx']], 'unhide-sheet': [['book.xlsx']],
+    'split-sheets': [['book.xlsx']], 'tidy-sheet': [['book.xlsx']], 'sheet-formulas': [['book.xlsx']], 'slide-notes': [['notes.pptx']], 'merge-slides': [['deck.pptx', 'deck2.pptx']], 'pick-slides': [['notes.pptx'], { slides: '3, 1-2' }],
   };
   // Choices that refuse this input on purpose: the same format again, several files into a one-file compressor, or ODT where
   // neither LibreOffice nor macOS's text converter is there to write it.
-  const SWEEP_REFUSE = { 'convert-document to=docx': /already DOCX/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
+  const SWEEP_REFUSE = { 'replace-text matchCase=true': /found no “lime”/, 'convert-document to=docx': /already DOCX/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   // Tools that take files by extension rather than by kind (the ArtCraft actions) get the first sample their extensions match.
@@ -1493,9 +1718,11 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^(convert-video|compress-video) height=(2160|1080|720)$/, 'the 540p clip is never enlarged'], [/^(extract-audio|convert-audio) rate=48000$/, 'the source is 48 kHz already'],
     [/^trace-image transparent=true$/, 'the photo has no white areas to leave out'], [/^poster-frame transparent=false$/, 'the animation has its own black background layer'],
     [/^convert-slides paper=(letter|a4)$/, 'Automatic picks the local paper size'], [/^pages-per-sheet orientation=portrait$/, 'four portrait pages fit best on a portrait sheet'],
-    [/^pdf-page-size orientation=portrait$/, 'the pages are portrait already'] [/^overlay-pdf scale=actual$/, 'the overlay is the same size as the pages'],
+    [/^pdf-page-size orientation=portrait$/, 'the pages are portrait already'], [/^overlay-pdf scale=actual$/, 'the overlay is the same size as the pages'],
     [/^export-layers hidden=true$/, 'the PSD has no hidden layers'], [/^split-scenes sensitivity=(1|100)$/, 'hard cuts are found at any sensitivity, as FilmCraft’s own tests expect'],
-    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
+    [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'],
+    [/^replace-text (regex=true|everywhere=false)$/, 'a plain word reads the same as a pattern, and the document has no headers or notes'], [/^clean-office notes=true$/, 'a Word document has no speaker notes'],
+    [/^office-media what=(pictures|all)$/, 'the document holds only a picture'], [/^tidy-sheet header=false$/, 'no row repeats the header row'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
   ];
   await check('option sweep covers the catalogue', () => {
     const names = new Set(C.filter((c) => c.par).map((c) => c.name.replace(/^sweep /, ''))), runnable = tools.catalog().filter((t) => !t.editor && !t.noFiles);

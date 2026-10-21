@@ -156,6 +156,8 @@ class Package {
     return gone;
   }
   async save(out) {
+    // Content types for parts that aren't there (some writers leave them) go, so the package stays consistent.
+    if (!this.odf && this.types()) for (const e of all(this.types(), NS.ct, 'Override')) if (!this.has((e.getAttribute('PartName') || '').replace(/^\//, ''))) remove(e);
     const files = {};
     if (this.odf && this.files.mimetype) files.mimetype = [this.files.mimetype, { level: 0 }];
     for (const n of this.list()) if (n !== 'mimetype' || !this.odf) files[n] = this.bytes(n);

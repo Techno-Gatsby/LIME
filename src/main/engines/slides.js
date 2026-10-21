@@ -63,7 +63,7 @@ function readOdp(pkg) {
 const isInside = (n, root) => { for (let p = n.parentNode; p; p = p.parentNode) if (p === root) return true; return false; };
 
 async function exportNotes(file, o, ctx) {
-  const deck = await readDeck(file), what = o.include || 'notes', to = o.to || 'docx';
+  const deck = await readDeck(file), what = o.include || 'both', to = o.to || 'docx';
   const withNotes = deck.slides.filter((s) => s.notes.length);
   if (what === 'notes' && !withNotes.length) throw new Error('This presentation has no speaker notes.');
   const list = what === 'notes' ? withNotes : deck.slides;
@@ -153,7 +153,8 @@ async function mergeDecks(files, o, ctx) {
   const sz = (pkg) => { const s = all(pkg.dom(pkg.main()), P, 'sldSz')[0]; return s ? `${s.getAttribute('cx')}x${s.getAttribute('cy')}` : ''; };
   const ids = (name) => all(pres, P, name).map((e) => Number(e.getAttribute('id')) || 0);
   let slideId = Math.max(255, ...ids('sldId')) + 1;
-  let masterId = Math.max(MASTER_MIN - 1, ...ids('sldMasterId'), ...layoutsOf(base, main).length ? base.rels(main).filter((r) => r.type === 'slideMaster').flatMap((m) => all(base.dom(m.target), P, 'sldLayoutId').map((e) => Number(e.getAttribute('id')) || 0)) : []) + 1;
+  // Master and layout ids share one range and must stay unique across the merged deck.
+  let masterId = Math.max(MASTER_MIN - 1, ...ids('sldMasterId'), ...base.rels(main).filter((r) => r.type === 'slideMaster').flatMap((m) => all(base.dom(m.target), P, 'sldLayoutId').map((e) => Number(e.getAttribute('id')) || 0))) + 1;
   let notesMaster = base.rels(main).find((r) => r.type === 'notesMaster')?.target || null;
   const baseLayouts = layoutsOf(base, main).map((p) => ({ part: p, ...layoutKey(base, p) }));
   const sldIdLst = listEl(pres, 'sldIdLst', ['sldMasterIdLst', 'notesMasterIdLst', 'handoutMasterIdLst']);
@@ -217,9 +218,10 @@ async function pickSlides(file, o, ctx) {
   const pkg = await openDeck(file), main = pkg.main(), pres = pkg.dom(main), slides = slideList(pkg, main);
   const hidden = (s) => pkg.dom(s.part).documentElement.getAttribute('show') === '0';
   let order = U.parseRanges(o.slides || 'all', slides.length).filter((v, i, a) => a.indexOf(v) === i).map((i) => slides[i]);
-  if (o.dropHidden) order = order.filter((s) => !hidden(s));
+  if (o.dropHidden !== false) order = order.filter((s) => !hidden(s));
   if (!order.length) throw new Error('That leaves no slides.');
   const keptIds = new Set(order.map((s) => s.id)), gone = slides.filter((s) => !keptIds.has(s.id));
+  if (!gone.length && order.every((s, i) => s === slides[i])) return { note: o.dropHidden !== false && (!o.slides || o.slides === 'all') ? 'This presentation has no hidden slides.' : 'Nothing to change: the slides are already like that.' };
   const lst = child(pres.documentElement, P, 'sldIdLst');
   for (const s of slides) remove(s.el);
   for (const s of order) lst.appendChild(s.el);

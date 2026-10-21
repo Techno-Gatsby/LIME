@@ -101,8 +101,9 @@ export function form(tool, opts, onChange, ctx = {}) {
         $('input', el).addEventListener('input', (e) => { $('span', el).textContent = e.target.value; set(o, e.target.value); });
         break;
       case 'file':
-        el = h(`<div class="row"><button class="btn" type="button">Choose…</button><span class="muted ell">${val ? esc(nameOf(val)) : 'No file chosen'}</span></div>`);
-        $('button', el).addEventListener('click', async () => { const [f] = await api.invoke('dialog:open', { multi: false, filters: o.filters }); if (f) { set(o, f); $('span', el).textContent = nameOf(f); } });
+        // The button carries the option's id and the chosen path, so "Fill in … first" can focus it.
+        el = h(`<div class="row"><button class="btn" type="button" id="${id}" value="${esc(val)}">Choose…</button><span class="muted ell">${val ? esc(nameOf(val)) : 'No file chosen'}</span></div>`);
+        $('button', el).addEventListener('click', async (e) => { const b = e.currentTarget, [f] = await api.invoke('dialog:open', { multi: false, filters: o.filters }); if (f) { set(o, f); b.value = f; $('span', el).textContent = nameOf(f); } });
         break;
       case 'cells': {
         el = h(`<div class="row"><input class="input" id="${id}" type="text" value="${esc(val)}" placeholder="${esc(o.placeholder || '')}" autocomplete="off" spellcheck="false"><button class="btn" type="button">Choose…</button></div>`);

@@ -268,7 +268,7 @@ async function trackChanges(file, o, ctx) {
     for (const n of pkg.list(/^word\/[^/]+\.xml$/)) if (/<w:(ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|tblPrChange|tblGridChange|trPrChange|tcPrChange|tblPrExChange|cellIns|cellDel)\b/.test(pkg.text(n))) add(settleWord(pkg.dom(n), accept));
     if (o.stopTracking !== false && pkg.has('word/settings.xml')) all(pkg.dom('word/settings.xml'), W, 'trackRevisions').forEach(remove);
   }
-  if (!st.changes) throw new Error('This document has no tracked changes.');
+  if (!st.changes) return { note: 'This document has no tracked changes.' };
   const out = ctx.out.file(file, `${U.base(file)}-${accept ? 'accepted' : 'rejected'}.${U.ext(file)}`);
   await pkg.save(out);
   return { path: out, note: `${accept ? 'Accepted' : 'Rejected'} ${summary(st)}` };
@@ -316,7 +316,8 @@ function diff(a, b, eq = (x, y) => x === y, cap = 4000) {
   ops.push(...mid);
   return tail();
 }
-const WORDS = /[\p{L}\p{N}_]+|\s+|[^\p{L}\p{N}_\s]/gu;
+// Words for comparing: a number like 1,284.50 or 2026-04-19 and a word like don’t are one each.
+const WORDS = /\p{N}+(?:[.,:/-]\p{N}+)*|[\p{L}\p{M}\p{N}_]+(?:['’][\p{L}\p{M}]+)*|\s+|[^\p{L}\p{M}\p{N}_\s]/gu;
 const tokens = (t, chars) => (chars ? Array.from(t) : t.match(WORDS) || []);
 // How alike two paragraphs are, the way LibreOffice's document comparison judges it: lengths within three times
 // each other, and enough text in long common stretches (the sum of their squared lengths).
@@ -680,7 +681,7 @@ async function splitDoc(file, o, ctx) {
       parts[parts.length - 1].blocks.push(b);
     }
     const real = parts.filter((p) => p.title || p.blocks.some((b) => paraText(b).trim() || all(b, W, 'drawing').length || is(b, W, 'tbl')));
-    if (real.filter((p) => p.title).length < 1 || real.length < 2) throw new Error(`This document has no level ${max} headings to split at${max < 3 ? '; try a deeper level' : ''}.`);
+    if (real.filter((p) => p.title).length < 1 || real.length < 2) return { note: `Nothing to split at Heading ${max}: the document would stay in one piece.` };
     const folder = ctx.out.folder(file, `${U.base(file)} - parts`), used = new Set(), width = String(real.length).length;
     for (const [i, part] of real.entries()) {
       const copy = pkg.clone(), d = copy.dom(main), b = all(d, W, 'body')[0], sect = child(b, W, 'sectPr');
@@ -724,7 +725,7 @@ function newPart(pkg, kind) {
   return name;
 }
 async function watermark(file, o, ctx) {
-  const text = String(o.text ?? '').trim();
+  const text = String(o.text ?? 'CONFIDENTIAL').trim();
   if (!text && !o.pageNumbers) throw new Error('Type a watermark, or turn on page numbers.');
   const { pkg, main, doc } = await openWord(file);
   const sects = all(doc, W, 'sectPr').filter((s) => !up(s, W, 'sectPrChange')), done = new Set();

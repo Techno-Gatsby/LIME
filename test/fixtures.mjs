@@ -1002,6 +1002,7 @@ sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rat
     `<w:p>${r('Dear ')}<w:fldSimple w:instr=" MERGEFIELD FirstName "><w:r><w:t>«FirstName»</w:t></w:r></w:fldSimple>${r(' {{Last ')}${r('Name}},')}</w:p>`
     + `<w:p>${r('Your order of ')}${fld('Amount')}${r(' ships to «Ci')}${r('ty».', '<w:i/>')}</w:p><w:p>${r('Address:')}</w:p><w:p>${r('{{Address}}')}</w:p>`,
     { settings: '<w:mailMerge><w:mainDocumentType w:val="formLetters"/><w:dataType w:val="textFile"/><w:query w:val="SELECT * FROM merge.csv"/></w:mailMerge>' }));
+  fs.writeFileSync(P('dupes.csv'), 'Name,Qty\nLime,1\n\n Lime ,1\nKiwi,2\nKiwi,2\n');
   fs.writeFileSync(P('merge.csv'), 'FirstName,Last Name,Amount,City,Address\nAda,Lovelace,4.20,London,"12 St James Square\nLondon"\nAlan,Turing,7,Manchester,Bletchley Park\n민지,김,"1,200",서울,Jongno-gu\n');
   // Two versions of a report to compare: changed words, a changed number, a case change, a removed and an added
   // paragraph, and a changed table cell.
