@@ -32,7 +32,7 @@ html, body { background: transparent !important; overflow: hidden; }
 .f-hi { flood-color: #fff; flood-opacity: var(--rim-hi); } .f-lo { flood-color: var(--rim-lo); } .f-glow { flood-color: var(--rim-glow); }
 .f-well { flood-color: var(--well); } .f-lip { flood-color: var(--lip); }
 
-#stage { position: absolute; left: 0; top: 0; width: var(--w); height: var(--h); transform-origin: 0 0; transform: scale(var(--k, 1)); }
+#stage { position: absolute; left: 0; top: 0; width: 330px; height: 416px; transform-origin: 0 0; will-change: transform; }
 .wheel { position: absolute; left: calc(var(--cx) - 150px); top: calc(var(--cy) - 150px); width: 300px; height: 300px; transform: scale(var(--ws, 1)); transition: transform .42s var(--spring); will-change: transform; }
 .wheel::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; background: rgba(128, 128, 128, .012); }
 .wheel::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 5px 10px -3px var(--drop), 0 14px 26px -10px var(--drop); pointer-events: none; }

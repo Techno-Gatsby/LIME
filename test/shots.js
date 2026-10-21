@@ -3,15 +3,21 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek, screen, dir }) => {
+module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek, screen, debug, dir }) => {
   fs.mkdirSync(dir, { recursive: true });
   const samples = process.env.LIME_SAMPLES || path.join(dir, 'samples');
   const steps = (process.env.LIME_STEPS || 'all').split(',');
   const w = () => wheel();
   const js = (code) => w().webContents.executeJavaScript(code, true);
+  // The wheel's window covers the screen: its shots are cut to the lime and the wheel, with room for the animations.
+  const wheelRect = () => {
+    const d = debug(), r = d.placed, t = d.tab, W = d.window;
+    const x0 = Math.min(r.x, t.x - 48) - 24, y0 = Math.min(r.y, t.y - 48) - 24, x1 = Math.max(r.x + r.width, t.x + 48) + 24, y1 = Math.max(r.y + r.height, t.y + 48) + 24;
+    return { x: Math.max(0, x0 - W.x), y: Math.max(0, y0 - W.y), width: Math.min(W.width, x1 - W.x) - Math.max(0, x0 - W.x), height: Math.min(W.height, y1 - W.y) - Math.max(0, y0 - W.y) };
+  };
   const shot = async (name, win = w()) => {
     await sleep(Number(process.env.LIME_SHOT_WAIT) || 700);
-    const img = await win.webContents.capturePage();
+    const img = await (win === w() ? win.webContents.capturePage(wheelRect()) : win.webContents.capturePage());
     fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG());
     console.log('shot', name, img.getSize());
   };
@@ -24,7 +30,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
     await js('window.lime.invoke("settings:set", { askSave: false })');
     if (want('idle')) await shot('01-idle');
     if (want('bloom')) {
-      const frame = async (name) => { const img = await w().webContents.capturePage(); fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG()); console.log('shot', name, img.getSize()); };
+      const frame = async (name) => { const img = await w().webContents.capturePage(wheelRect()); fs.writeFileSync(path.join(dir, `${name}.png`), img.toPNG()); console.log('shot', name, img.getSize()); };
       await js('window.__lime.fold()');
       await sleep(1200);
       await frame('b0-tab');
@@ -69,7 +75,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       summon('shift', at);
       await until('window.__lime.S.peek && window.__lime.S.ring.length > 0');
       await shot('36-shift-live');
-      const frame = async (name) => { const im = await w().webContents.capturePage(); fs.writeFileSync(path.join(dir, `${name}.png`), im.toPNG()); console.log('shot', name, im.getSize()); };
+      const frame = async (name) => { const im = await w().webContents.capturePage(wheelRect()); fs.writeFileSync(path.join(dir, `${name}.png`), im.toPNG()); console.log('shot', name, im.getSize()); };
       js('window.__lime.fold()');
       for (const t of [80, 180, 280]) { await sleep(100); await frame(`37-fold-${t}ms`); }
     }

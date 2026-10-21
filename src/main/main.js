@@ -207,7 +207,7 @@ function notify(j, outs) {
   n.show();
 }
 
-let wheel = null, prefsWin = null, tray = null, dragTimer = null, sensor = null, watcher = null;
+let wheel = null, prefsWin = null, tray = null, sensor = null, watcher = null;
 const editors = new Set(), pickers = new Set();
 const webPrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false };
 const workArea = (pt) => screen.getDisplayNearestPoint(pt).workArea;
@@ -216,49 +216,68 @@ function defaultAnchor() {
   const wa = screen.getPrimaryDisplay().workArea;
   return { x: wa.x + wa.width - 150, y: wa.y + Math.round(wa.height * 0.6) };
 }
-let layout = { w: 86, h: 96, ax: 48, ay: 38 }, mode = 'tab', bloomAt = null, placed = null;
+// The wheel lives in one see-through window the size of the work area, which never resizes: the page puts the lime
+// and the wheel where they belong inside it, so opening, folding and following are plain animations (a resized
+// transparent window shows stale frames on Windows). The window takes the mouse only over the lime or the wheel.
+let mode = 'tab', bloomAt = null, placed = null, openH = 416, catching = false, moving = false;
 const clamp = (v, a, b) => Math.min(Math.max(v, a), Math.max(a, b));
+const sizeK = () => SIZE_K[settings.size] || 1;
+const TAB = { w: 86, h: 96, ax: 48, ay: 38 }, OPEN = { w: 330, h: 416, ax: 165, ay: 194 };
+// The lime's centre, at the right edge of the screen the anchor is on.
 function tabPoint() {
   const a = settings.anchor || defaultAnchor();
-  const wa = workArea(a);
-  return { x: wa.x + wa.width - 24, y: clamp(a.y, wa.y + 44, wa.y + wa.height - 44) };
+  const wa = workArea(a), k = sizeK();
+  return { x: wa.x + wa.width - (TAB.w - TAB.ax) * k, y: clamp(a.y, wa.y + TAB.ay * k, wa.y + wa.height - (TAB.h - TAB.ay) * k) };
 }
-function placeWheel() {
-  if (!wheel) return null;
-  const tab = tabPoint();
-  const c = mode === 'tab' ? tab : bloomAt || { x: tab.x - 168, y: tab.y };
-  const wa = workArea(c);
-  const x = mode === 'tab' ? wa.x + wa.width - layout.w : clamp(c.x - layout.ax, wa.x, wa.x + wa.width - layout.w);
-  const y = clamp(c.y - layout.ay, wa.y, wa.y + wa.height - layout.h);
-  // Moving only moves: resizing a see-through window repaints all of it, so the size is set only when it changes.
-  const b = { x: Math.round(x), y: Math.round(y), width: Math.round(layout.w), height: Math.round(layout.h) };
-  // A new size gets a fresh frame at once, so the old one (the lime, or the wheel) is never shown stretched or doubled.
-  if (!placed || placed.width !== b.width || placed.height !== b.height) { wheel.setBounds(b); wheel.webContents.invalidate(); }
-  else if (placed.x !== b.x || placed.y !== b.y) wheel.setPosition(b.x, b.y);
-  placed = b;
-  if (mode === 'tab' && settings.hidden) { if (wheel.isVisible()) wheel.hide(); } else if (!wheel.isVisible() && !wheel.webContents.isLoading()) wheel.showInactive();
-  return { bounds: b, tab };
-}
-// Where the wheel's centre can go so the whole window stays on the screen.
+// Where the wheel's centre can go so the whole wheel stays on the screen.
 function reachable(c) {
-  const wa = workArea(c);
-  return { x: clamp(c.x, wa.x + layout.ax, wa.x + wa.width - layout.w + layout.ax), y: clamp(c.y, wa.y + layout.ay, wa.y + wa.height - layout.h + layout.ay) };
+  const wa = workArea(c), k = sizeK();
+  return { x: clamp(c.x, wa.x + OPEN.ax * k, wa.x + wa.width - (OPEN.w - OPEN.ax) * k), y: clamp(c.y, wa.y + OPEN.ay * k, wa.y + wa.height - (OPEN.h - OPEN.ay) * k) };
 }
+// The window covers the work area of the wheel's screen when open, the lime's when tucked.
+function placeWindow() {
+  if (!wheel) return null;
+  const tab = tabPoint(), wa = workArea(mode === 'open' && bloomAt ? bloomAt : tab);
+  const b = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+  if (!placed || ['x', 'y', 'width', 'height'].some((q) => placed[q] !== b[q])) { wheel.setBounds(b); wheel.webContents.invalidate(); placed = b; }
+  if (mode === 'tab' && settings.hidden) { if (wheel.isVisible()) wheel.hide(); } else if (!wheel.isVisible() && !wheel.webContents.isLoading()) wheel.showInactive();
+  return { wa: b, tab, at: bloomAt, k: sizeK() };
+}
+// What is on screen: the lime, or the wheel with its card.
+function visibleRect() {
+  const k = sizeK();
+  if (mode !== 'open' || !bloomAt) { const t = tabPoint(); return { x: Math.round(t.x - TAB.ax * k), y: Math.round(t.y - TAB.ay * k), width: Math.round(TAB.w * k), height: Math.round(TAB.h * k) }; }
+  return { x: Math.round(bloomAt.x - OPEN.ax * k), y: Math.round(bloomAt.y - OPEN.ay * k), width: Math.round(OPEN.w * k), height: Math.round(openH * k) };
+}
+// Elsewhere than over the lime or the wheel, clicks go to whatever is underneath. The page says when the pointer is
+// over them; while files are dragged the system says instead, since a window passing the mouse through sees no drag.
+function setCatch(on) {
+  if (!wheel || wheel.isDestroyed() || on === catching) return;
+  catching = on;
+  if (process.platform !== 'linux') wheel.setIgnoreMouseEvents(!on, { forward: true });
+}
+const near = (p, r, m) => p.x >= r.x - m && p.x <= r.x + r.width + m && p.y >= r.y - m && p.y <= r.y + r.height + m;
+let dragging = false, catchT = null;
+const catchForDrag = () => { if (wheel && !wheel.isDestroyed()) setCatch(moving || near(screen.getCursorScreenPoint(), visibleRect(), 24)); };
+// A pointer that left without the page noticing (a lost event, a window that appeared in between) lets go too.
+function guardCatch() {
+  clearInterval(catchT);
+  catchT = setInterval(() => { if (catching && !moving && !dragging && !near(cursorAt(), visibleRect(), 48)) setCatch(false); }, 250);
+}
+function sendGeo() { const g = placeWindow(); if (g) wheel?.webContents.send('wheel:geo', g); }
 // Shift during a drag opens the wheel beside the pointer, toward the middle of the screen, so it never covers the
 // file or what is under it. Then it follows the drag on a leash: it trails the pointer when the pointer moves away
 // and holds still when the pointer comes toward it, so reaching a slice is a short move in from the side.
-const OPEN = { w: 330, h: 416, ax: 165, ay: 194 };
-const leash = () => (138 + 34) * (SIZE_K[settings.size] || 1);
+const leash = () => (138 + 34) * sizeK();
 let cursorAt = () => screen.getCursorScreenPoint(), followT = null;
 const reducedMotion = () => { try { return !!require('electron').systemPreferences.getAnimationSettings?.().prefersReducedMotion; } catch (_) { return false; } };
 function besidePointer(p) {
-  const wa = workArea(p), k = SIZE_K[settings.size] || 1;
+  const wa = workArea(p), k = sizeK();
   const side = p.x > wa.x + wa.width / 2 ? -1 : 1;
   const want = { x: p.x + side * leash(), y: p.y - 24 * k };
-  const room = { w: OPEN.w * k, h: OPEN.h * k, ax: OPEN.ax * k, ay: OPEN.ay * k };
-  const fits = (c) => c.x - room.ax >= wa.x && c.x - room.ax + room.w <= wa.x + wa.width;
+  const fits = (c) => c.x - OPEN.ax * k >= wa.x && c.x + (OPEN.w - OPEN.ax) * k <= wa.x + wa.width;
   if (!fits(want)) want.x = p.x - side * leash();
-  return { x: Math.round(clamp(want.x, wa.x + room.ax, wa.x + wa.width - room.w + room.ax)), y: Math.round(clamp(want.y, wa.y + room.ay, wa.y + wa.height - room.h + room.ay)) };
+  return reachable(want);
 }
 function follow(on) {
   clearInterval(followT);
@@ -268,7 +287,7 @@ function follow(on) {
   followT = setInterval(() => {
     const now = Date.now(), dt = now - last;
     last = now;
-    if (!wheel || mode !== 'open' || !bloomAt || dragTimer) return;
+    if (!wheel || mode !== 'open' || !bloomAt || moving) return;
     const p = cursorAt(), L = leash();
     const dx = p.x - bloomAt.x, dy = p.y - bloomAt.y, d = Math.hypot(dx, dy);
     if (d <= L + 0.5) return;
@@ -278,7 +297,7 @@ function follow(on) {
     const to = reachable({ x: bloomAt.x + dx * (1 - L / d) * pull, y: bloomAt.y + dy * (1 - L / d) * pull });
     if (Math.abs(to.x - bloomAt.x) < 0.5 && Math.abs(to.y - bloomAt.y) < 0.5) return;
     bloomAt = to;
-    placeWheel();
+    if (near(to, placed, 0)) wheel.webContents.send('wheel:at', bloomAt); else sendGeo();
   }, 16);
 }
 function summon(why, at, focus) {
@@ -314,6 +333,7 @@ function sendPeek(files) {
 function startWatcher() {
   watcher = require('./dragwatch').start({
     onDrag: () => {
+      dragging = true;
       const seq = ++peekSeq;
       peek = [];
       watcher?.files().then((f) => { if (seq === peekSeq) sendPeek(f); }).catch(log);
@@ -324,7 +344,8 @@ function startWatcher() {
       shiftSummon(screen.getCursorScreenPoint());
       return true;
     },
-    onEnd: () => { peekSeq++; peek = []; follow(false); wheel?.webContents.send('wheel:dragEnded'); },
+    onMove: catchForDrag,
+    onEnd: () => { dragging = false; peekSeq++; peek = []; follow(false); wheel?.webContents.send('wheel:dragEnded'); },
     onError: log,
   });
   if (watcher && process.platform === 'win32' && settings.shiftDrag !== false) setTimeout(() => require('./shellsel').warm(), 4000);
@@ -342,9 +363,8 @@ function rebuildWheel(why) {
   log(`wheel rebuilt: ${why}`);
   const old = wheel;
   wheel = null;
-  placed = null; mode = 'tab'; bloomAt = null; layout = { w: 86, h: 96, ax: 48, ay: 38 };
+  placed = null; mode = 'tab'; bloomAt = null; catching = false; moving = false;
   follow(false);
-  clearInterval(dragTimer); dragTimer = null;
   try { old?.destroy(); } catch (_) {}
   createWheel();
 }
@@ -362,15 +382,20 @@ function watchWheel(w) {
 }
 function createWheel() {
   for (const w of BrowserWindow.getAllWindows()) if (w.isWheel && !w.isDestroyed()) w.destroy();
+  const wa = workArea(tabPoint());
   wheel = new BrowserWindow({
-    width: layout.w, height: layout.h, show: false, frame: false, transparent: true, resizable: false, movable: false, maximizable: false, minimizable: false,
+    x: wa.x, y: wa.y, width: wa.width, height: wa.height, show: false, frame: false, transparent: true, resizable: false, movable: false, maximizable: false, minimizable: false,
     fullscreenable: false, hasShadow: false, skipTaskbar: true, backgroundColor: '#00000000', title: 'Lime', acceptFirstMouse: true, roundedCorners: false,
     alwaysOnTop: settings.float, ...(isMac ? { type: 'panel' } : {}), webPreferences: webPrefs,
   });
   wheel.isWheel = true;
+  placed = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+  catching = true;
+  setCatch(false);
+  guardCatch();
   watchWheel(wheel);
   applyFloat();
-  placeWheel();
+  placeWindow();
   wheel.loadURL('app://local/wheel.html');
   wheel.once('ready-to-show', () => { if (!settings.hidden || pendingShow) { wheel.showInactive(); pendingShow = false; } });
   const self = wheel;
@@ -579,7 +604,7 @@ async function setSettings(patch) {
   saveSettings();
   if ('theme' in patch) nativeTheme.themeSource = settings.theme;
   if ('float' in patch) applyFloat();
-  if ('anchor' in patch || 'hidden' in patch) placeWheel();
+  if ('anchor' in patch || 'hidden' in patch) sendGeo();
   if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
@@ -596,13 +621,13 @@ function registerIpc() {
   h('wheel:items', (files) => itemsFor(files));
   h('wheel:home', () => Object.keys(crafts.APPS).map((id) => appRing(id, [])));
   h('wheel:action', (item, files) => doAction(item, files));
-  h('wheel:layout', ({ mode: m, at, ...l }) => {
-    layout = { ...layout, ...l };
+  h('wheel:layout', ({ mode: m, at, h }) => {
+    if (h) openH = h;
     if (m === 'tab') { bloomAt = null; follow(false); if (!settings.float && mode !== 'tab') wheel?.setAlwaysOnTop(false); }
     if (m === 'open' && mode === 'tab') lift();
-    if (m === 'open' && at) bloomAt = at;
+    if (m === 'open') { const t = tabPoint(); bloomAt = reachable(at || bloomAt || { x: t.x - 150 * sizeK(), y: t.y }); }
     if (m) mode = m;
-    return placeWheel();
+    return placeWindow();
   });
   h('wheel:peek', () => peek);
   h('wheel:haptic', () => { try { watcher?.probe.haptic?.(); } catch (_) {} });
@@ -616,37 +641,29 @@ function registerIpc() {
     { type: 'separator' },
     { label: 'Size', submenu: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([v, l]) => ({ label: l, type: 'radio', checked: settings.size === v, click: () => setSettings({ size: v }) })) },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
-    { label: 'Reset Position', click: () => { settings.anchor = null; bloomAt = null; saveSettings(); placeWheel(); } },
+    { label: 'Reset Position', click: () => { settings.anchor = null; bloomAt = null; saveSettings(); sendGeo(); } },
     { type: 'separator' },
     { label: 'Hide from Screen Edge', click: () => setSettings({ hidden: true }) },
     { label: 'Quit Lime', click: () => { app.isQuitting = true; app.quit(); } },
   ]).popup({ window: wheel }));
-  // Moving the wheel by hand. The page asks for a step on every frame it draws, so the window moves in time with the
-  // screen; a timer here keeps it going if the page is busy, and the move ends by itself once the button is up.
-  let moveFrom = null;
-  const moveStep = () => {
-    if (!moveFrom || !wheel) return;
-    const p = cursorAt();
-    if (p.x === moveFrom.last?.x && p.y === moveFrom.last?.y) return;
-    moveFrom.last = p;
-    if (mode === 'tab') settings.anchor = { x: p.x, y: moveFrom.a0.y + p.y - moveFrom.start.y };
-    else bloomAt = reachable({ x: moveFrom.b0.x + p.x - moveFrom.start.x, y: moveFrom.b0.y + p.y - moveFrom.start.y });
-    placeWheel();
-  };
-  const moveEnd = () => { clearInterval(dragTimer); dragTimer = null; moveFrom = null; saveSettings(); };
+  ipcMain.on('wheel:catch', (e, on) => { if (e.sender === wheel?.webContents) setCatch(!!on); });
+  // The page carries the wheel while it is dragged by hand; the button is watched here too, in case the page misses
+  // the release (with swapped buttons the probe reads the other one, so only once it has been seen down).
+  let moveT = null;
   h('wheel:dragStart', () => {
-    clearInterval(dragTimer);
     follow(false);
-    const b = wheel.getBounds();
-    moveFrom = { start: cursorAt(), a0: settings.anchor || defaultAnchor(), b0: bloomAt || { x: b.x + layout.ax, y: b.y + layout.ay } };
-    dragTimer = setInterval(() => {
-      // Only once the button has been seen down: with swapped buttons the probe reads the other one.
-      try { const left = watcher?.probe().left; if (left) moveFrom.seen = true; else if (moveFrom.seen) return moveEnd(); } catch (_) {}
-      moveStep();
-    }, 32);
+    moving = true;
+    setCatch(true);
+    let seen = false;
+    clearInterval(moveT);
+    moveT = setInterval(() => { try { const left = watcher?.probe().left; if (left) seen = true; else if (seen) { clearInterval(moveT); wheel?.webContents.send('wheel:moveEnd'); } } catch (_) {} }, 100);
   });
-  ipcMain.on('wheel:dragTick', moveStep);
-  h('wheel:dragEnd', moveEnd);
+  h('wheel:dragEnd', (p) => {
+    clearInterval(moveT);
+    moving = false;
+    if (mode === 'tab') { if (p) settings.anchor = { x: p.x, y: p.y }; saveSettings(); } else if (p) bloomAt = reachable(p);
+    return placeWindow();
+  });
   h('files:thumb', (p, size) => call('thumbnail', p, size).catch(() => null));
   h('tools:suggest', (tool, files, opts) => tools.suggest(tool, files, opts));
   h('tools:accepts', (tool, files) => tools.accepts(tools.get(tool), files));
@@ -759,13 +776,13 @@ app.whenReady().then(async () => {
   if (incoming.size) clearTimeout(incomingT), takeFiles([]);
   nativeTheme.on('updated', () => broadcast('theme', { dark: nativeTheme.shouldUseDarkColors }));
   app.on('child-process-gone', (e, d) => { if (d.type === 'GPU' && wheel) setTimeout(() => rebuildWheel(`graphics ${d.reason}`), 400); });
-  screen.on('display-removed', () => { placed = null; placeWheel(); placeSensor(); });
-  screen.on('display-metrics-changed', () => { placed = null; placeWheel(); placeSensor(); });
+  screen.on('display-removed', () => { placed = null; sendGeo(); placeSensor(); });
+  screen.on('display-metrics-changed', () => { placed = null; sendGeo(); placeSensor(); });
   screen.on('display-added', placeSensor);
   const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
   harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
-  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed, layout, bloomAt }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen });
-  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen });
+  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen });
+  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
 });
 app.on('activate', () => showWheel());
 app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });
