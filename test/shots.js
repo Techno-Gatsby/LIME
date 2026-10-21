@@ -419,6 +419,56 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         e.destroy();
       }
     }
+    if (want('media')) {
+      // A clip with a picture that moves and sound that pauses, so the strip, waveform and looks show something.
+      const { execFileSync } = require('child_process');
+      const ff = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).binPath('ffmpeg'), demo = path.join(dir, 'Lake walk.mp4'), talk = path.join(dir, 'Interview.wav');
+      if (!fs.existsSync(demo)) {
+        execFileSync(ff, ['-v', 'error', '-y', '-loop', '1', '-i', path.join(samples, 'photo.jpg'), '-loop', '1', '-i', path.join(samples, 'photo2.jpg'),
+          '-f', 'lavfi', '-i', "aevalsrc='0.5*sin(2*PI*190*t)*(0.55+0.45*sin(2*PI*1.7*t))*gt(sin(2*PI*0.35*t)+0.2,0)':s=48000:d=12",
+          '-filter_complex', "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,zoompan=z='1+0.0012*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=150:s=1280x720:fps=25[a];[1:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,zoompan=z='1.1-0.0006*on':d=150:s=1280x720:fps=25[b];[a][b]concat=n=2:v=1:a=0,format=yuv420p[v]",
+          '-map', '[v]', '-map', '2:a', '-t', '12', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-c:a', 'aac', demo]);
+        execFileSync(ff, ['-v', 'error', '-y', '-f', 'lavfi', '-i', "aevalsrc='0.6*sin(2*PI*160*t+3*sin(2*PI*3*t))*(0.5+0.5*sin(2*PI*2.3*t))*gt(sin(2*PI*0.3*t)+0.35,0)+0.01*random(0)':s=44100:d=20", talk]);
+      }
+      const media = async (file, steps) => {
+        openEditor(file, 'media');
+        let e = null;
+        for (let t = 0; t < 40 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.file === file && !x.webContents.isLoading()); }
+        if (!e) return;
+        const ejs = (code) => e.webContents.executeJavaScript(`(async () => { ${code} })()`, true).catch((er) => console.error('media step failed:', er.message));
+        e.webContents.on('console-message', (ev) => { if (ev.level === 'error' || ev.level === 3) console.error('renderer:', ev.message); });
+        for (let t = 0; t < 80 && !(await e.webContents.executeJavaScript('!!window.__media?.st.ready').catch(() => false)); t++) await sleep(250);
+        await sleep(2500);
+        for (const [name, code, wait] of steps) { if (code) { const r = await ejs(code); if (r !== undefined) console.log(name, r); } await sleep(wait || 1200); await shot(name, e); }
+        e.destroy();
+      };
+      await media(demo, [
+        ['40-media', 'window.__media.seek(2.4); await new Promise((r) => setTimeout(r, 500)); return window.__media.st.view'],
+        ['41-media-cuts', 'const M = window.__media; M.seek(0.6); M.act("in"); M.seek(10.8); M.act("out"); M.seek(4.2); M.act("split"); M.seek(6.1); M.act("split"); M.st.sel = 1; M.act("cut"); M.seek(3.2)'],
+        ['42-media-colour', 'document.querySelector(\'[data-tool="colour"]\').click()', 5000],
+        ['43-media-look', 'window.__media.edit((x) => { x.look = "lumetri:Golden Dusk"; x.color.contrast = 12; }); document.querySelector(\'[data-tool="colour"]\').click()', 4000],
+        ['44-media-title', 'document.querySelector(\'[data-tool="titles"]\').click(); window.__media.addTitle(); const ta = document.querySelector(".props textarea"); ta.value = "Morning by the lake"; ta.dispatchEvent(new Event("input", { bubbles: true })); ta.dispatchEvent(new Event("change", { bubbles: true })); window.__media.seek(3.4)'],
+        ['45-media-crop', 'document.querySelector(\'[data-tool="crop"]\').click(); document.querySelector(\'.props [data-v="9:16"]\').click()'],
+        ['46-media-sound', 'document.querySelector(\'[data-tool="sound"]\').click()'],
+        ['47-media-saveas', 'document.querySelector(\'[data-a="saveas"]\').click()'],
+        ['50-media-speed', 'document.querySelector(\'.scrim [data-a="no"]\').click(); document.querySelector(\'[data-tool="speed"]\').click()'],
+        ['51-media-resize', 'document.querySelector(\'[data-tool="resize"]\').click()'],
+        ['52-media-music', `window.__media.edit((x) => { x.music = { file: ${JSON.stringify(path.join(samples, 'song.mp3'))}, volume: -8, mode: 'mix', duck: 10, loop: true, fit: false, fadeOut: 2 }; x.subs = { file: ${JSON.stringify(path.join(samples, 'sub.srt'))}, size: 18 }; }); document.querySelector('[data-tool="music"]').click()`],
+        ['53-media-subs', 'document.querySelector(\'[data-tool="subs"]\').click(); window.__media.seek(1.2)'],
+        ['54-media-scenes', 'document.querySelector(\'[data-tool="scenes"]\').click()'],
+        ['55-media-stabilise', 'document.querySelector(\'[data-tool="stabilise"]\').click()'],
+        ['56-media-fade', 'document.querySelector(\'[data-tool="fade"]\').click()'],
+        ['57-media-dark', 'document.documentElement.dataset.theme = "dark"; document.querySelector(\'[data-tool="trim"]\').click()'],
+      ]);
+      await media(talk, [
+        ['48-audio', 'window.__media.seek(5.2)'],
+        ['49-audio-clean', 'document.querySelector(\'[data-tool="clean"]\').click(); window.__media.edit((x) => { x.audio.gain = 4; })'],
+        ['58-audio-volume', 'document.querySelector(\'[data-tool="volume"]\').click(); window.__media.edit((x) => { x.audio.normalise = true; })', 4000],
+        ['59-audio-eq', 'document.querySelector(\'[data-tool="eq"]\').click(); document.querySelector(\'.props [data-v="voice"]\').click()'],
+        ['60-audio-channels', 'document.querySelector(\'[data-tool="channels"]\').click()'],
+        ['61-audio-cuts', 'const M = window.__media; M.seek(3); M.act("split"); M.seek(6); M.act("split"); M.st.sel = 1; M.act("cut"); M.seek(4.5); document.querySelector(\'[data-tool="trim"]\').click()'],
+      ]);
+    }
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;
   app.quit();

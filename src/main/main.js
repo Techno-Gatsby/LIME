@@ -713,9 +713,20 @@ function registerProtocols() {
     const u = new URL(req.url);
     const p = u.host === 'font' ? path.join(DATA, 'fonts', path.basename(decodeURIComponent(u.pathname))) : decodeURIComponent(u.pathname.slice(1));
     if (!fs.existsSync(p)) return new Response('Not found', { status: 404 });
-    // Pages are served from app://, so fonts (and anything else fetched with CORS) need saying they may be used there.
-    return net.fetch(pathToFileURL(p).href, { headers: req.headers }).then((r) => { const headers = new Headers(r.headers); headers.set('Access-Control-Allow-Origin', '*'); return new Response(r.body, { status: r.status, statusText: r.statusText, headers }); });
+    return fileResponse(p, req.headers.get('range'));
   });
+}
+// Byte ranges, so audio and video can seek, and readable across origins, so the editors can draw and process the
+// pictures and sound (WebGL, Web Audio).
+const MIME = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', ogv: 'video/ogg', mkv: 'video/x-matroska', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', weba: 'audio/webm', ttf: 'font/ttf', otf: 'font/otf', woff2: 'font/woff2', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
+function fileResponse(p, range) {
+  const size = fs.statSync(p).size, headers = { 'Content-Type': MIME[path.extname(p).slice(1).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*' };
+  const body = (o) => require('stream').Readable.toWeb(fs.createReadStream(p, o));
+  const m = /^bytes=(\d*)-(\d*)$/.exec(range || '');
+  if (!m || (!m[1] && !m[2])) return new Response(body(), { status: 200, headers: { ...headers, 'Content-Length': String(size) } });
+  const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2])), end = m[1] && m[2] ? Math.min(size - 1, Number(m[2])) : size - 1;
+  if (start >= size || start > end) return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': `bytes */${size}` } });
+  return new Response(body({ start, end }), { status: 206, headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) } });
 }
 
 function appMenu() {

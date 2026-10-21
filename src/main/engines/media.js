@@ -708,3 +708,5 @@ module.exports = {
   toGif, frames, extractSubtitles, snapshot, burnSubtitles, normalize, cropVideo, addAudio, loop, volume, reverse, fade, pitch, blurArea,
   imagesToVideo, imagesToGif, convertSubtitles, thumbnail, VIDEO_TARGETS, AUDIO_TARGETS,
 };
+// For the audio and video editor, which saves with the same encoder settings as the tools.
+Object.assign(module.exports, { videoCodecArgs, audioCodecArgs, containerArgs, sameKind, has, filters: () => list('filters') });
