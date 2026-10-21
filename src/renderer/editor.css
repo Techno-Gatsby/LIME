@@ -48,7 +48,7 @@ html, body, #view { height: 100%; overflow: hidden; }
 .pthumb:hover { background: var(--hover); }
 .pthumb.sel { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .pthumb.drop-before::before { content: ""; position: absolute; top: -6px; left: 4px; right: 4px; height: 3px; background: var(--accent); border-radius: 2px; }
-.pages { overflow: auto; padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 22px; background: var(--bg); position: relative; }
+.pages { overflow: auto; overflow-anchor: none; padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 22px; background: var(--bg); position: relative; }
 .pdfpage { position: relative; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .1), 0 8px 24px -8px rgba(0, 0, 0, .2); flex: none; border-radius: 2px; }
 .pdfpage > img.r { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .pdfpage .num { position: absolute; left: -34px; top: 0; font-size: 11px; color: var(--ink-3); }

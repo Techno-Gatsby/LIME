@@ -846,7 +846,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const after = await at(spot);
     if (after.w < before.w * 1.4) throw new Error(`pinch zoomed only ${(after.w / before.w).toFixed(2)}×`);
     const drift = Math.hypot((after.fx - before.fx) * after.w, (after.fy - before.fy) * after.h);
-    if (drift > 3) throw new Error(`the spot under the pointer moved ${drift.toFixed(1)} px`);
+    if (drift > 3) throw new Error(`the spot under the pointer moved ${drift.toFixed(1)} px: ${JSON.stringify({ spot, before, after, view: await ejs('[innerWidth, innerHeight, document.querySelector(".pages").clientWidth, document.querySelector(".pages").scrollTop, devicePixelRatio]') })}`);
     const zoomed = `${(after.w / before.w).toFixed(2)}× with ${drift.toFixed(1)} px drift`;
     await ejs(`(() => { const z = document.querySelector('select.zoom'); z.value = 'width'; z.dispatchEvent(new Event('change')); })()`);
     await sleep(400);

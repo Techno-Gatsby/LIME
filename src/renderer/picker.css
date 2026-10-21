@@ -11,7 +11,7 @@ kbd { font: 600 10.5px var(--font); padding: 0 4px; border-radius: 4px; border: 
 .range { flex: 0 1 240px; width: 240px; min-width: 96px; font-family: var(--mono); }
 .bar .btn { flex: none; }
 .range[aria-invalid="true"] { border-color: var(--danger); }
-.grid { position: relative; overflow: auto; background: #fff; color: #000; user-select: none; cursor: cell; }
+.grid { position: relative; overflow: auto; overflow-anchor: none; background: #fff; color: #000; user-select: none; cursor: cell; }
 .sheet { position: relative; display: inline-block; min-width: 100%; }
 .sheet td.h { cursor: default; }
 .sheet tr:first-child td.h { position: sticky; top: 0; z-index: 3; cursor: s-resize; }
