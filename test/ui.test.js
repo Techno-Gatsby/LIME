@@ -211,9 +211,8 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const ring = await lime('return { labels: L.S.ring.map((x) => x.label), back: document.querySelector(".pill [data-a=home]")?.textContent, cap: document.querySelector(".center .cap").textContent };');
     if (!ring.labels.includes('Repair')) throw new Error(`PdfCraft ring ${ring.labels}`);
     if (!/All apps/.test(ring.back || '')) throw new Error('no way back to the apps');
-    await click('.center');
-    if (!(await until('return L.S.app === "pdfcraft" && /PdfCraft/.test(document.querySelector(".caption .meta").textContent)', 3000))) throw new Error(`a click on the middle: app ${await lime('return L.S.app')}, caption “${await lime('return document.querySelector(".caption .meta").textContent')}”`);
-    const said = await lime('return document.querySelector(".caption .meta").textContent');
+    if (!(await lime('return !!L.S.ring[0]?.appOpen && L.S.ring[1]?.label === "Full app"'))) throw new Error('Open is not the app in a Lime window');
+    const said = 'Open opens a Lime window, Full app the app';
     wheel().webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
     if (!(await until('return !L.S.app && L.S.ring.length === 8', 2000))) throw new Error('Esc did not go back to the apps');
     return `${home.labels.join(', ')} · PdfCraft: ${ring.labels.join(', ')} · middle: ${said}`;
@@ -274,7 +273,15 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(await until('return L.S.app === "pdfcraft"', 2000))) throw new Error('PdfCraft did not open');
     const r = await lime('return { labels: L.S.ring.map((x) => x.label), tab: document.querySelector(".pill button[data-m=apps]").textContent };');
     if (!r.labels.includes('Archive') || r.tab !== 'PdfCraft') throw new Error(JSON.stringify(r));
-    return `apps: ${list.join(', ')} · PdfCraft: ${r.labels.join(', ')}`;
+    const before = editors.size;
+    await click('.center');
+    const t = Date.now();
+    while (editors.size === before && Date.now() - t < 8000) await sleep(150);
+    if (editors.size === before) throw new Error('the middle did not open a Lime window');
+    const win = [...editors].pop(), mode = win.editorData?.mode;
+    win.destroy();
+    if (mode !== 'edit') throw new Error(`opened in ${mode}`);
+    return `apps: ${list.join(', ')} · PdfCraft: ${r.labels.join(', ')} · the middle opened the PDF editor`;
   });
   await check('system mouse and Shift readings', async () => {
     if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('only on Mac and Windows'), { skip: true });
