@@ -23,7 +23,7 @@ The installer isn't code-signed yet, so SmartScreen shows a warning: click **Mor
 
 ## Using the wheel
 
-Lime waits as a small lime tucked into the right edge of the screen. The wheel is frosted glass: each slice is one thing your files can become.
+Lime waits as a small lime tucked into the right edge of the screen. The wheel is frosted glass: each slice is one thing your files can become. The first time it runs, a short welcome shows the four things worth knowing; **How Lime works** in the menu (and in Settings › About) brings it back.
 
 | Do this | What happens |
 |---|---|

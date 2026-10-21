@@ -47,7 +47,7 @@ const log = (err) => { try { fs.appendFileSync(path.join(app.getPath('userData')
 process.on('uncaughtException', log);
 
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, recent: [], signatures: [] };
+const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, welcomed: false, recent: [], signatures: [] };
 let settings = { ...DEFAULTS };
 let saveT = null;
 const loadSettings = () => {
@@ -209,7 +209,7 @@ function notify(j, outs) {
   n.show();
 }
 
-let wheel = null, prefsWin = null, tray = null, sensor = null, watcher = null;
+let wheel = null, prefsWin = null, welcomeWin = null, tray = null, sensor = null, watcher = null;
 const editors = new Set(), pickers = new Set();
 const webPrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false };
 const workArea = (pt) => screen.getDisplayNearestPoint(pt).workArea;
@@ -461,6 +461,19 @@ function openPrefs(tab) {
   prefsWin.once('ready-to-show', () => prefsWin.show());
   prefsWin.on('closed', () => { prefsWin = null; });
 }
+// How Lime works, in four pictures: shown once, the first time Lime runs, and from the menu after that.
+function openWelcome() {
+  if (welcomeWin) { welcomeWin.show(); welcomeWin.focus(); return; }
+  welcomeWin = new BrowserWindow({
+    width: 700, height: 600, useContentSize: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, show: false, title: 'Welcome to Lime',
+    ...(isMac ? { titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' } : { autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2' }),
+    icon: asset('icon.png'), webPreferences: webPrefs,
+  });
+  welcomeWin.loadURL('app://local/welcome.html');
+  welcomeWin.once('ready-to-show', () => { welcomeWin?.show(); welcomeWin?.focus(); });
+  // Closing it any way counts as having seen it.
+  welcomeWin.on('closed', () => { welcomeWin = null; if (!settings.welcomed) setSettings({ welcomed: true }); });
+}
 function openEditor(file, mode) {
   const area = screen.getPrimaryDisplay().workAreaSize;
   const win = new BrowserWindow({
@@ -525,6 +538,7 @@ function buildTray() {
     { type: 'separator' },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
     { label: 'Settings…', accelerator: isMac ? 'Command+,' : undefined, click: () => openPrefs() },
+    { label: 'How Lime Works', click: () => openWelcome() },
     { type: 'separator' },
     { label: 'Quit Lime', accelerator: isMac ? 'Command+Q' : undefined, click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -648,6 +662,7 @@ function registerIpc() {
     { label: 'Choose Files…', click: pickFiles },
     appsMenu(),
     { label: 'Settings…', click: () => openPrefs() },
+    { label: 'How Lime Works', click: () => openWelcome() },
     { type: 'separator' },
     { label: 'Size', submenu: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([v, l]) => ({ label: l, type: 'radio', checked: settings.size === v, click: () => setSettings({ size: v }) })) },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
@@ -727,6 +742,8 @@ function registerIpc() {
   h('settings:get', () => publicSettings());
   h('settings:set', (patch) => setSettings(patch));
   h('prefs:open', (tab) => openPrefs(tab));
+  h('welcome:open', () => { openWelcome(); return true; });
+  h('welcome:done', () => { setSettings({ welcomed: true }); welcomeWin?.close(); return true; });
   h('engines:status', () => call('enginesStatus'));
   // Settings can fetch LibreOffice and Pandoc from their makers into Lime's own folder; progress goes back to the page.
   hE('helpers:get', async (e, id) => {
@@ -773,6 +790,7 @@ function appMenu() {
     { label: 'File', submenu: [{ label: 'Choose Files…', accelerator: 'Command+O', click: pickFiles }, { label: 'Show Wheel', accelerator: 'Control+Alt+L', click: () => showWheel() }, { type: 'separator' }, { role: 'close' }] },
     { role: 'editMenu' },
     { role: 'windowMenu' },
+    { role: 'help', submenu: [{ label: 'How Lime Works', click: () => openWelcome() }] },
   ]));
 }
 
@@ -794,6 +812,8 @@ app.whenReady().then(async () => {
   const files = argFiles(process.argv);
   if (files.length) takeFiles(files);
   if (incoming.size) clearTimeout(incomingT), takeFiles([]);
+  const harnessed = ['LIME_TEST', 'LIME_UI', 'LIME_SHOTS'].some((k) => process.env[k]);
+  if (!settings.welcomed && !harnessed) setTimeout(openWelcome, 700);
   nativeTheme.on('updated', () => broadcast('theme', { dark: nativeTheme.shouldUseDarkColors }));
   app.on('child-process-gone', (e, d) => { if (d.type === 'GPU' && wheel) setTimeout(() => rebuildWheel(`graphics ${d.reason}`), 400); });
   screen.on('display-removed', () => { placed = null; sendGeo(); placeSensor(); });
@@ -801,8 +821,8 @@ app.whenReady().then(async () => {
   screen.on('display-added', placeSensor);
   const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
   harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
-  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen });
-  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
+  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen });
+  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, openWelcome, welcome: () => welcomeWin, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
 });
 app.on('activate', () => showWheel());
 app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });

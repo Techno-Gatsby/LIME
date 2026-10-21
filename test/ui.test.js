@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
+module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, openWelcome, welcome, peek, screen, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -1888,6 +1888,27 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(start < now - 10)) throw new Error(`no fade in: ${start} dB at the start, ${now} dB later`);
     ed.win.destroy();
     return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${(now - was).toFixed(1)} dB louder, fades in from ${start.toFixed(0)} dB`;
+  });
+
+  // The welcome window: four steps on one screen, and Got it marks it as seen.
+  await check('welcome · four steps, Got it marks it seen', async () => {
+    openWelcome();
+    let w = null;
+    for (let t = 0; t < 50 && !(w = welcome()); t++) await sleep(100);
+    if (!w) throw new Error('the welcome window did not open');
+    while (w.webContents.isLoading()) await sleep(100);
+    await sleep(800);
+    const wjs = (code) => js(code, w.webContents);
+    const steps = await wjs('[...document.querySelectorAll(".steps li .t b")].map((b) => b.textContent.replace(/^\\d/, ""))');
+    if (steps.length !== 4) throw new Error(`${steps.length} steps: ${steps.join(' | ')}`);
+    if (!(await wjs('document.scrollingElement.scrollHeight <= innerHeight + 1 && document.querySelectorAll(".steps svg, .steps img.lime").length >= 6'))) throw new Error('the welcome scrolls or has no drawings');
+    await wjs('document.querySelector("[data-a=ok]").click()');
+    for (let t = 0; t < 50 && welcome(); t++) await sleep(100);
+    if (welcome()) throw new Error('Got it did not close it');
+    await sleep(600);
+    const s = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
+    if (!s.welcomed) throw new Error('settings.welcomed is not set');
+    return `${steps.join(' · ')}; closed with Got it, marked as seen`;
   });
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
