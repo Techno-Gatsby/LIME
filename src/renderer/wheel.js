@@ -3,7 +3,8 @@ import { wedge, labelAt, arc, limeSvg, hitIndex } from './petal.js';
 import { api, $, $$, h, esc, nameOf, dirOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
 const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 450;
-const TAB = 76;
+// The lime's window has room left of and below the lime for its shadow, which would otherwise be cut off.
+const TAB = 76, PAD_L = 10, PAD_B = 20;
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
 // Each ArtCraft app's mark in the middle of the wheel: an icon and its colour.
@@ -23,7 +24,7 @@ $('.tab-lime').insertAdjacentHTML('afterbegin', limeSvg(52, '', k));
 async function layout() {
   const open = S.state !== 'idle';
   const cardH = card.hidden ? 0 : Math.min(card.scrollHeight, 380) + 14;
-  const L = open ? { w: 330, h: cardH ? 364 + cardH : 416, cx: 165, cy: 194 } : { w: TAB, h: TAB, cx: TAB / 2, cy: TAB / 2 };
+  const L = open ? { w: 330, h: cardH ? 364 + cardH : 416, cx: 165, cy: 194 } : { w: TAB + PAD_L, h: TAB + PAD_B, cx: PAD_L + TAB / 2, cy: TAB / 2 };
   const growing = open && shown === 'tab';
   if (growing) stage.classList.add('pre');
   stage.style.setProperty('--w', `${L.w}px`);

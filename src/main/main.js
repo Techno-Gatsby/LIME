@@ -216,7 +216,7 @@ function defaultAnchor() {
   const wa = screen.getPrimaryDisplay().workArea;
   return { x: wa.x + wa.width - 150, y: wa.y + Math.round(wa.height * 0.6) };
 }
-let layout = { w: 76, h: 76, ax: 38, ay: 38 }, mode = 'tab', bloomAt = null, placed = null;
+let layout = { w: 86, h: 96, ax: 48, ay: 38 }, mode = 'tab', bloomAt = null, placed = null;
 const clamp = (v, a, b) => Math.min(Math.max(v, a), Math.max(a, b));
 function tabPoint() {
   const a = settings.anchor || defaultAnchor();
@@ -342,7 +342,7 @@ function rebuildWheel(why) {
   log(`wheel rebuilt: ${why}`);
   const old = wheel;
   wheel = null;
-  placed = null; mode = 'tab'; bloomAt = null; layout = { w: 76, h: 76, ax: 38, ay: 38 };
+  placed = null; mode = 'tab'; bloomAt = null; layout = { w: 86, h: 96, ax: 48, ay: 38 };
   follow(false);
   clearInterval(dragTimer); dragTimer = null;
   try { old?.destroy(); } catch (_) {}

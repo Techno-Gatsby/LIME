@@ -6,16 +6,28 @@ const TOOLS = [
   ['edittext', 'textEdit', 'Edit text', 'Click any line of text to change it. Clear a line completely to delete it.'],
   ['addtext', 'textT', 'Add text', 'Click where you want to type.'],
   ['whiteout', 'whiteout', 'Erase', 'Drag over an area to erase it. Text underneath is removed for good.'],
-  ['highlight', 'highlight', 'Highlight', 'Drag over text to highlight it.'],
+  ['highlight', 'highlight', 'Mark up', 'Drag over text to highlight, underline or strike it out.'],
+  ['stamp', 'stamp', 'Stamp', 'Pick a stamp, tick, cross or today’s date on the right, then click the page to place it.'],
   ['draw', 'pen', 'Draw', 'Draw freehand with the mouse, pen or finger.'],
   ['rect', 'square', 'Box', 'Drag to draw a rectangle.'],
   ['ellipse', 'circle', 'Oval', 'Drag to draw an oval.'],
   ['arrow', 'arrow', 'Arrow', 'Drag to draw an arrow.'],
   ['line', 'line', 'Line', 'Drag to draw a line.'],
 ];
+const INSERT = [['image', 'imageAdd', 'Image', 'Add a picture from a file.'], ['sign', 'signature', 'Sign', 'Draw, type or reuse your signature.']];
+// The tools in the bar under the title, in groups.
+const TOOL_GROUPS = [['Edit', ['select', 'edittext', 'addtext', 'whiteout']], ['Mark up', ['highlight', 'stamp', 'draw']], ['Shapes', ['rect', 'ellipse', 'arrow', 'line']], ['Insert', ['image', 'sign']]];
 const COLORS = ['#000000', '#3b3b3b', '#d13438', '#ca5010', '#ffb900', '#107c10', '#0f6cbd', '#5c2e91', '#ffffff'];
 const HL = ['#ffe14d', '#a6f0a0', '#9fd8ff', '#ffb3d9', '#ffc58a'];
 const TEXT_BG = ['none', '#fff4ce', '#dff6dd', '#cfe4fa', '#fde7e9', '#e8e0f5', '#ffffff', '#000000'];
+// Stamps are bold text in a rounded border, so they stay editable; ticks, crosses and dots are drawn marks.
+const STAMPS = [['APPROVED', '#107c10'], ['REVIEWED', '#0f6cbd'], ['DRAFT', '#ca5010'], ['CONFIDENTIAL', '#d13438'], ['FINAL', '#0f6cbd'], ['PAID', '#107c10'],
+  ['REJECTED', '#d13438'], ['VOID', '#d13438'], ['COPY', '#5c2e91'], ['SIGN HERE', '#ca5010']];
+const MARKS = [['check', 'Tick'], ['cross', 'Cross'], ['dot', 'Dot']];
+const MARK_LINES = { check: [[[0.1, 0.55], [0.4, 0.85], [0.92, 0.15]]], cross: [[[0.15, 0.15], [0.85, 0.85]], [[0.85, 0.15], [0.15, 0.85]]] };
+const markSvg = (kind, w, hh, color, sw) => (kind === 'dot' ? `<circle cx="${w / 2}" cy="${hh / 2}" r="${Math.min(w, hh) * 0.3}" fill="${color}"/>`
+  : `<path d="${(MARK_LINES[kind] || MARK_LINES.check).map((ln) => ln.map(([u, v], j) => `${j ? 'L' : 'M'}${u * w} ${v * hh}`).join('')).join('')}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`);
+const today = () => new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 // Lime's own fonts, the standard PDF fonts (which add nothing to the file for plain text), then the computer's own.
 const BUILT_IN_FONTS = [['sans', 'Noto Sans', '"Noto Sans","Segoe UI",Arial,sans-serif'], ['serif', 'Noto Serif', '"Noto Serif","Times New Roman",serif'], ['carlito', 'Carlito (like Calibri)', 'Carlito,Calibri,sans-serif'],
   ['helvetica', 'Helvetica (like Arial)', 'Helvetica,Arial,sans-serif'], ['times', 'Times', '"Times New Roman",Times,serif'], ['courier', 'Courier', '"Courier New",Courier,monospace'],
@@ -28,29 +40,30 @@ export function openEditor(view, { file, mode }, ctx) {
   const st = {
     sess: null, file, savePath: null, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext',
     pending: [], sel: null, pick: null, pages: [], renders: new Map(), lines: new Map(), objs: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
-    fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff' },
+    fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', border: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff',
+      markup: 'highlight', ul: '#d13438', stamp: 'APPROVED', mark: '#107c10' },
     seq: 0, busy: false,
   };
   const root = h(`<div class="editor">
-    <div class="cmdbar" role="toolbar" aria-label="PDF editor">
-      <button class="tb" data-a="close" title="Close">${icon('back')}</button>
-      <div class="doc">${icon('pdf')}<b title="${esc(file)}">${esc(nameOf(file))}</b><span class="dirty faint" hidden>• Unsaved</span></div>
-      <div class="sep"></div>
-      <button class="tb" data-a="undo" title="Undo (Ctrl+Z)">${icon('undo')}</button>
-      <button class="tb" data-a="redo" title="Redo (Ctrl+Y)">${icon('redo')}</button>
-      <div class="sep"></div>
-      ${TOOLS.map(([id, ic, label]) => `<button class="tb" data-tool="${id}" title="${label}" aria-pressed="false">${icon(ic)}<span class="lbl ${['select', 'edittext', 'addtext', 'whiteout'].includes(id) ? '' : 'opt'}">${label}</span></button>`).join('')}
-      <button class="tb" data-a="image" title="Add image">${icon('imageAdd')}<span class="lbl opt">Image</span></button>
-      <button class="tb" data-a="sign" title="Add signature">${icon('signature')}<span class="lbl">Sign</span></button>
-      <div class="grow"></div>
-      <div class="search" style="width:200px;margin:0 6px">${icon('search', 'sm')}<input class="find" type="search" placeholder="Find" aria-label="Find in document"></div><button class="tb" data-a="replace" title="Find and replace (Ctrl H)">${icon('again')}</button>
-      <button class="tb" data-a="zoomout" title="Zoom out (Ctrl −)">${icon('zoomOut')}</button><select class="zoom" title="Zoom" aria-label="Zoom"></select><button class="tb" data-a="zoomin" title="Zoom in (Ctrl +)">${icon('zoomIn')}</button>
-      <button class="tb" data-a="fit" title="Fit width (Ctrl 0)">${icon('fit')}</button>
-      <button class="tb" data-a="thumbs" title="Pages panel" aria-pressed="true">${icon('grid')}</button>
-      <div class="sep"></div>
-      <button class="btn" data-a="saveas">Save as…</button>
-      <button class="btn primary" data-a="save">${icon('save', 'sm')}Save</button>
-    </div>
+    <header class="ed-head">
+      <div class="topbar">
+        <button class="tb icon" data-a="close" title="Close">${icon('back')}</button>
+        <div class="doc">${icon('pdf')}<b title="${esc(file)}">${esc(nameOf(file))}</b><span class="dirty" hidden>Unsaved</span></div>
+        <div class="seg"><button class="tb icon" data-a="undo" title="Undo (Ctrl+Z)">${icon('undo')}</button><button class="tb icon" data-a="redo" title="Redo (Ctrl+Y)">${icon('redo')}</button></div>
+        <div class="grow"></div>
+        <div class="search">${icon('search', 'sm')}<input class="find" type="search" placeholder="Find in document" aria-label="Find in document"><button class="tb icon" data-a="replace" title="Find and replace (Ctrl H)">${icon('again', 'sm')}</button></div>
+        <div class="seg zoombar"><button class="tb icon" data-a="zoomout" title="Zoom out (Ctrl −)">${icon('zoomOut', 'sm')}</button><select class="zoom" title="Zoom" aria-label="Zoom"></select><button class="tb icon" data-a="zoomin" title="Zoom in (Ctrl +)">${icon('zoomIn', 'sm')}</button><button class="tb icon" data-a="fit" title="Fit width (Ctrl 0)">${icon('fit', 'sm')}</button></div>
+        <button class="tb icon" data-a="thumbs" title="Pages panel" aria-pressed="true">${icon('grid')}</button>
+        <button class="btn" data-a="saveas">Save as…</button>
+        <button class="btn primary" data-a="save">${icon('save', 'sm')}Save</button>
+      </div>
+      <div class="toolbar" role="toolbar" aria-label="Tools">
+        ${TOOL_GROUPS.map(([name, ids], gi) => `<div class="tgroup${gi ? ' opt' : ''}" role="group" aria-label="${name}">${ids.map((id) => {
+    const [, ic, label, tip] = TOOLS.find((x) => x[0] === id) || INSERT.find((x) => x[0] === id);
+    return `<button class="tool" ${TOOLS.some((x) => x[0] === id) ? `data-tool="${id}" aria-pressed="false"` : `data-a="${id}"`} title="${esc(`${label}: ${tip}`)}">${icon(ic)}<span class="lbl">${label}</span></button>`;
+  }).join('')}</div>`).join('')}
+      </div>
+    </header>
     <div class="ed-body">
       <aside class="thumbs" aria-label="Pages"><div class="ops">
         <button class="tb" data-p="rotl" title="Rotate left">${icon('rotate', 'sm')}</button>
@@ -407,14 +420,24 @@ export function openEditor(view, { file, mode }, ctx) {
         // The background reaches a little past the words, as it will in the saved file.
         background: o.bg && o.bg !== 'none' ? o.bg : '', boxShadow: o.bg && o.bg !== 'none' ? `0 0 0 ${o.size * 0.18 * kk}px ${o.bg}` : '',
       });
+      // A border sits just outside the background, with the same rounded corners the saved file gets.
+      const bd = o.border && o.border !== 'none' ? o.border : '', pad = o.size * 0.18, bw = Math.max(1, o.size / 12), rad = o.size * 0.22;
+      el.classList.toggle('bordered', !!bd);
+      el.style.borderRadius = bd ? `${Math.max(0, rad - pad) * kk}px` : '';
+      if (bd) for (const [n, v] of [['--bd', bd], ['--bpad', `${(pad + bw) * kk}px`], ['--bw', `${bw * kk}px`], ['--brad', `${(rad + bw / 2) * kk}px`]]) el.style.setProperty(n, v);
       return;
     }
     if (o.rect) {
       const [x, y, w, hh] = o.rect;
       css(x, y, w, hh);
       if (o.type === 'whiteout') el.style.background = o.fill || '#ffffff';
-      if (o.type === 'highlight') el.style.background = o.color;
-      if (o.type === 'highlight') el.style.opacity = '0.5';
+      if (o.type === 'highlight') {
+        // Underline and strike-out are a line along the bottom or through the middle of what was marked.
+        const line = Math.max(1, hh * 0.08) * kk, at = { underline: 'bottom', strike: '55%' }[o.markup];
+        el.style.background = at ? `linear-gradient(${o.color}, ${o.color}) left ${at} / 100% ${line}px no-repeat` : o.color;
+        el.style.opacity = at ? '1' : '0.5';
+      }
+      if (o.type === 'mark') $('svg', el).innerHTML = markSvg(o.kind, w * kk, hh * kk, o.stroke, (o.width || 2) * kk);
       if (o.type === 'rect' || o.type === 'ellipse') {
         const sw = (o.width || 2) * kk;
         const shape = o.type === 'rect' ? `<rect x="${sw / 2}" y="${sw / 2}" width="${Math.max(0, w * kk - sw)}" height="${Math.max(0, hh * kk - sw)}"` : `<ellipse cx="${w * kk / 2}" cy="${hh * kk / 2}" rx="${Math.max(0, w * kk / 2 - sw / 2)}" ry="${Math.max(0, hh * kk / 2 - sw / 2)}"`;
@@ -442,7 +465,7 @@ export function openEditor(view, { file, mode }, ctx) {
       $('svg', el).innerHTML = `<polyline fill="none" stroke="${o.stroke}" stroke-width="${(o.width || 2) * kk}" stroke-linecap="round" stroke-linejoin="round" points="${o.points.map((q) => `${(q[0] - x) * kk},${(q[1] - y) * kk}`).join(' ')}"/>`;
     }
   }
-  const textStyle = (o) => ({ size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color, underline: !!o.underline, strike: !!o.strike, bg: o.bg && o.bg !== 'none' ? o.bg : '', align: o.align || 'left', lineHeight: o.lineHeight || 1.2, spacing: o.spacing || 0, opacity: o.opacity ?? 1 });
+  const textStyle = (o) => ({ size: o.size, font: o.font, bold: o.bold, italic: o.italic, color: o.color, underline: !!o.underline, strike: !!o.strike, bg: o.bg && o.bg !== 'none' ? o.bg : '', border: o.border && o.border !== 'none' ? o.border : '', align: o.align || 'left', lineHeight: o.lineHeight || 1.2, spacing: o.spacing || 0, opacity: o.opacity ?? 1 });
   function serialize(o) {
     const base = { page: o.page, type: o.type };
     switch (o.type) {
@@ -451,7 +474,8 @@ export function openEditor(view, { file, mode }, ctx) {
       case 'text': return o.text.trim() ? { ...base, x: o.x, y: o.y, text: o.text, ...textStyle(o) } : null;
       case 'whiteout': return { ...base, rect: o.rect, fill: o.fill };
       case 'erase': return { ...base, rect: o.rect };
-      case 'highlight': return { ...base, rect: o.rect, color: o.color, opacity: 0.45 };
+      case 'highlight': return { ...base, rect: o.rect, color: o.color, opacity: 0.45, markup: o.markup || 'highlight' };
+      case 'mark': return { ...base, rect: o.rect, kind: o.kind, stroke: o.stroke, width: o.width };
       case 'rect': case 'ellipse': return { ...base, rect: o.rect, stroke: o.stroke, fill: o.fill, width: o.width };
       case 'line': case 'arrow': return { ...base, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2, stroke: o.stroke, width: o.width };
       case 'ink': return { ...base, points: o.points, stroke: o.stroke, width: o.width };
@@ -541,7 +565,7 @@ export function openEditor(view, { file, mode }, ctx) {
       if (handle) {
         if (o.rect) {
           let w = Math.max(6, snap.rect[2] + dx), hh = Math.max(6, snap.rect[3] + dy);
-          if (o.type === 'image' || o.type === 'signature') hh = w * (snap.rect[3] / snap.rect[2]);
+          if (o.type === 'image' || o.type === 'signature' || o.type === 'mark') hh = w * (snap.rect[3] / snap.rect[2]);
           o.rect = [snap.rect[0], snap.rect[1], w, hh];
         } else if (o.type === 'text' || o.type === 'replace') { o.size = Math.max(4, snap.size + dy / 2); o.styled = true; }
       } else if (o.rect) o.rect = [snap.rect[0] + dx, snap.rect[1] + dy, snap.rect[2], snap.rect[3]];
@@ -563,17 +587,19 @@ export function openEditor(view, { file, mode }, ctx) {
     if (st.tool === 'select' || st.tool === 'edittext') { select(null); return; }
     if (st.tool === 'addtext') {
       e.preventDefault();
-      const o = addObj({ type: 'text', page: i, x: x0, y: y0 + s.size * 0.86, text: '', size: s.size, font: s.font, bold: s.bold, italic: s.italic, color: s.color, underline: s.underline, strike: s.strike, bg: s.bg, align: s.align, lineHeight: s.lineHeight, spacing: s.spacing, opacity: s.opacity });
+      const o = addObj({ type: 'text', page: i, x: x0, y: y0 + s.size * 0.86, text: '', size: s.size, font: s.font, bold: s.bold, italic: s.italic, color: s.color, underline: s.underline, strike: s.strike, bg: s.bg, border: s.border, align: s.align, lineHeight: s.lineHeight, spacing: s.spacing, opacity: s.opacity });
       select(o);
       setTimeout(() => editText(o, false), 0);
       return;
     }
+    // The picker stays up after each stamp, so several can be placed in a row; clicking one selects it to edit.
+    if (st.tool === 'stamp') { e.preventDefault(); placeStamp(i, x0, y0); select(null); tip('Placed. Click it to change, move or delete it.'); return; }
     e.preventDefault();
     let o;
     const t = st.tool;
     if (t === 'draw') o = addObj({ type: 'ink', page: i, points: [[x0, y0]], stroke: s.stroke, width: s.width });
     else if (t === 'line' || t === 'arrow') o = addObj({ type: t, page: i, x1: x0, y1: y0, x2: x0, y2: y0, stroke: s.stroke, width: s.width });
-    else o = addObj({ type: t, page: i, rect: [x0, y0, 0, 0], stroke: s.stroke, fill: t === 'whiteout' ? s.erase : s.fill, width: s.width, color: s.hl });
+    else o = addObj({ type: t, page: i, rect: [x0, y0, 0, 0], stroke: s.stroke, fill: t === 'whiteout' ? s.erase : s.fill, width: s.width, color: t === 'highlight' && s.markup !== 'highlight' ? s.ul : s.hl, ...(t === 'highlight' ? { markup: s.markup } : {}) });
     const move = (ev) => {
       const [x, y] = ptOf(ev, i);
       if (o.points) o.points.push([x, y]);
@@ -591,6 +617,14 @@ export function openEditor(view, { file, mode }, ctx) {
     window.addEventListener('pointerup', up);
   }
 
+  // The click is the stamp's top-left corner, as with added text.
+  function placeStamp(i, x, y) {
+    const s = st.style, v = s.stamp, plain = { font: 'sans', italic: false, underline: false, strike: false, bg: 'none', align: 'left', lineHeight: 1.2, opacity: 1 };
+    if (v.startsWith('mark:')) return addObj({ type: 'mark', kind: v.slice(5), page: i, rect: [x, y, 16, 16], stroke: s.mark, width: 2 });
+    if (v === 'date') return addObj({ type: 'text', page: i, x, y: y + 12 * 0.86, text: today(), size: 12, color: s.color, bold: false, border: 'none', spacing: 0, ...plain });
+    const [text, color] = STAMPS.find(([n]) => n === v) || STAMPS[0], size = 16, pad = size * 0.18 + Math.max(1, size / 12);
+    return addObj({ type: 'text', page: i, x: x + pad, y: y + pad + size * 0.86, text, size, color, bold: true, border: color, spacing: 0.6, ...plain, opacity: 0.9 });
+  }
   function selectTool(t) {
     commitEditing();
     st.tool = t;
@@ -608,13 +642,17 @@ export function openEditor(view, { file, mode }, ctx) {
     clearTimeout(tip.t);
     if (msg && !keep) tip.t = setTimeout(() => { status.hidden = true; }, 4500);
   }
-  function renderProps() {
+  // Sliders fill up to their thumb.
+  const paintRange = (r) => r.style.setProperty('--p', `${((r.value - r.min) / (r.max - r.min)) * 100}%`);
+  props.addEventListener('input', (e) => { if (e.target.type === 'range') paintRange(e.target); });
+  function renderProps() { drawProps(); props.querySelectorAll('input[type=range]').forEach(paintRange); }
+  function drawProps() {
     const o = st.sel;
     const s = st.style;
     const t = o ? o.type : st.tool;
     props.innerHTML = '';
     const head = (txt) => props.append(h(`<h3>${esc(txt)}</h3>`));
-    const swatch = (list, val, fn) => { const el = h(`<div class="swatches">${list.map((c) => `<button style="background:${c}" data-c="${c}" aria-label="${c}" aria-pressed="${c.toLowerCase() === String(val).toLowerCase()}"></button>`).join('')}<input type="color" value="${val}" style="width:28px;height:24px" aria-label="Custom colour"></div>`); el.addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (b) { fn(b.dataset.c); renderProps(); } }); $('input', el).addEventListener('change', (e) => { fn(e.target.value); renderProps(); }); return el; };
+    const swatch = (list, val, fn) => { const el = h(`<div class="swatches">${list.map((c) => `<button style="background:${c}" data-c="${c}" aria-label="${c}" aria-pressed="${c.toLowerCase() === String(val).toLowerCase()}"></button>`).join('')}<label class="custom" title="Custom colour"><input type="color" value="${/^#[0-9a-f]{6}$/i.test(val) ? val : '#000000'}" aria-label="Custom colour"></label></div>`); el.addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (b) { fn(b.dataset.c); renderProps(); } }); $('input', el).addEventListener('change', (e) => { fn(e.target.value); renderProps(); }); return el; };
     const apply = (patch) => { if (o) { Object.assign(o, patch); if (o.type === 'replace') o.styled = true; positionObj(o); } else Object.assign(s, patch); };
     if (!o && st.pick) {
       const it = st.pick.obj;
@@ -649,14 +687,15 @@ export function openEditor(view, { file, mode }, ctx) {
       const row = h(`<div class="row2"></div>`); row.append(fontSel, size); props.append(row);
       const btn = (key, ic, title) => `<button class="tb" data-s="${key}" aria-pressed="${!!v[key]}" title="${title}">${icon(ic)}</button>`;
       const alignBtn = (a, ic, title) => `<button class="tb" data-al="${a}" aria-pressed="${(v.align || 'left') === a}" title="${title}">${icon(ic)}</button>`;
-      const style = h(`<div class="tstyle">${btn('bold', 'bold', 'Bold (Ctrl B)')}${btn('italic', 'italic', 'Italic (Ctrl I)')}${btn('underline', 'underline', 'Underline (Ctrl U)')}${btn('strike', 'strike', 'Strikethrough')}<span class="sep"></span>${alignBtn('left', 'alignLeft', 'Align left')}${alignBtn('center', 'alignCenter', 'Centre')}${alignBtn('right', 'alignRight', 'Align right')}</div>`);
+      const style = h(`<div class="tstyle"><div class="seg">${btn('bold', 'bold', 'Bold (Ctrl B)')}${btn('italic', 'italic', 'Italic (Ctrl I)')}${btn('underline', 'underline', 'Underline (Ctrl U)')}${btn('strike', 'strike', 'Strikethrough')}</div><div class="seg">${alignBtn('left', 'alignLeft', 'Align left')}${alignBtn('center', 'alignCenter', 'Centre')}${alignBtn('right', 'alignRight', 'Align right')}</div></div>`);
       style.addEventListener('click', (e) => {
         const b = e.target.closest('[data-s]'), al = e.target.closest('[data-al]');
         if (b) apply({ [b.dataset.s]: !(o || s)[b.dataset.s] });
         if (al) apply({ align: al.dataset.al });
         if (b || al) renderProps();
       });
-      props.append(style, h(`<div class="label">Colour</div>`), swatch(COLORS, v.color, (c) => apply({ color: c })), h(`<div class="label">Background</div>`), swatch(TEXT_BG, v.bg || 'none', (c) => apply({ bg: c })));
+      props.append(style, h(`<div class="label">Colour</div>`), swatch(COLORS, v.color, (c) => apply({ color: c })), h(`<div class="label">Background</div>`), swatch(TEXT_BG, v.bg || 'none', (c) => apply({ bg: c })),
+        h(`<div class="label">Border</div>`), swatch(['none', ...COLORS.slice(0, 8)], v.border || 'none', (c) => apply({ border: c })));
       const slider = (key, label, min, max, step, fmt) => {
         const f = h(`<div class="field"><label class="label">${label}</label><div class="range"><input type="range" min="${min}" max="${max}" step="${step}" value="${v[key] ?? (key === 'lineHeight' ? 1.2 : key === 'opacity' ? 1 : 0)}"><output>${fmt(v[key] ?? (key === 'lineHeight' ? 1.2 : key === 'opacity' ? 1 : 0))}</output></div></div>`);
         $('input', f).addEventListener('input', (e) => { const n = Number(e.target.value); $('output', f).textContent = fmt(n); apply({ [key]: n }); });
@@ -670,8 +709,38 @@ export function openEditor(view, { file, mode }, ctx) {
       head('Erase');
       props.append(h(`<p class="tip">Covers the area and permanently removes any text underneath.</p>`), swatch(['#ffffff', '#000000', '#f3f3f3'], (o || s).fill || s.erase, (c) => (o ? apply({ fill: c }) : (s.erase = c))));
     } else if (t === 'highlight') {
-      head('Highlight');
-      props.append(swatch(HL, (o || s).color || s.hl, (c) => (o ? apply({ color: c }) : (s.hl = c))));
+      const v = o || s, kind = v.markup || 'highlight', line = kind !== 'highlight';
+      head(o ? { highlight: 'Highlight', underline: 'Underline', strike: 'Strike-out' }[kind] : 'Mark up');
+      const kinds = h(`<div class="seg full">${[['highlight', 'highlight', 'Highlight'], ['underline', 'underline', 'Underline'], ['strike', 'strike', 'Strike out']].map(([id, ic, label]) => `<button class="tb" data-m="${id}" aria-pressed="${kind === id}" title="${label}">${icon(ic)}<span class="lbl">${label}</span></button>`).join('')}</div>`);
+      kinds.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-m]');
+        if (!b) return;
+        const m = b.dataset.m;
+        // Highlighter colours are too pale for a line, and red is too strong for a highlight.
+        if (o) apply({ markup: m, color: m === 'highlight' ? (HL.includes(o.color) ? o.color : s.hl) : (HL.includes(o.color) ? s.ul : o.color) }); else s.markup = m;
+        renderProps();
+      });
+      props.append(kinds, h(`<div class="label">Colour</div>`), swatch(line ? COLORS : HL, line ? (o ? o.color : s.ul) : (o ? o.color : s.hl), (c) => (o ? apply({ color: c }) : line ? (s.ul = c) : (s.hl = c))));
+    } else if (t === 'stamp') {
+      head('Stamp');
+      const pressed = (v) => `aria-pressed="${s.stamp === v}"`;
+      const grid = h(`<div class="stamps">${STAMPS.map(([n, c]) => `<button class="stampbtn" data-st="${esc(n)}" ${pressed(n)} style="color:${c}">${esc(n)}</button>`).join('')}</div>`);
+      const marks = h(`<div class="seg full">${MARKS.map(([id, label]) => `<button class="tb" data-st="mark:${id}" ${pressed(`mark:${id}`)} title="${label}"><svg viewBox="0 0 20 20" width="18" height="18">${markSvg(id, 20, 20, s.mark, 2.2)}</svg><span class="lbl">${label}</span></button>`).join('')}<button class="tb" data-st="date" ${pressed('date')} title="Today’s date: ${esc(today())}">${icon('clock')}<span class="lbl">Date</span></button></div>`);
+      for (const el of [grid, marks]) el.addEventListener('click', (e) => { const b = e.target.closest('[data-st]'); if (b) { s.stamp = b.dataset.st; renderProps(); } });
+      props.append(h(`<div class="label">Stamps</div>`), grid, h(`<div class="label">Marks and date</div>`), marks);
+      if (s.stamp.startsWith('mark:')) props.append(h(`<div class="label">Mark colour</div>`), swatch(COLORS, s.mark, (c) => { s.mark = c; }));
+      props.append(h(`<p class="tip">Click the page to place it. Stamps are text, so double-click one to change its words; the date can be edited the same way.</p>`));
+    } else if (t === 'mark') {
+      head({ check: 'Tick', cross: 'Cross', dot: 'Dot' }[o.kind] || 'Mark');
+      const kinds = h(`<div class="seg full">${MARKS.map(([id, label]) => `<button class="tb" data-k="${id}" aria-pressed="${o.kind === id}" title="${label}"><svg viewBox="0 0 20 20" width="18" height="18">${markSvg(id, 20, 20, o.stroke, 2.2)}</svg><span class="lbl">${label}</span></button>`).join('')}</div>`);
+      kinds.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) { apply({ kind: b.dataset.k }); renderProps(); } });
+      props.append(kinds, h(`<div class="label">Colour</div>`), swatch(COLORS, o.stroke, (c) => apply({ stroke: c })));
+      if (o.kind !== 'dot') {
+        const w = h(`<div class="field"><label class="label">Thickness</label><div class="range"><input type="range" min="0.5" max="6" step="0.5" value="${o.width || 2}"><output>${o.width || 2} pt</output></div></div>`);
+        $('input', w).addEventListener('input', (e) => { $('output', w).textContent = `${e.target.value} pt`; apply({ width: Number(e.target.value) }); });
+        props.append(w);
+      }
+      props.append(h(`<p class="tip">Drag to move. Drag the dot to resize.</p>`));
     } else if (['rect', 'ellipse', 'line', 'arrow', 'draw', 'ink'].includes(t)) {
       head({ rect: 'Box', ellipse: 'Oval', line: 'Line', arrow: 'Arrow', draw: 'Pen', ink: 'Drawing' }[t]);
       props.append(h(`<div class="label">Colour</div>`), swatch(COLORS, (o || s).stroke, (c) => apply({ stroke: c })));

@@ -97,7 +97,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   await check('starts as the lime tab on the right edge', async () => {
     await until('return L.S.state === "idle"');
     const b = wheel().getBounds(), a = wa();
-    if (b.width > 90 || b.height > 90) throw new Error(`tab window is ${b.width}×${b.height}`);
+    if (b.width > 120 || b.height > 120) throw new Error(`tab window is ${b.width}×${b.height}`);
     if (Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`tab not at the right edge: ${b.x + b.width} vs ${a.x + a.width}`);
     return `${b.width}×${b.height} at x=${b.x}`;
   });
@@ -363,7 +363,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const b = wheel().getBounds(), a = wa();
     const r = await lime('const t = document.querySelector(".tab"), cs = getComputedStyle(t); return { shown: cs.display !== "none" && cs.visibility !== "hidden", over: L.S.over, cls: document.querySelector("#stage").className };');
     if (wheels() !== 1) throw new Error(`${label}: ${wheels()} wheel windows`);
-    if (b.width > 90 || b.height > 90 || Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`${label}: the lime is ${b.width}×${b.height} at ${b.x},${b.y}, not at the edge`);
+    if (b.width > 120 || b.height > 120 || Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`${label}: the lime is ${b.width}×${b.height} at ${b.x},${b.y}, not at the edge`);
     if (!r.shown) throw new Error(`${label}: the lime is hidden (${r.cls})`);
     if (r.over) throw new Error(`${label}: still thinks files are over it`);
     // And it still opens, by a drag and by a click.
@@ -451,7 +451,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       await sleep(Math.floor(rnd() * 1800));
       // Whatever moment it is caught in, the page and the window agree.
       const st = await lime('return { s: L.S.state, f: L.folding() };'), w = wheel().getBounds().width;
-      if (st.s === 'idle' && !st.f && w > 90) { await sleep(400); if (wheel().getBounds().width > 90 && (await lime('return L.S.state === "idle" && !L.folding();'))) throw new Error(`cycle ${i}: idle but the window is ${w} wide`); }
+      if (st.s === 'idle' && !st.f && w > 120) { await sleep(400); if (wheel().getBounds().width > 120 && (await lime('return L.S.state === "idle" && !L.folding();'))) throw new Error(`cycle ${i}: idle but the window is ${w} wide`); }
       if (wheels() !== 1) throw new Error(`cycle ${i}: ${wheels()} wheel windows`);
     }
     await healthy('after 60 cycles');
@@ -909,6 +909,67 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   } catch (e) { rep.status = 'FAIL'; rep.detail = e.message; }
   console.log(`${rep.status} ${rep.name.padEnd(44)}        ${rep.detail}`);
   results.push(rep);
+
+  const stamp = { name: 'edit pdf · stamps, ticks, date and markup', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'stamps.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    openEditor(src, 'edit');
+    const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+    while (wc.isLoading()) await sleep(200);
+    const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
+    if (!(await wait('!!document.querySelector(".pdfpage img.r[src]")'))) throw new Error('editor did not load');
+    const press = (fx_, fy) => ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * ${fx_}, y = b.top + b.height * ${fy}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y })); })()`);
+    await ejs('document.querySelector(\'[data-tool="stamp"]\').click()');
+    if (!(await wait('document.querySelectorAll(".props .stampbtn").length >= 8', 3000))) throw new Error('no stamp choices');
+    await ejs('document.querySelector(\'.props [data-st="APPROVED"]\').click()');
+    await press(0.1, 0.12);
+    const ring = await ejs(`(() => { const el = [...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED'); return el && el.classList.contains('bordered') && getComputedStyle(el, '::after').borderTopColor; })()`);
+    if (ring !== 'rgb(16, 124, 16)') throw new Error(`stamp preview border ${ring}`);
+    await ejs('document.querySelector(\'.props [data-st="mark:check"]\').click()');
+    await press(0.1, 0.22);
+    if (!(await wait('!!document.querySelector(".obj svg path")', 2000))) throw new Error('no tick on the page');
+    await ejs('document.querySelector(\'.props [data-st="date"]\').click()');
+    await press(0.1, 0.28);
+    // Underline part of a line of text with the markup tool.
+    await ejs('document.querySelector(\'[data-tool="highlight"]\').click()');
+    await ejs('document.querySelector(\'.props [data-m="underline"]\').click()');
+    await ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * 0.15, y = b.top + b.height * 0.4; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointermove', { clientX: x + b.width * 0.4, clientY: y + b.height * 0.02 })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: x + b.width * 0.4, clientY: y + b.height * 0.02 })); })()`);
+    const kinds = await ejs('[...document.querySelectorAll(".obj")].length');
+    if (kinds < 4) throw new Error(`${kinds} things added`);
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await sleep(300);
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = path.join(OUT, 'stamps (edited).pdf');
+    const t2 = Date.now();
+    while (!fs.existsSync(out) && Date.now() - t2 < 20000) await sleep(200);
+    if (!fs.existsSync(out)) throw new Error('Save wrote nothing');
+    await sleep(500);
+    const E = require('../src/main/pdfedit'), s1 = await E.open(src), s2 = await E.open(out);
+    const lines = await E.text(s2.id, 0), was = (await E.text(s1.id, 0)).map((l) => l.text).join('\n');
+    const st_ = lines.find((l) => l.text.includes('APPROVED'));
+    if (!st_ || !/Bold/.test(st_.font)) throw new Error(`stamp text ${st_ ? st_.font : 'missing'}`);
+    const year = String(new Date().getFullYear());
+    if (!lines.some((l) => l.text.includes(year) && !was.includes(l.text))) throw new Error('the date is not in the file');
+    // Green ink from the stamp's border and the tick, red from the underline, none of which the page had before.
+    const ink = async (id) => {
+      const { data, info } = await require('sharp')(await E.render(id, 0, 1.5)).raw().toBuffer({ resolveWithObject: true });
+      let green = 0, red = 0;
+      for (let i = 0; i < data.length; i += info.channels) {
+        const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+        if (g > 90 && g - r > 50 && g - b > 50) green++;
+        if (r > 150 && r - g > 80 && r - b > 80) red++;
+      }
+      return { green, red };
+    };
+    const a = await ink(s1.id), b = await ink(s2.id);
+    if (b.green - a.green < 150) throw new Error(`stamp border and tick: ${b.green - a.green} green pixels`);
+    if (b.red - a.red < 60) throw new Error(`underline: ${b.red - a.red} red pixels`);
+    stamp.detail = `APPROVED in ${st_.font} with its border, a tick, today's date and an underline saved`;
+    win.destroy();
+  } catch (e) { stamp.status = 'FAIL'; stamp.detail = e.message; }
+  console.log(`${stamp.status} ${stamp.name.padEnd(44)}        ${stamp.detail}`);
+  results.push(stamp);
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {

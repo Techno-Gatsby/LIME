@@ -70,7 +70,7 @@ html, body { background: transparent !important; overflow: hidden; }
 @keyframes chase { 0%, 60%, 100% { opacity: 0; } 15% { opacity: .55; } }
 .ready.over:not(.live) .wheel { --ws: 1.03 !important; }
 
-.tab { position: absolute; inset: 0; display: none; background: rgba(128, 128, 128, .012); cursor: grab; }
+.tab { position: absolute; left: 10px; top: 0; width: 76px; height: 76px; display: none; background: rgba(128, 128, 128, .012); cursor: grab; }
 /* While the wheel is carried: a grabbing hand, and nothing re-animates under it. */
 .moving, .moving * { cursor: grabbing !important; }
 .moving .petal { transition: none; }

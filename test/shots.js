@@ -190,6 +190,17 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await ejs(`document.querySelector('[data-tool="select"]').click()`);
         await sleep(800);
         await shot('17-editor-select', e);
+        const place = (fx_, fy) => ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * ${fx_}, y = b.top + b.height * ${fy}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y })); })()`);
+        await ejs(`document.querySelector('[data-tool="stamp"]').click()`);
+        await place(0.62, 0.3);
+        await ejs(`document.querySelector('.props [data-st="mark:check"]').click()`);
+        await place(0.1, 0.36);
+        await ejs(`document.querySelector('.props [data-st="date"]').click()`);
+        await place(0.14, 0.355);
+        await ejs(`document.querySelector('.props [data-st="CONFIDENTIAL"]').click()`);
+        await shot('18-editor-stamp', e);
+        await ejs(`document.querySelector('[data-tool="highlight"]').click(); document.querySelector('.props [data-m="underline"]').click()`);
+        await shot('19-editor-markup', e);
       }
     }
   } catch (e) { console.error('shots failed', e); }
