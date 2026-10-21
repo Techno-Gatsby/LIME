@@ -13,15 +13,15 @@ const apng = () => require('./apng');
 const icons = () => require('./icons');
 const heic = () => require('./heic');
 
-// opts.side: the long edge an SVG should render at (icons, thumbnails); otherwise its intrinsic size.
 async function open(p, opts = {}) {
   const e = U.ext(p);
   const s = sharp();
   const lim = { limitInputPixels: false, animated: !!opts.animated, failOn: 'none' };
   if (e === 'heic' || e === 'heif' || e === 'hif') return openHeif(p, lim);
   if (e === 'psd') {
+    const cmyk = psdCmyk(await fsp.readFile(p));
+    if (cmyk) return s(cmyk, lim);
     const { readPsd, initializeCanvas } = require('ag-psd');
-    // ag-psd makes its pixel buffers through a canvas, which Node doesn't have; plain buffers are all it needs here.
     initializeCanvas(() => { throw new Error('This PSD needs PhotoCraft to open.'); }, (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }));
     const psd = readPsd(await fsp.readFile(p), { useImageData: true, skipLayerImageData: true, skipThumbnail: true });
     if (!psd.imageData) throw new Error('This PSD was saved without a flattened preview. Open it in PhotoCraft and save with “Maximize compatibility”.');
@@ -51,7 +51,6 @@ async function open(p, opts = {}) {
   if (e === 'jxl') return s(await jxlDecode(p), lim);
   return s(await ffmpegDecode(p), lim);
 }
-// heic-decode gives bare RGBA, so the ICC profile and Exif (read by libheif without decoding) go back in as PNG chunks.
 async function openHeif(p, lim) {
   const buf = await fsp.readFile(p);
   let img;
@@ -66,6 +65,51 @@ async function openHeif(p, lim) {
   if (m.icc) extra.push(apng().chunk('iCCP', Buffer.concat([Buffer.from('ICC Profile\0\0', 'latin1'), require('zlib').deflateSync(m.icc)])));
   if (m.exif) { const x = heic().patchExif(m.exif); extra.push(apng().chunk('eXIf', x.toString('latin1', 0, 6) === 'Exif\0\0' ? x.subarray(6) : x)); }
   return sharp()(Buffer.concat([png.subarray(0, 33), ...extra, png.subarray(33)]), lim);
+}
+function psdCmyk(b) {
+  if (b.toString('latin1', 0, 4) !== '8BPS' || b.readUInt16BE(24) !== 4 || b.readUInt16BE(22) !== 8) return null;
+  const big = b.readUInt16BE(4) === 2, n = b.readUInt16BE(12), h = b.readUInt32BE(14), w = b.readUInt32BE(18);
+  let o = 26 + 4 + b.readUInt32BE(26), icc = null;
+  const end = o + 4 + b.readUInt32BE(o);
+  for (let r = o + 4; r + 12 <= end && b.toString('latin1', r, r + 4) === '8BIM';) {
+    const id = b.readUInt16BE(r + 4), name = b[r + 6] + 1 + ((b[r + 6] + 1) % 2), size = b.readUInt32BE(r + 6 + name), at = r + 10 + name;
+    if (id === 1039) icc = b.subarray(at, at + size);
+    r = at + size + (size % 2);
+  }
+  o = end + (big ? 8 + Number(b.readBigUInt64BE(end)) : 4 + b.readUInt32BE(end));
+  const rle = b.readUInt16BE(o) === 1, planes = [];
+  o += 2;
+  let src = o + (rle ? n * h * (big ? 4 : 2) : 0);
+  for (let c = 0; c < 4; c++) {
+    const plane = Buffer.alloc(w * h);
+    if (!rle) { b.copy(plane, 0, src, src + w * h); src += w * h; } else {
+      for (let y = 0; y < h; y++) {
+        const len = big ? b.readUInt32BE(o + 4 * (c * h + y)) : b.readUInt16BE(o + 2 * (c * h + y)), stop = src + len;
+        for (let x = y * w; src < stop;) {
+          const k = b.readInt8(src++);
+          if (k >= 0) { b.copy(plane, x, src, src + k + 1); src += k + 1; x += k + 1; } else if (k > -128) { plane.fill(b[src++], x, x - k + 1); x += 1 - k; }
+        }
+      }
+    }
+    planes.push(plane);
+  }
+  const px = Buffer.alloc(w * h * 4);
+  for (let i = 0; i < w * h; i++) for (let c = 0; c < 4; c++) px[i * 4 + c] = 255 - planes[c][i];
+  return cmykTiff(px, w, h, icc);
+}
+function cmykTiff(px, w, h, icc) {
+  const n = icc ? 11 : 10, ifd = 8, bps = ifd + 2 + 12 * n + 4, iccAt = bps + 8, data = iccAt + (icc ? icc.length : 0);
+  const b = Buffer.alloc(data + px.length);
+  b.write('II*\0', 0, 'latin1'); b.writeUInt32LE(ifd, 4); b.writeUInt16LE(n, ifd);
+  [[256, 4, 1, w], [257, 4, 1, h], [258, 3, 4, bps], [259, 3, 1, 1], [262, 3, 1, 5], [273, 4, 1, data], [277, 3, 1, 4], [278, 4, 1, h], [279, 4, 1, px.length], [284, 3, 1, 1], ...(icc ? [[34675, 7, icc.length, iccAt]] : [])].forEach(([tag, type, count, v], i) => {
+    const at = ifd + 2 + 12 * i;
+    b.writeUInt16LE(tag, at); b.writeUInt16LE(type, at + 2); b.writeUInt32LE(count, at + 4);
+    if (type === 3 && count === 1) b.writeUInt16LE(v, at + 8); else b.writeUInt32LE(v, at + 8);
+  });
+  for (let i = 0; i < 4; i++) b.writeUInt16LE(8, bps + 2 * i);
+  if (icc) icc.copy(b, iccAt);
+  px.copy(b, data);
+  return b;
 }
 async function openSvg(p, opts) {
   const m = await sharp()(p, { limitInputPixels: false }).metadata();
@@ -93,7 +137,6 @@ async function decodeBuffer(buf, e) {
   try { const f = path.join(dir, `in.${e}`); await fsp.writeFile(f, buf); return await ffmpegDecode(f); } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
 
-// Radiance HDR and OpenEXR are linear light: tone-map them to sRGB (Filee's HdrToneMap) instead of clipping.
 async function hdrDecode(p) {
   const dir = await U.tmpDir('hdr');
   try {
@@ -166,7 +209,6 @@ const FORMATS = {
   gif: (s) => s.gif({ effort: 7 }),
 };
 const rgba = (s) => s.ensureAlpha().toColourspace('srgb').raw({ depth: 'uchar' }).toBuffer({ resolveWithObject: true });
-// JS writers for what neither sharp nor FFmpeg can write.
 const WRITERS = {
   heic: async (s, q, o) => {
     const m = await s.metadata(), icc = m.icc && ['srgb', 'rgb', 'rgb16'].includes(m.space) ? m.icc : null;
@@ -200,7 +242,6 @@ const WRITERS = {
     return Buffer.from(`/* XPM */\nstatic char *${name}[] = {\n"${info.width} ${info.height} ${ids.size} ${cpp}",\n${[...ids].map(([c, n]) => `"${code(n)} c ${c}",`).join('\n')}\n${rows.join(',\n')}\n};\n`);
   },
 };
-// FFmpeg encoders; the extension picks the encoder.
 const FF_ARGS = { bmp: ['-pix_fmt', 'bgr24'], ras: ['-rle', '0'], jp2: ['-c:v', 'libopenjpeg'] };
 const FF_OUT = new Set(['bmp', 'tga', 'qoi', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xbm', 'wbmp', 'jp2']);
 const NO_ALPHA = new Set(['jpg', 'bmp', 'heic', 'pcx', 'ppm', 'pgm', 'pbm', 'pfm', 'ras', 'xbm', 'wbmp']);
@@ -211,13 +252,12 @@ const MAX_SIDE = { jpg: 65500, webp: 16383, avif: 16384, gif: 65535 };
 const ALIAS = { jpeg: 'jpg', jfif: 'jpg', tif: 'tiff', heif: 'heic', hif: 'heic', targa: 'tga', sun: 'ras', jpeg2000: 'jp2' };
 const extFor = (to) => ALIAS[to] || to;
 
-// Orientation is applied to the pixels by the caller's rotate(); the ICC profile stays, Exif stays unless opts.strip.
 async function writeAs(pipe, to, out, opts = {}) {
   to = extFor(to);
   const q = Number(opts.quality) || 85;
   if (NO_ALPHA.has(to)) pipe = pipe.flatten({ background: opts.background || '#ffffff' });
   if (BILEVEL.has(to)) pipe = pipe.threshold(128);
-  if (KEEP_ICC.has(to)) pipe = pipe.keepIccProfile();
+  if (KEEP_ICC.has(to)) pipe = (await pipe.metadata().catch(() => ({}))).space === 'cmyk' ? pipe.withIccProfile('srgb') : pipe.keepIccProfile();
   if (KEEP_EXIF.has(to) && !opts.strip) pipe = pipe.keepExif();
   try {
     if (FORMATS[to]) await FORMATS[to](pipe, q, opts).toFile(out);
@@ -247,7 +287,6 @@ async function viaPng(pipe, to, out, q) {
 }
 const makeIco = (png) => icons().writeIco(png);
 
-// Animations: GIF and WebP through libvips, animated PNG through apng.js; frames are full RGBA canvases.
 const MOVING = new Set(['gif', 'webp', 'apng', 'tiff']);
 async function isAnimated(p) {
   const e = U.ext(p);
@@ -291,7 +330,6 @@ async function convert(p, opts, ctx) {
   }
   return dir;
 }
-// Every page of a multi-page TIFF becomes a PDF page.
 async function toPdf(inputs, opts, out, ctx) {
   const dir = await U.tmpDir('pages'), list = [];
   try {
@@ -403,7 +441,6 @@ async function watermark(p, opts, ctx) {
   const to = keepExt(p);
   return writeAs(sharp()(buf).composite(comp), to, ctx.out.file(p, `${U.base(p)}-watermarked.${to}`), { quality: 92 });
 }
-// A white bold caption with a black outline, as large as fits in w × h.
 async function caption(t, w, h) {
   const text = await sharp()({ text: { text: `<span foreground="white">${escXml(String(t).toUpperCase())}</span>`, font: 'Noto Sans Bold', fontfile: path.join(U.cfg.data, 'fonts', 'NotoSans-Bold.ttf'), rgba: true, width: w, height: h, align: 'centre', wrap: 'word' } }).png().toBuffer();
   const m = await sharp()(text).metadata(), r = Math.max(2, Math.round(m.height / 10));
@@ -494,7 +531,6 @@ async function collage(inputs, opts, out) {
 }
 
 const roundRect = (w, h, r, fill) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" rx="${r}" ry="${r}" fill="${fill}"/></svg>`);
-// Width and corner radius are percentages of the shorter side; rounded corners and shadows need a format with alpha.
 async function border(p, opts, ctx) {
   let buf = await (await open(p)).rotate().png().toBuffer();
   const { width: W, height: H } = await sharp()(buf).metadata(), short = Math.min(W, H);
@@ -526,7 +562,6 @@ function detect(tiles, signal) {
     child.send({ model: FACE_MODEL, tiles });
   });
 }
-// The whole picture plus overlapping tiles on big pictures, so small faces in group photos are found too.
 async function findFaces(buf, W, H, signal) {
   const regions = [{ x: 0, y: 0, w: W, h: H }];
   for (const n of [2, 3]) {
@@ -564,8 +599,6 @@ async function blurFaces(p, opts, ctx) {
   return { path: out, note: patches.length ? `${patches.length} face${patches.length === 1 ? '' : 's'} ${opts.mode === 'pixelate' ? 'pixelated' : 'blurred'}` : 'No faces found. Saved an unchanged copy.' };
 }
 
-// Filee's AnimationTiming.ChangeSpeed: delays are rescaled in the target's ticks on a running total, and frames
-// that would last under 20 ms are dropped, their time going to the frame before.
 function changeSpeed(frames, speed, to) {
   if (frames.length < 2 || !(speed > 0) || speed === 1) return frames;
   const ticks = to === 'gif' ? 100 : 1000, min = Math.floor(ticks / 50), starts = [0];
@@ -586,4 +619,5 @@ async function animationSpeed(p, opts, ctx) {
   return { path: out, note: `${a.frames.length} frames → ${frames.length}, ${(frames.reduce((t, f) => t + f.delay, 0) / 1000).toFixed(2)} s` };
 }
 
-module.exports = { open, toPngOrJpeg, writeAs, makeIco, convert, toPdf, isAnimated, readAnimation, writeAnimation, changeSpeed, compress, resize, crop, rotate, adjust, watermark, meme, border, blurFaces, animationSpeed, strip, removeBackground, upscale, info, thumbnail, collage, sharp };
+module.exports = {
+  cmykTiff, open, toPngOrJpeg, writeAs, makeIco, convert, toPdf, isAnimated, readAnimation, writeAnimation, changeSpeed, compress, resize, crop, rotate, adjust, watermark, meme, border, blurFaces, animationSpeed, strip, removeBackground, upscale, info, thumbnail, collage, sharp };

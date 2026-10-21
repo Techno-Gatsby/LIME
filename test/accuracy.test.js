@@ -186,5 +186,90 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
     return `Hebrew typed with the Noto Sans choice reads back exactly and shows ${box.width}×${box.height} px of ink at 3×`;
   });
 
+  const s15 = (v) => { const b = Buffer.alloc(4); b.writeInt32BE(Math.round(v * 65536)); return b; };
+  const lab = (r, g, b) => {
+    const lin = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4), [R, G, B] = [r, g, b].map(lin);
+    const X = (0.4360747 * R + 0.3850649 * G + 0.1430804 * B) / 0.9642, Y = 0.2225045 * R + 0.7168786 * G + 0.0606169 * B, Z = (0.0139322 * R + 0.0971045 * G + 0.7141733 * B) / 0.8249;
+    const f = (t) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+    return [116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
+  };
+  const pressProfile = () => {
+    const lut = Buffer.alloc(48 + 4 * 256 + 48 + 3 * 256);
+    lut.write('mft1', 0); lut[8] = 4; lut[9] = 3; lut[10] = 2;
+    [1, 0, 0, 0, 1, 0, 0, 0, 1].forEach((v, i) => s15(v).copy(lut, 12 + 4 * i));
+    let o = 48;
+    for (let i = 0; i < 1024; i++) lut[o++] = i & 255;
+    for (let i = 0; i < 16; i++) { const [c, m, y, k] = [(i >> 3) & 1, (i >> 2) & 1, (i >> 1) & 1, i & 1], L = lab((1 - c) * (1 - k), (1 - m) * (1 - k) * 0.85, (1 - y) * (1 - k) * 0.6); lut[o++] = Math.round(L[0] * 2.55); lut[o++] = Math.round(L[1] + 128); lut[o++] = Math.round(L[2] + 128); }
+    for (let i = 0; i < 768; i++) lut[o++] = i & 255;
+    const desc = Buffer.alloc(12 + 16 + 12 + 67); desc.write('desc', 0); desc.writeUInt32BE(16, 8); desc.write('Test press CMYK', 12);
+    const tags = [['desc', desc], ['cprt', Buffer.from('text\0\0\0\0None\0\0\0\0')], ['wtpt', Buffer.concat([Buffer.from('XYZ \0\0\0\0'), s15(0.9642), s15(1), s15(0.8249)])], ['A2B0', lut]];
+    let at = 132 + 12 * tags.length;
+    const table = Buffer.alloc(4 + 12 * tags.length), body = [];
+    table.writeUInt32BE(tags.length);
+    tags.forEach(([sig, data], i) => { const pd = Buffer.concat([data, Buffer.alloc((4 - (data.length % 4)) % 4)]); table.write(sig, 4 + 12 * i); table.writeUInt32BE(at, 8 + 12 * i); table.writeUInt32BE(data.length, 12 + 12 * i); body.push(pd); at += pd.length; });
+    const head = Buffer.alloc(128);
+    head.writeUInt32BE(at); head.writeUInt32BE(0x02100000, 8); head.write('prtrCMYKLab ', 12); head.write('acsp', 36);
+    [0.9642, 1, 0.8249].forEach((v, i) => s15(v).copy(head, 68 + 4 * i));
+    return Buffer.concat([head, table, ...body]);
+  };
+  const W = 60, H = 20, INK = [[200, 30, 0, 0], [0, 180, 200, 20], [60, 60, 60, 80]], ink4 = Buffer.alloc(W * H * 4);
+  for (let i = 0; i < W * H; i++) ink4.set(INK[Math.floor((i % W) / 20)], i * 4);
+  const icc = pressProfile(), img = E('image');
+  const means = async (input) => (await sharp(input).stats()).channels.slice(0, 3).map((c) => c.mean);
+  const far = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
+  const fmt = (a) => a.map((v) => v.toFixed(1)).join('/');
+  const naive = INK.map(([c, m, y, k]) => [c, m, y].map((v) => 255 * (1 - v / 255) * (1 - k / 255))).reduce((a, b) => a.map((v, i) => v + b[i] / 3), [0, 0, 0]);
+  const builtin = await means(await sharp(img.cmykTiff(ink4, W, H, null)).toColourspace('srgb').png().toBuffer());
+  const reference = await means(await sharp(img.cmykTiff(ink4, W, H, icc)).toColourspace('srgb').png().toBuffer());
+  await check('CMYK JPEG converts through its own profile', async () => {
+    const jpg = path.join(OUT, 'press.jpg');
+    await sharp(img.cmykTiff(ink4, W, H, icc)).pipelineColourspace('cmyk').toColourspace('cmyk').keepIccProfile().jpeg({ quality: 100, chromaSubsampling: '4:4:4' }).toFile(jpg);
+    const m = await sharp(jpg).metadata();
+    ok(m.space === 'cmyk' && m.icc.equals(icc), 'the sample is not a CMYK JPEG with the test profile');
+    const ref = await means(await sharp(jpg).toColourspace('srgb').png().toBuffer()), out = [];
+    ok(far(ref, builtin) > 20 && far(ref, naive) > 20, `the test profile is too close to the others: ${fmt(ref)} ${fmt(builtin)} ${fmt(naive)}`);
+    for (const to of ['png', 'jpg', 'webp', 'tiff']) {
+      const [o] = await run('convert-image', [jpg], { to, quality: 100 }, `cmyk-${to}`), om = await sharp(o).metadata(), got = await means(o);
+      ok(om.space === 'srgb' && om.channels >= 3, `${to}: ${om.space} with ${om.channels} channels`);
+      ok(far(got, ref) <= 2.5, `${to}: ${fmt(got)} against ${fmt(ref)} through the profile (built-in ${fmt(builtin)}, naive ${fmt(naive)})`);
+      out.push(`${to} ${far(got, ref).toFixed(1)}`);
+    }
+    return `mean RGB off the profile's own conversion by ${out.join(', ')} (built-in profile would be ${far(builtin, ref).toFixed(0)}, naive ${far(naive, ref).toFixed(0)} off)`;
+  });
+  await check('CMYK PSD converts through its own profile', async () => {
+    const res = Buffer.concat([Buffer.from('8BIM'), Buffer.from([0x04, 0x0f, 0, 0]), Buffer.alloc(4), icc, Buffer.alloc(icc.length % 2)]);
+    res.writeUInt32BE(icc.length, 8);
+    const head = Buffer.alloc(26); head.write('8BPS', 0); head.writeUInt16BE(1, 4); head.writeUInt16BE(4, 12); head.writeUInt32BE(H, 14); head.writeUInt32BE(W, 18); head.writeUInt16BE(8, 22); head.writeUInt16BE(4, 24);
+    const u32 = (v) => { const b = Buffer.alloc(4); b.writeUInt32BE(v); return b; }, planes = [0, 1, 2, 3].map((c) => Buffer.from(Array.from({ length: W * H }, (_, i) => 255 - ink4[i * 4 + c])));
+    const psd = path.join(OUT, 'press.psd');
+    fs.writeFileSync(psd, Buffer.concat([head, u32(0), u32(res.length), res, u32(0), Buffer.from([0, 0]), ...planes]));
+    const d = path.join(OUT, 'cmyk-psd');
+    fs.mkdirSync(d, { recursive: true });
+    const o = await img.convert(psd, { to: 'png' }, { out: E('util').outputPlanner({ dest: { kind: 'dir', path: d } }), progress: () => {} }), got = await means(o.path || o);
+    ok(far(got, reference) <= 2, `${fmt(got)} against ${fmt(reference)} through the profile (naive ${fmt(naive)})`);
+    return `mean RGB ${fmt(got)}, ${far(got, reference).toFixed(1)} off the profile's conversion (naive would be ${far(naive, reference).toFixed(0)} off)`;
+  });
+  await check('Display P3 stays P3 where the format carries it', async () => {
+    const p3 = path.join(OUT, 'wide.png');
+    await sharp({ create: { width: W, height: H, channels: 3, background: '#000000' } }).composite([{ input: { create: { width: 20, height: H, channels: 3, background: '#ff2000' } }, left: 0, top: 0 }, { input: { create: { width: 20, height: H, channels: 3, background: '#00e040' } }, left: 20, top: 0 }, { input: { create: { width: 20, height: H, channels: 3, background: '#1040ff' } }, left: 40, top: 0 }]).png().toBuffer()
+      .then((b) => sharp(b).withIccProfile('p3').png().toFile(p3));
+    const src = await sharp(p3).metadata(), raw = await means(await sharp(p3).keepIccProfile().raw().toBuffer({ resolveWithObject: true }).then(({ data, info }) => sharp(data, { raw: info }).png().toBuffer()));
+    const srgb = await means(await sharp(p3).toColourspace('srgb').png().toBuffer()), out = [];
+    ok(far(raw, srgb) > 10, `P3 and sRGB values are too close: ${fmt(raw)} ${fmt(srgb)}`);
+    for (const to of ['png', 'jpg', 'webp', 'tiff', 'avif']) {
+      const [o] = await run('convert-image', [p3], { to, quality: 100 }, `p3-${to}`), m = await sharp(o).metadata();
+      ok(m.icc && m.icc.equals(src.icc), `${to} lost the P3 profile`);
+      const shown = await means(await sharp(o).toColourspace('srgb').png().toBuffer());
+      ok(far(shown, srgb) <= 3, `${to} shows ${fmt(shown)} instead of ${fmt(srgb)}`);
+      out.push(to);
+    }
+    for (const to of ['gif', 'bmp']) {
+      const [o] = await run('convert-image', [p3], { to }, `p3-${to}`), got = await means(await sharp(to === 'bmp' ? await E('image').open(o).then((x) => x.png().toBuffer()) : o).png().toBuffer());
+      ok(far(got, srgb) <= 4, `${to}: ${fmt(got)} against ${fmt(srgb)} in sRGB (P3 numbers ${fmt(raw)})`);
+      out.push(`${to} as sRGB`);
+    }
+    return `P3 kept in ${out.join(', ')}`;
+  });
+
   return results;
 };
