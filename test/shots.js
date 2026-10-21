@@ -179,6 +179,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       await sleep(2500);
       const p = BrowserWindow.getAllWindows().find((x) => x.getTitle() === 'Lime Settings');
       if (p) await shot('14-prefs', p);
+      if (p) { await p.webContents.executeJavaScript('document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)'); await sleep(400); await shot('15-prefs-helpers', p); }
     }
     if (want('print')) {
       const book = path.join(samples, 'print.xlsx');
