@@ -700,6 +700,99 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (bad.length) throw new Error(`${bad.length} problems: ${[...new Set(bad)].slice(0, 6).join(' · ')}`);
     return `${rings} rings checked`;
   });
+  // Every ring: one label size and one hint size, whatever the longest name; the longest get shortened, never shrunk alone.
+  await check('wheel rings · labels share one size in each ring', async () => {
+    const probe = (name) => lime(`
+      await new Promise((res) => setTimeout(res, 450));
+      const out = [];
+      for (const cls of ['l', 'h']) {
+        const sizes = [...new Set([...document.querySelectorAll('.petal[data-i] text.' + cls)].map((t) => getComputedStyle(t).fontSize))];
+        if (sizes.length > 1) out.push(${JSON.stringify(name)} + ' · ' + cls + ' sizes ' + sizes.join(', '));
+        if (sizes.length && parseFloat(sizes[0]) < (cls === 'l' ? 7 : 5) - 0.01) out.push(${JSON.stringify(name)} + ' · ' + cls + ' is only ' + sizes[0]);
+      }
+      const l = document.querySelector('.petal[data-i] text.l');
+      return { n: document.querySelectorAll('.petal[data-i]').length, out, size: l ? getComputedStyle(l).fontSize : '' };`);
+    const bad = [];
+    let rings = 0;
+    for (const files of [[fx('photo.jpg')], [fx('doc.pdf')], [fx('clip.mp4')], [fx('doc.docx')], [fx('deck.pptx')]].filter((s) => s.every((f) => fs.existsSync(f)))) {
+      await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+      await sleep(250);
+      await lime(`await L.openWith(${JSON.stringify(files)});`);
+      await sleep(600);
+      const appIds = await lime('return (L.S.items?.apps || []).map((a) => a.id);');
+      for (const mode of ['convert', 'tools', 'apps', ...appIds.map((id) => `apps:${id}`), 'more']) {
+        await lime(`L.S.app = ${JSON.stringify(mode.split(':')[1] || null)}; L.setMode(${JSON.stringify(mode.split(':')[0])});`);
+        const r = await probe(`${path.basename(files[0])} · ${mode}`);
+        if (r.n) rings++;
+        bad.push(...r.out);
+      }
+    }
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    await sleep(250);
+    await lime('L.expand("click"); await L.loadHome();');
+    await sleep(700);
+    let home = '';
+    for (const id of [null, 'photocraft', 'vectorcraft', 'pdfcraft']) {
+      await lime(`L.S.app = ${JSON.stringify(id)}; L.redraw();`);
+      const r = await probe(`home · ${id || 'apps'}`);
+      if (r.n) rings++;
+      bad.push(...r.out);
+      if (!id) home = r.size;
+    }
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    if (bad.length) throw new Error(`${bad.length} problems: ${bad.slice(0, 6).join(' · ')}`);
+    return `${rings} rings, one size each; the apps share ${home}`;
+  });
+  // The sounds are counted as they're triggered (there's no speaker to listen at), and the switch silences them.
+  if (fs.existsSync(fx('photo.jpg'))) await check('wheel sounds · a tick per slice, a thud on drop, silent when off', async () => {
+    await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
+    await sleep(500);
+    const sweep = () => lime(`
+      const before = L.sounds.played.tick;
+      for (let i = 0; i < L.S.ring.length; i++) { L.setHot(i); await new Promise((res) => setTimeout(res, 60)); }
+      L.setHot(-1);
+      return { n: L.S.ring.length, ticks: L.sounds.played.tick - before };`);
+    const a = await sweep();
+    if (a.ticks !== a.n) throw new Error(`${a.ticks} ticks over ${a.n} slices`);
+    // A sweep faster than the ear can follow is thinned, not crackled.
+    const fast = await lime('const b = L.sounds.played.tick; for (let k = 0; k < 4; k++) for (let i = 0; i < L.S.ring.length; i++) L.setHot(i); L.setHot(-1); return L.sounds.played.tick - b;');
+    if (fast > 2) throw new Error(`${fast} ticks in one burst`);
+    await lime('await L.collapse();');
+    await sleep(500);
+    await summonWith([fx('photo.jpg')]);
+    const d0 = await lime('return L.sounds.played.drop;');
+    await dragAt('drop', '.center');
+    if (!(await until('return L.S.state === "open"', 4000))) throw new Error('the drop did not open the wheel');
+    const d1 = await lime('return L.sounds.played.drop;');
+    if (d1 !== d0 + 1) throw new Error(`the drop sound played ${d1 - d0} times`);
+    // Rendered offline, each sound is short and quiet: around −18 dBFS, and nothing but the chime over 120 ms.
+    const levels = await lime(`
+      const out = {};
+      for (const kind of ['tick', 'drop', 'open', 'fold', 'done']) {
+        const c = new OfflineAudioContext(1, 48000, 48000);
+        L.sounds.play(kind, c, 0.01);
+        const d = (await c.startRendering()).getChannelData(0);
+        let peak = 0, last = 0;
+        for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; if (v > 0.001) last = i; }
+        out[kind] = { db: Math.round(20 * Math.log10(peak)), ms: Math.round((last / 48000 - 0.01) * 1000) };
+      }
+      return out;`);
+    for (const [kind, { db, ms }] of Object.entries(levels)) {
+      if (db > -12 || db < -30) throw new Error(`${kind} peaks at ${db} dBFS`);
+      if (ms > (kind === 'done' ? 600 : 130)) throw new Error(`${kind} lasts ${ms} ms`);
+    }
+    await lime('await L.collapse();');
+    await sleep(400);
+    await js('window.lime.invoke("settings:set", { sounds: false })');
+    await sleep(400);
+    await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
+    await sleep(500);
+    const off = await sweep();
+    await js('window.lime.invoke("settings:set", { sounds: true })');
+    await sleep(300);
+    if (off.ticks) throw new Error(`${off.ticks} ticks with sounds off`);
+    return `${a.n} ticks, ${fast} in a burst, one thud; ${Object.entries(levels).map(([k, v]) => `${k} ${v.db} dB ${v.ms} ms`).join(', ')}; silent when off`;
+  });
   await check('sheet print · choose cells in the picker', async () => {
     if (!fs.existsSync(fx('print.xlsx'))) throw Object.assign(new Error('no print.xlsx'), { skip: true });
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);

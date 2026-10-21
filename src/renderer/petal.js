@@ -21,8 +21,7 @@ export function wedge(i, n, rIn, rOut, gap = 7, kOut = 10, kIn = 6) {
   return `M${P(i0.line)}L${P(o0.line)}A${f(ko)} ${f(ko)} 0 0 1 ${P(o0.arc)}A${f(rOut)} ${f(rOut)} 0 ${large} 1 ${P(o1.arc)}A${f(ko)} ${f(ko)} 0 0 1 ${P(o1.line)}L${P(i1.line)}A${f(ki)} ${f(ki)} 0 0 1 ${P(i1.arc)}A${f(rIn)} ${f(rIn)} 0 ${large} 0 ${P(i0.arc)}A${f(ki)} ${f(ki)} 0 0 1 ${P(i0.line)}Z`;
 }
 export function labelAt(i, n, r) {
-  const a = n === 1 ? Math.PI : (i * Math.PI * 2) / n;
-  return at(a, n === 1 ? (r) : r);
+  return at(n === 1 ? Math.PI : (i * Math.PI * 2) / n, r);
 }
 // `prev` is the slice lit now. It keeps a little extra reach, past its sides and its edges, so a pointer resting on a
 // border doesn't flip the highlight back and forth (the hysteresis of PhotoCraft's move_mods.rs `constrain`).

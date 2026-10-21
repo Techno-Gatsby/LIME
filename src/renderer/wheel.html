@@ -17,17 +17,54 @@
       <defs>
         <linearGradient id="gGlass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s-glass-hi"/><stop offset="1" class="s-glass-lo"/></linearGradient>
         <linearGradient id="gHot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="s-hot-hi"/><stop offset="1" class="s-hot-lo"/></linearGradient>
-        <linearGradient id="gSheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" class="s-sheen"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
-        <linearGradient id="gEdge" gradientUnits="userSpaceOnUse" x1="0" y1="-150" x2="0" y2="150"><stop offset="0" class="s-edge-hi"/><stop offset=".55" class="s-edge-lo"/><stop offset="1" class="s-edge-hi" stop-opacity=".5"/></linearGradient>
+        <linearGradient id="gSheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" class="s-sheen"/><stop offset=".38" stop-color="#fff" stop-opacity="0"/></linearGradient>
+        <linearGradient id="gEdge" gradientUnits="userSpaceOnUse" x1="0" y1="-150" x2="0" y2="150"><stop offset="0" class="s-edge-hi"/><stop offset=".55" class="s-edge-lo"/><stop offset="1" class="s-edge-hi" stop-opacity=".6"/></linearGradient>
         <radialGradient id="gBezel" r=".5"><stop offset=".36" class="s-bezel-in"/><stop offset=".9" class="s-bezel"/><stop offset="1" class="s-bezel-out"/></radialGradient>
         <linearGradient id="gProg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a6dc5e"/><stop offset="1" stop-color="#3f8a1c"/></linearGradient>
+        <!-- The glass edge of a shape: light caught along its top inside, a shadow along its bottom inside and a faint
+             glow all round, drawn from the shape's outline alone (the shape itself is left out). -->
+        <filter id="fRim" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
+          <feComponentTransfer in="SourceAlpha" result="out"><feFuncA type="table" tableValues="1 0"/></feComponentTransfer>
+          <feGaussianBlur in="out" stdDeviation="1.6" result="soft"/>
+          <feOffset in="soft" dy="1.8" result="down"/>
+          <feComposite in="down" in2="soft" operator="arithmetic" k2="1" k3="-1" result="top"/>
+          <feFlood class="f-hi" result="hiC"/>
+          <feComposite in="hiC" in2="top" operator="in" result="hi"/>
+          <feOffset in="soft" dy="-2.2" result="up"/>
+          <feComposite in="up" in2="soft" operator="arithmetic" k2="1" k3="-1" result="bottom"/>
+          <feFlood class="f-lo" result="loC"/>
+          <feComposite in="loC" in2="bottom" operator="in" result="lo"/>
+          <feGaussianBlur in="out" stdDeviation="5" result="wide"/>
+          <feFlood class="f-glow" result="glowC"/>
+          <feComposite in="glowC" in2="wide" operator="in" result="glow"/>
+          <feMerge result="bands"><feMergeNode in="glow"/><feMergeNode in="lo"/><feMergeNode in="hi"/></feMerge>
+          <feComposite in="bands" in2="SourceAlpha" operator="in"/>
+        </filter>
+        <!-- The middle is a well: shaded from the top inside, with a thin lip of light at the bottom. -->
+        <filter id="fWell" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
+          <feComponentTransfer in="SourceAlpha" result="out"><feFuncA type="table" tableValues="1 0"/></feComponentTransfer>
+          <feGaussianBlur in="out" stdDeviation="3" result="soft"/>
+          <feOffset in="soft" dy="3" result="down"/>
+          <feFlood class="f-well" result="shC"/>
+          <feComposite in="shC" in2="down" operator="in" result="sh"/>
+          <feGaussianBlur in="out" stdDeviation="1" result="tight"/>
+          <feOffset in="tight" dy="-1.2" result="up"/>
+          <feComposite in="up" in2="tight" operator="arithmetic" k2="1" k3="-1" result="bottom"/>
+          <feFlood class="f-lip" result="lipC"/>
+          <feComposite in="lipC" in2="bottom" operator="in" result="lip"/>
+          <feMerge result="bands"><feMergeNode in="sh"/><feMergeNode in="lip"/></feMerge>
+          <feComposite in="bands" in2="SourceAlpha" operator="in"/>
+        </filter>
       </defs>
       <circle class="bezel" r="147"/>
+      <circle class="rim" r="147"/>
       <circle class="bezel-edge" r="146.5"/>
       <circle class="bezel-line" r="147.5"/>
       <circle class="hole" r="54"/>
+      <circle class="well" r="54"/>
       <circle class="halo" r="147"/>
       <g class="petals"></g>
+      <circle class="sweep" r="142.5"/>
       <path class="prog" d=""/>
       <circle class="btn" r="54"/>
     </svg>
