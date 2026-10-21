@@ -962,4 +962,121 @@ sh(sevenZ, ['a', '-tzip', '-plime', P('secret.zip'), 'a.txt'], { cwd: P('folder'
 }
 sh(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24:d=1', '-f', 'lavfi', '-i', 'smptebars=size=320x180:rate=24:d=1', '-f', 'lavfi', '-i', 'color=c=0x2a6f3a:size=320x180:rate=24:d=1',
   '-filter_complex', '[0][1][2]concat=n=3:v=1:a=0', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', P('scenes.mp4')]);
+// Office files for the Word, Excel and PowerPoint tools: tracked changes, comments and personal details, two
+// versions to compare, a mail-merge letter, chapters, a workbook with formulas, duplicates and hidden parts, and decks
+// with speaker notes and a hidden slide.
+{
+  const { zipSync, strToU8: u } = require('fflate');
+  const D = require('docx');
+  const WNS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  const rel = (id, type, target, ns = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/') => `<Relationship Id="${id}" Type="${ns}${type}" Target="${target}"/>`;
+  const rels = (...r) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${r.join('')}</Relationships>`;
+  const types = (over, extra = '') => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${extra}${Object.entries(over).map(([p, t]) => `<Override PartName="/${p}" ContentType="${t}"/>`).join('')}</Types>`;
+  const WML = 'application/vnd.openxmlformats-officedocument.wordprocessingml.';
+  const core = (creator, last) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>Lime test</dc:title><dc:creator>${creator}</dc:creator><cp:lastModifiedBy>${last}</cp:lastModifiedBy><cp:revision>7</cp:revision></cp:coreProperties>`;
+  const word = (body, more = {}, relsMore = [], typesMore = {}) => zipSync({
+    '[Content_Types].xml': u(types({ 'word/document.xml': `${WML}document.main+xml`, 'word/settings.xml': `${WML}settings+xml`, 'docProps/core.xml': 'application/vnd.openxmlformats-package.core-properties+xml', 'docProps/app.xml': 'application/vnd.openxmlformats-officedocument.extended-properties+xml', ...typesMore })),
+    '_rels/.rels': u(rels(rel('rId1', 'officeDocument', 'word/document.xml'), rel('rId2', 'core-properties', 'docProps/core.xml', 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/'), rel('rId3', 'extended-properties', 'docProps/app.xml'), ...(more['docProps/custom.xml'] ? [rel('rId4', 'custom-properties', 'docProps/custom.xml')] : []))),
+    'word/document.xml': u(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${WNS}><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>`),
+    'word/_rels/document.xml.rels': u(rels(rel('rId1', 'settings', 'settings.xml'), ...relsMore)),
+    'word/settings.xml': u(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${WNS}>${more.settings || ''}<w:rsids><w:rsidRoot w:val="00A1B2C3"/></w:rsids></w:settings>`),
+    'docProps/core.xml': u(core('Jay Example', 'Ben Example')),
+    'docProps/app.xml': u('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Template>Normal.dotm</Template><TotalTime>42</TotalTime><Pages>3</Pages><Company>Example Co</Company></Properties>'),
+    ...Object.fromEntries(Object.entries(more).filter(([k]) => k !== 'settings').map(([k, v]) => [k, typeof v === 'string' ? u(v) : v])),
+  });
+  const r = (t, rPr = '') => `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${t}</w:t></w:r>`;
+  const ins = (id, who, inner) => `<w:ins w:id="${id}" w:author="${who}" w:date="2026-01-02T10:00:00Z">${inner}</w:ins>`;
+  const del = (id, who, t) => `<w:del w:id="${id}" w:author="${who}" w:date="2026-01-03T10:00:00Z"><w:r><w:delText xml:space="preserve">${t}</w:delText></w:r></w:del>`;
+  fs.writeFileSync(P('tracked.docx'), word(
+    `<w:p w:rsidR="00A1B2C3" w:rsidRDefault="00A1B2C3">${r('The ')}${ins(1, 'Ana', r('quick '))}${r('brown fox')}${del(2, 'Ben', ' jumps')}${r('.')}</w:p>`
+    + `<w:p><w:pPr><w:rPr><w:ins w:id="3" w:author="Ana" w:date="2026-01-02T10:00:00Z"/></w:rPr></w:pPr>${ins(4, 'Ana', r('A new line by Ana.'))}</w:p>`
+    + `<w:p>${r('Format ')}<w:r><w:rPr><w:b/><w:rPrChange w:id="5" w:author="Ben" w:date="2026-01-04T10:00:00Z"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>change</w:t></w:r></w:p>`
+    + `<w:p><w:commentRangeStart w:id="0"/>${r('This is commented.')}<w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>`
+    + `<w:p>${r('Keep visible. ')}${r('SECRET NOTE', '<w:vanish/>')}</w:p>`,
+    { settings: '<w:trackRevisions/>', 'word/comments.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments ${WNS}><w:comment w:id="0" w:author="Ana Author" w:date="2026-01-05T10:00:00Z" w:initials="AA"><w:p>${r('Please check.')}</w:p></w:comment></w:comments>`,
+      'docProps/custom.xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Owner"><vt:lpwstr>jay@example.com</vt:lpwstr></property></Properties>' },
+    [rel('rId2', 'comments', 'comments.xml')], { 'word/comments.xml': `${WML}comments+xml`, 'docProps/custom.xml': 'application/vnd.openxmlformats-officedocument.custom-properties+xml' }));
+  // A merge letter: a simple and a complex MERGEFIELD, and «City» and {{Last Name}} placeholders split across runs.
+  const fld = (name) => `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD ${name} \\* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>${r(`«${name}»`, '<w:b/>')}<w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+  fs.writeFileSync(P('letter.docx'), word(
+    `<w:p>${r('Dear ')}<w:fldSimple w:instr=" MERGEFIELD FirstName "><w:r><w:t>«FirstName»</w:t></w:r></w:fldSimple>${r(' {{Last ')}${r('Name}},')}</w:p>`
+    + `<w:p>${r('Your order of ')}${fld('Amount')}${r(' ships to «Ci')}${r('ty».', '<w:i/>')}</w:p><w:p>${r('Address:')}</w:p><w:p>${r('{{Address}}')}</w:p>`,
+    { settings: '<w:mailMerge><w:mainDocumentType w:val="formLetters"/><w:dataType w:val="textFile"/><w:query w:val="SELECT * FROM merge.csv"/></w:mailMerge>' }));
+  fs.writeFileSync(P('merge.csv'), 'FirstName,Last Name,Amount,City,Address\nAda,Lovelace,4.20,London,"12 St James Square\nLondon"\nAlan,Turing,7,Manchester,Bletchley Park\n민지,김,"1,200",서울,Jongno-gu\n');
+  // Two versions of a report to compare: changed words, a changed number, a case change, a removed and an added
+  // paragraph, and a changed table cell.
+  const para = (t) => new D.Paragraph({ children: [new D.TextRun(t)] });
+  const table = (price) => new D.Table({ rows: [['Item', 'Price'], ['Limes', price]].map((row) => new D.TableRow({ children: row.map((t) => new D.TableCell({ children: [para(t)] })) })) });
+  const version = (paras, price, header) => new D.Document({ creator: 'Ben Example', lastModifiedBy: 'Ben Example', sections: [{ ...(header ? { headers: { default: new D.Header({ children: [para('Lime header')] }) } } : {}), children: [new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun('Quarterly report')] }), ...paras.map(para), table(price)] }] });
+  fs.writeFileSync(P('v1.docx'), await D.Packer.toBuffer(version(['The quick brown fox jumps over the lazy dog.', 'Total: 100 dollars.', 'This paragraph will be removed entirely.', 'Closing words stay.'], '4.20')));
+  fs.writeFileSync(P('v2.docx'), await D.Packer.toBuffer(version(['The quick red fox jumps over the lazy dog.', 'Total: 120 dollars.', 'Closing Words stay.', 'A brand new paragraph appears here.'], '4.80', true)));
+  // Chapters to split, with a picture in the first one.
+  fs.writeFileSync(P('chapters.docx'), await D.Packer.toBuffer(new D.Document({ sections: [{ children: [
+    para('Preface text before any heading.'),
+    new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun('Chapter One')] }), para('Text of chapter one.'),
+    new D.Paragraph({ children: [new D.ImageRun({ data: fs.readFileSync(P('photo2.jpg')), type: 'jpg', transformation: { width: 120, height: 80 } })] }),
+    new D.Paragraph({ heading: D.HeadingLevel.HEADING_2, children: [new D.TextRun('Section 1.1')] }), para('Text of section one point one.'),
+    new D.Paragraph({ heading: D.HeadingLevel.HEADING_1, children: [new D.TextRun('Chapter Two')] }), para('Text of chapter two.'),
+  ] }] })));
+  // Big pictures to compress: a 1600 px photo and a 2400 px PNG.
+  const bigPng = await sharp({ create: { width: 2400, height: 1500, channels: 3, background: '#88aa44' } }).composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1500"><defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#246"/></linearGradient></defs><rect width="2400" height="1500" fill="url(#g)"/><circle cx="1200" cy="750" r="500" fill="#c33"/></svg>') }]).png().toBuffer();
+  fs.writeFileSync(P('big.docx'), await D.Packer.toBuffer(new D.Document({ sections: [{ children: [para('Pictures to compress.'),
+    new D.Paragraph({ children: [new D.ImageRun({ data: fs.readFileSync(P('photo.jpg')), type: 'jpg', transformation: { width: 480, height: 320 } })] }),
+    new D.Paragraph({ children: [new D.ImageRun({ data: bigPng, type: 'png', transformation: { width: 480, height: 300 } })] })] }] })));
+  // OpenDocument text with an insertion, a deletion, a comment and personal details.
+  const odf = (mime, content) => zipSync({ mimetype: [u(mime), { level: 0 }],
+    'META-INF/manifest.xml': u(`<?xml version="1.0"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"><manifest:file-entry manifest:full-path="/" manifest:media-type="${mime}"/><manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/><manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>`),
+    'content.xml': u(content), 'meta.xml': u('<?xml version="1.0"?><office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/"><office:meta><meta:initial-creator>Jay Example</meta:initial-creator><dc:creator>Ben Example</dc:creator><meta:editing-cycles>9</meta:editing-cycles></office:meta></office:document-meta>') });
+  const ODF_NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2"';
+  const info = (who) => `<office:change-info><dc:creator>${who}</dc:creator><dc:date>2026-01-02T10:00:00</dc:date></office:change-info>`;
+  fs.writeFileSync(P('tracked.odt'), odf('application/vnd.oasis.opendocument.text', `<?xml version="1.0"?><office:document-content ${ODF_NS}><office:body><office:text><text:tracked-changes><text:changed-region text:id="ct1"><text:insertion>${info('Ana')}</text:insertion></text:changed-region><text:changed-region text:id="ct2"><text:deletion>${info('Ben')}<text:p> jumps</text:p></text:deletion></text:changed-region></text:tracked-changes>`
+    + '<text:p>The <text:change-start text:change-id="ct1"/>quick <text:change-end text:change-id="ct1"/>brown fox<text:change text:change-id="ct2"/>.</text:p><text:p>Second <office:annotation><dc:creator>Ana Author</dc:creator><text:p>A comment</text:p></office:annotation>paragraph.</text:p></office:text></office:body></office:document-content>'));
+  // A spreadsheet in OpenDocument form: a formula, a hidden row and a protected sheet without a password.
+  fs.writeFileSync(P('book.ods'), odf('application/vnd.oasis.opendocument.spreadsheet', `<?xml version="1.0"?><office:document-content ${ODF_NS}><office:body><office:spreadsheet><table:table table:name="Data" table:protected="true"><table:table-column table:number-columns-repeated="2"/>`
+    + '<table:table-row><table:table-cell office:value-type="float" office:value="2"><text:p>2</text:p></table:table-cell><table:table-cell table:formula="of:=[.A1]*3" office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell></table:table-row>'
+    + '<table:table-row table:visibility="collapse"><table:table-cell office:value-type="string"><text:p>hidden row</text:p></table:table-cell></table:table-row></table:table><table:table table:name="Other"><table:table-row><table:table-cell table:formula="of:=[$Data.B1]+1" office:value-type="float" office:value="7"><text:p>7</text:p></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>'));
+  // A workbook to tidy and inspect. Data: a header, a duplicate row, an empty row, a cell with extra spaces, formulas
+  // (one dividing by zero), a hidden row and column and protection without a password. Summary points at Data and is
+  // protected with a password. A third sheet is hidden.
+  const ss = ['Name', 'Qty', 'Price', 'Total', 'Lime', 'Lemon', '  Kiwi  ', 'Ratio', 'hidden row', 'Note', 'Grand total', 'Kiwi row', 'secret', 'off to the side'];
+  const s = (t) => ss.indexOf(t), sc = (ref, t) => `<c r="${ref}" t="s"><v>${s(t)}</v></c>`, nc = (ref, v) => `<c r="${ref}"><v>${v}</v></c>`, fc = (ref, f, v, t = '') => `<c r="${ref}"${t}><f>${f}</f><v>${v}</v></c>`;
+  const row = (n, cells, extra = '') => `<row r="${n}"${extra}>${cells.join('')}</row>`;
+  const sheet = (data, tail = '', head = '') => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${head}<sheetData>${data}</sheetData>${tail}</worksheet>`;
+  const dataSheet = sheet([
+    row(1, [sc('A1', 'Name'), sc('B1', 'Qty'), sc('C1', 'Price'), sc('D1', 'Total')]),
+    row(2, [sc('A2', 'Lime'), nc('B2', 12), nc('C2', 0.4), fc('D2', 'B2*C2', 4.8)]),
+    row(3, [sc('A3', 'Lemon'), nc('B3', 7), nc('C3', 0.5), fc('D3', 'B3*C3', 3.5)]),
+    row(5, [sc('A5', 'Lime'), nc('B5', 12), nc('C5', 0.4), fc('D5', 'B5*C5', 4.8)]),
+    row(6, [sc('A6', '  Kiwi  '), nc('B6', 3), nc('C6', 1), fc('D6', 'B6*C6', 3), sc('E6', 'off to the side')]),
+    row(7, [sc('A7', 'Total'), fc('D7', 'SUM(D2:D6)', 16.1)]),
+    row(8, [sc('A8', 'Ratio'), '<c r="D8" t="e"><f>D7/0</f><v>#DIV/0!</v></c>']),
+    row(9, [sc('A9', 'hidden row')], ' hidden="1"'),
+    row(10, [sc('A10', 'Note')]),
+  ].join(''), '<sheetProtection sheet="1" objects="1" scenarios="1"/><mergeCells count="1"><mergeCell ref="A10:B10"/></mergeCells>', '<dimension ref="A1:E10"/><cols><col min="5" max="5" width="9" hidden="1" customWidth="1"/></cols>');
+  const summarySheet = sheet(row(1, [sc('A1', 'Grand total'), fc('B1', 'Data!D7', 16.1)]) + row(2, [sc('A2', 'Kiwi row'), fc('B2', 'Data!A6', '  Kiwi  ', ' t="str"')]), '<sheetProtection password="CC1A" sheet="1"/>');
+  const SML = 'application/vnd.openxmlformats-officedocument.spreadsheetml.';
+  fs.writeFileSync(P('book.xlsx'), zipSync({
+    '[Content_Types].xml': u(types({ 'xl/workbook.xml': `${SML}sheet.main+xml`, 'xl/worksheets/sheet1.xml': `${SML}worksheet+xml`, 'xl/worksheets/sheet2.xml': `${SML}worksheet+xml`, 'xl/worksheets/sheet3.xml': `${SML}worksheet+xml`, 'xl/sharedStrings.xml': `${SML}sharedStrings+xml`, 'xl/calcChain.xml': `${SML}calcChain+xml`, 'docProps/core.xml': 'application/vnd.openxmlformats-package.core-properties+xml' })),
+    '_rels/.rels': u(rels(rel('rId1', 'officeDocument', 'xl/workbook.xml'), rel('rId2', 'core-properties', 'docProps/core.xml', 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/'))),
+    'docProps/core.xml': u(core('Jay Example', 'Ben Example')),
+    'xl/workbook.xml': u('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><workbookPr/><bookViews><workbookView activeTab="1"/></bookViews><sheets><sheet name="Data" sheetId="1" r:id="rId1"/><sheet name="Summary" sheetId="2" r:id="rId2"/><sheet name="Hidden" sheetId="3" state="hidden" r:id="rId3"/></sheets><definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">Data!$A$1:$D$8</definedName><definedName name="GrandTotal">Data!$D$7</definedName></definedNames><calcPr calcId="191029"/></workbook>'),
+    'xl/_rels/workbook.xml.rels': u(rels(rel('rId1', 'worksheet', 'worksheets/sheet1.xml'), rel('rId2', 'worksheet', 'worksheets/sheet2.xml'), rel('rId3', 'worksheet', 'worksheets/sheet3.xml'), rel('rId4', 'sharedStrings', 'sharedStrings.xml'), rel('rId5', 'calcChain', 'calcChain.xml'))),
+    'xl/sharedStrings.xml': u(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ss.length}" uniqueCount="${ss.length}">${ss.map((t) => `<si><t xml:space="preserve">${t}</t></si>`).join('')}</sst>`),
+    'xl/calcChain.xml': u('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="D2" i="1"/><c r="B1" i="2"/></calcChain>'),
+    'xl/worksheets/sheet1.xml': u(dataSheet), 'xl/worksheets/sheet2.xml': u(summarySheet), 'xl/worksheets/sheet3.xml': u(sheet(row(1, [sc('A1', 'secret')]))),
+  }));
+  // Decks with speaker notes and a hidden slide, and a second deck with its own design to merge.
+  const Pptx = require('pptxgenjs');
+  const titled = (bg) => { const d = new Pptx(); d.defineSlideMaster({ title: 'LIME', background: { color: bg }, objects: [{ placeholder: { options: { name: 'title', type: 'title', x: 0.5, y: 0.3, w: 9, h: 1 }, text: '' } }] }); return d; };
+  const add = (d, title, bullets, notes, hidden) => { const sl = d.addSlide({ masterName: 'LIME' }); sl.addText(title, { placeholder: 'title' }); if (bullets.length) sl.addText(bullets.map((t) => ({ text: t, options: { bullet: true } })), { x: 0.5, y: 1.6, w: 8, h: 3 }); if (notes) sl.addNotes(notes); if (hidden) sl.hidden = true; return sl; };
+  const nd = titled('FFFFFF');
+  add(nd, 'Welcome', ['First point', 'Second point'], 'Greet everyone and introduce Lime.');
+  add(nd, 'Secret slide', ['Only for rehearsal'], 'Skip this one on the day.', true);
+  add(nd, 'Wrap up', ['Questions'], '');
+  await nd.writeFile({ fileName: P('notes.pptx') });
+  const d2 = titled('1E3A5F');
+  add(d2, 'Appendix', ['Extra data'], 'Appendix notes here.');
+  add(d2, 'Thanks', [], '').addImage({ path: P('photo2.jpg'), x: 6, y: 2, w: 3, h: 2 });
+  await d2.writeFile({ fileName: P('deck2.pptx') });
+}
 console.log('fixtures in', dir, fs.readdirSync(dir).length, 'files');
