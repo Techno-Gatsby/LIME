@@ -1,7 +1,6 @@
 'use strict';
 const fs = require('fs'), fsp = require('fs/promises'), path = require('path');
 const { spawn } = require('child_process');
-const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const isMac = process.platform === 'darwin', isWin = process.platform === 'win32', arm = process.arch === 'arm64';
 const sys32 = (exe) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', exe);
@@ -46,6 +45,7 @@ async function dmg(file, dir, want) {
   } finally { await run('/usr/bin/hdiutil', ['detach', mnt, '-force']).catch(() => {}); }
 }
 
+// Where scripts/engines.mjs fetches each helper while building; the app only unpacks the copy it ships with.
 const HELPERS = {
   soffice: {
     name: 'LibreOffice', size: 350,
@@ -74,21 +74,6 @@ const HELPERS = {
     },
   },
 };
-const CRAFT_NAMES = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft', cadcraft: 'CADCraft', soundcraft: 'SoundCraft', wordcraft: 'WordCraft', gridcraft: 'GridCraft', deckcraft: 'DeckCraft' };
-const CRAFT_REPO = { gridcraft: 'sheetcraft', deckcraft: 'slidecraft' };
-for (const [id, name] of Object.entries(CRAFT_NAMES)) HELPERS[id] = {
-  name, size: 90,
-  latest: (signal) => ghLatest(`storytold/${CRAFT_REPO[id] || id}`, signal),
-  url: (v) => `https://github.com/storytold/${CRAFT_REPO[id] || id}/releases/download/v${v}/${id}-${v}-${isWin ? `windows-${process.arch}-portable.zip` : isMac ? 'macos-universal.dmg' : `linux-${arm ? 'aarch64' : 'x86_64'}.tar.gz`}`,
-  async unpack(file, dir) {
-    if (isMac) return dmg(file, dir);
-    await run(isWin ? sys32('tar.exe') : '/usr/bin/tar', ['-xf', file, '-C', dir]);
-    const exe = await find(dir, isWin ? `${id}.exe` : id);
-    if (exe) await fsp.rm(path.join(path.dirname(exe), 'portable.txt'), { force: true });
-    return exe;
-  },
-};
-
 const tarExe = isWin ? sys32('tar.exe') : '/usr/bin/tar';
 const manifestOf = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 const bundled = (id, vendor) => { const m = manifestOf(vendor)[id]; return m && fs.existsSync(path.join(vendor, `${id}.tar.br`)) ? m : null; };
@@ -109,8 +94,7 @@ async function ensure(id, vendor, root, progress = () => {}) {
       tar.stderr.on('data', (d) => { err += d; });
       tar.on('error', no);
       tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-      // tar may stop reading at the end-of-archive marker, before the zero padding after it; the file check below still holds
-      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch((e) => { if (!['EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(e.code)) no(e); });
+      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress({ params: { [require('zlib').constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch((e) => { if (!['EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(e.code)) no(e); });
     });
     if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id]?.name || id} was not in its archive`);
     if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }
@@ -120,36 +104,4 @@ async function ensure(id, vendor, root, progress = () => {}) {
   } catch (e) { await fsp.rm(part, { recursive: true, force: true }).catch(() => {}); throw e; }
 }
 const latest = (id, signal) => process.env[`LIME_${id.toUpperCase()}_VERSION`] || HELPERS[id].latest(signal);
-const jobs = new Map();
-async function get(id, root, progress = () => {}, { version } = {}) {
-  const H = HELPERS[id];
-  if (!H) throw new Error('Unknown helper.');
-  if (jobs.has(id)) throw new Error(`${H.name} is already downloading.`);
-  const ctl = new AbortController();
-  jobs.set(id, ctl);
-  const dir = path.join(root, id), part = `${dir}.part`;
-  try {
-    await fsp.rm(part, { recursive: true, force: true });
-    await fsp.mkdir(part, { recursive: true });
-    progress({ id, phase: 'start' });
-    const v = version || await latest(id, ctl.signal), url = H.url(v), file = path.join(part, path.basename(new URL(url).pathname));
-    const r = await fetch(url, { signal: ctl.signal, redirect: 'follow' });
-    if (!r.ok || !r.body) throw new Error(`${r.status} from ${new URL(url).host}`);
-    const total = Number(r.headers.get('content-length')) || H.size * 1048576;
-    let got = 0, last = 0;
-    const meter = new Transform({ transform(chunk, _, cb) { got += chunk.length; if (Date.now() - last > 150) { last = Date.now(); progress({ id, phase: 'download', got, total, pct: Math.min(99, Math.round((got / total) * 100)) }); } cb(null, chunk); } });
-    await pipeline(Readable.fromWeb(r.body, { signal: ctl.signal }), meter, fs.createWriteStream(file));
-    progress({ id, phase: 'unpack' });
-    const exe = await H.unpack(file, part);
-    if (!exe) throw new Error(`${H.name}'s program was not in the download`);
-    await fsp.rm(file, { force: true });
-    await fsp.rm(dir, { recursive: true, force: true });
-    await fsp.rename(part, dir);
-    return path.join(dir, path.relative(part, exe));
-  } catch (e) {
-    await fsp.rm(part, { recursive: true, force: true }).catch(() => {});
-    throw ctl.signal.aborted ? new Error('Stopped.') : e;
-  } finally { jobs.delete(id); }
-}
-const cancel = (id) => { const j = jobs.get(id); if (j) j.abort(); return !!j; };
-module.exports = { HELPERS, latest, get, cancel, bundled, unpacked, ensure };
+module.exports = { HELPERS, latest, bundled, unpacked, ensure };

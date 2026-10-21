@@ -17,7 +17,7 @@ const RES = app.isPackaged ? process.resourcesPath : path.join(ROOT, 'vendor');
 const BIN = app.isPackaged ? path.join(RES, 'bin') : path.join(ROOT, 'vendor', 'bin', `${process.platform}-${process.arch}`);
 const DATA = path.join(RES, 'data');
 const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : process.env.LIME_CRAFTS || path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
-const APPS = app.isPackaged ? path.join(RES, 'apps') : path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
+const APPS = app.isPackaged ? path.join(RES, 'apps') : process.env.LIME_APPS || path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
 const WEB = app.isPackaged ? path.join(RES, 'web') : process.env.LIME_WEB || path.join(ROOT, 'vendor', 'web');
 const HELPERS = app.isPackaged ? path.join(RES, 'helpers') : path.join(ROOT, 'vendor', 'helpers', `${process.platform}-${process.arch}`);
 const helperRoot = () => path.join(app.getPath('userData'), 'helpers');
@@ -692,7 +692,7 @@ async function setSettings(patch) {
 function registerIpc() {
   const h = (ch, fn) => ipcMain.handle(ch, (e, ...a) => fn(...a));
   const hE = (ch, fn) => ipcMain.handle(ch, (e, ...a) => fn(e, ...a));
-  h('app:info', () => ({ version: app.getVersion(), platform: process.platform, dark: nativeTheme.shouldUseDarkColors, home: os.homedir() }));
+  h('app:info', () => ({ version: app.getVersion(), built: require('../../package.json').buildDate || null, platform: process.platform, dark: nativeTheme.shouldUseDarkColors, home: os.homedir() }));
   h('catalog', () => tools.catalog());
   h('wheel:items', (files) => itemsFor(files));
   h('wheel:home', () => { const r = homeRings(); return [...r.first.map((id) => ({ ...appRing(id, []), place: 1 })), ...r.second.map((id) => ({ ...appRing(id, []), place: 2 }))]; });
@@ -828,11 +828,12 @@ function registerIpc() {
   h('engines:status', () => call('enginesStatus'));
   hE('helpers:get', async (e, id) => {
     const helpers = require('./helpers'), tell = (p) => { if (!e.sender.isDestroyed()) e.sender.send('helpers:progress', p); };
-    const exe = crafts.APPS[id] ? await crafts.getApp(id, tell) : helpers.bundled(id, HELPERS) ? await helpers.ensure(id, HELPERS, helperRoot(), tell) : await helpers.get(id, helperRoot(), tell);
+    // Lime never downloads at run time: this only unpacks a copy that ships inside it.
+    const exe = helpers.bundled(id, HELPERS) && await helpers.ensure(id, HELPERS, helperRoot(), tell);
+    if (!exe) throw new Error('Not included in this build of Lime.');
     await setSettings({ [id]: exe });
     return exe;
   });
-  h('helpers:cancel', (id) => require('./helpers').cancel(id));
   h('apps:open', async (id, files) => { await crafts.openApp(id, Array.isArray(files) ? files : []); return true; });
   hE('craftweb:info', (e) => { const cw = craftOf(e.sender); return cw && { id: cw.id, name: cw.name, file: cw.file, fileName: cw.file && path.basename(cw.file), bridge: !!cw.bridge, empty: !!cw.empty, dark: nativeTheme.shouldUseDarkColors }; });
   hE('craftweb:read', async (e) => { const cw = craftOf(e.sender); return cw?.file ? fsp.readFile(cw.file) : null; });
@@ -905,6 +906,12 @@ app.whenReady().then(async () => {
   screen.on('display-removed', () => { placed = null; sendGeo(); placeSensor(); });
   screen.on('display-metrics-changed', () => { placed = null; sendGeo(); placeSensor(); });
   screen.on('display-added', placeSensor);
+  require('./updater').init({ handle: (ch, fn) => ipcMain.handle(ch, (e, ...a) => fn(...a)), settings, save: setSettings, broadcast, notify: (u) => {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title: `Lime ${u.feed.version} is out`, body: u.phase === 'ready' ? 'Open Settings to restart and update.' : 'Open Settings to download it.' });
+    n.on('click', () => openPrefs('about'));
+    n.show();
+  } });
   const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
   harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
   harness('LIME_UI', 'ui.test', { openCraftWeb, wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen });

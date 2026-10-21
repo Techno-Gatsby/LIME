@@ -2244,6 +2244,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
     if (!text.includes('APPROVED') || !(s.pages[0].w > s.pages[0].h) || !list.some((a) => a.type === 'Text')) throw new Error(`saved ${s.pages[0].w}×${s.pages[0].h}, note ${list.length}: ${text.slice(0, 60)}`);
     return `${want.length - 1} steps named, went back to step 1 (page upright, later steps dimmed) and forward to the last; stamp, turn and note saved`;
   });
+  await require('./editor-fields.ui')(editorTest);
 
   await check('editors · remember the last tool, and a file dropped on the window opens in it', async () => {
     const opened = async (file, mode, ready) => {
@@ -2434,6 +2435,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   }
   pw.close();
   results.push(...(await require('./diagrams.test').ui({ openEditor, editors, dir })));
+  await require('./settings-search.ui')({ check, js, openPrefs, prefs, app, dir });
 
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed through the wheel${skip.length ? `, ${skip.length} skipped` : ''}`);
