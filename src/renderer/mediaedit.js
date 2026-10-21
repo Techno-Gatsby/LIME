@@ -1,6 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, clean } from './ui.js';
 import { shortcuts, key, helpButton } from './shortcuts.js';
-import { setDocName, confirm3 } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
 
 const IC = {
   play: 'M8 5.5v13l10.5-6.5z', pause: 'M8 5h3v14H8zM13 5h3v14h-3z', stepBack: 'M17 6l-7 6 7 6zM7 6v12', stepFwd: 'M7 6l7 6-7 6zM17 6v12',
@@ -1365,6 +1365,7 @@ export function openEditor(view, { file }, ctx) {
       const res = await call('save', st.s.id, e, target, opts);
       st.savePath = target; st.saveOpts = opts;
       st.saved = JSON.stringify(st.E);
+      recover.drop();
       if (as) setDocName(root, res.path);
       toast(`Saved ${nameOf(res.path)}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', res.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', res.path) }] });
       return true;
@@ -1412,7 +1413,23 @@ export function openEditor(view, { file }, ctx) {
       if (choice === 'cancel') return;
       if (choice === 'save' && !(await save(false))) return;
     }
+    recover.drop();
     go();
+  }
+  const recover = recovery(api, file, async () => {
+    if (!st.s || !st.E || JSON.stringify(st.E) === st.saved) return null;
+    const meta = { E: st.E, savePath: st.savePath, saveOpts: st.saveOpts || null, tool: st.tool };
+    return { sig: JSON.stringify(meta), meta };
+  });
+  async function restoreFrom(rec) {
+    const m = rec.meta;
+    st.E = { ...fresh(dur()), ...m.E };
+    st.savePath = m.savePath || null;
+    st.saveOpts = m.saveOpts || undefined;
+    st.hist = []; st.fut = []; lastKey = null;
+    changed();
+    if (TOOLS[m.tool] && GROUPS[st.kind].some(([, ids]) => ids.includes(m.tool))) selectTool(m.tool);
+    toast('Your unsaved edits are back. Save to keep them.', { type: 'success' });
   }
 
   root.addEventListener('click', (ev2) => {
@@ -1497,7 +1514,9 @@ export function openEditor(view, { file }, ctx) {
     refreshColour();
     seek(0);
     st.ready = true;
-    tip(st.kind === 'video' ? 'Space plays. Drag the yellow handles to trim; S splits at the playhead.' : 'Space plays. Drag the yellow handles to trim; S splits at the playhead.');
+    tip('Space plays. Drag the yellow handles to trim; S splits at the playhead.');
+    const rec = await recover.check();
+    if (rec?.meta?.E && (await offerRestore(rec, file))) await restoreFrom(rec); else if (rec) recover.drop();
   }
   window.__media = { st, E, seek, act, selectTool, save, play, pause, kept, outLen, geom, edit: (fn) => edit(fn), addTitle, setTool: selectTool };
   load();
@@ -1506,6 +1525,7 @@ export function openEditor(view, { file }, ctx) {
     disposed = true;
     document.removeEventListener('keydown', onKey);
     keys.dispose();
+    recover.dispose();
     ro.disconnect();
     themeWatch.disconnect();
     cancelAnimationFrame(raf);

@@ -658,6 +658,29 @@ function registerIpc() {
     return `data:image/png;base64,${buf.toString('base64')}`;
   });
   h('app:paths', () => ({ licenses: app.isPackaged ? path.join(RES, 'LICENSES') : path.join(ROOT, 'LICENSES'), userData: app.getPath('userData') }));
+  const RECOVER = () => path.join(app.getPath('userData'), 'recovery');
+  const recoverKey = (file) => crypto.createHash('sha1').update(path.resolve(file)).digest('hex').slice(0, 16);
+  h('recover:save', async (file, meta, data, ext) => {
+    const dir = RECOVER(), key = recoverKey(file);
+    await fsp.mkdir(dir, { recursive: true });
+    const kind = data || ext ? String(ext || 'bin').replace(/[^a-z0-9]/gi, '') || 'bin' : null;
+    if (data) await fsp.writeFile(path.join(dir, `${key}.${kind}`), Buffer.from(data));
+    await fsp.writeFile(path.join(dir, `${key}.json`), JSON.stringify({ file, at: Date.now(), ext: kind, meta }));
+    return { dir, key, data: kind ? path.join(dir, `${key}.${kind}`) : null };
+  });
+  h('recover:load', async (file) => {
+    const dir = RECOVER(), key = recoverKey(file);
+    try {
+      const j = JSON.parse(await fsp.readFile(path.join(dir, `${key}.json`), 'utf8'));
+      const data = j.ext ? path.join(dir, `${key}.${j.ext}`) : null;
+      return data && !fs.existsSync(data) ? null : { ...j, data, dir, key };
+    } catch (_) { return null; }
+  });
+  h('recover:drop', async (file) => {
+    const dir = RECOVER(), key = recoverKey(file);
+    for (const f of await fsp.readdir(dir).catch(() => [])) if (f.startsWith(key)) await fsp.rm(path.join(dir, f), { force: true }).catch(() => {});
+    return true;
+  });
   h('files:describe', (p) => call('describe', p).catch(() => null));
   h('files:exists', (paths) => paths.filter((p) => fs.existsSync(p)));
   h('jobs:submit', (job) => submit(job));

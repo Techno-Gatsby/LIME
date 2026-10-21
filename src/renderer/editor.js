@@ -2,7 +2,7 @@ import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 import { sidePanels, kindOf } from './editor-side.js';
 import { docTools } from './editor-doc.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
-import { setDocName, confirm3 } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
 
 const PT = 96 / 72;
 const TOOLS = [
@@ -51,10 +51,11 @@ const LIST_MARK = /^(• |\d+\. )/;
 export function openEditor(view, { file, mode }, ctx) {
   const { icon, toast, api, go } = ctx;
   ctx.onClose?.(close);
-  const call = (m, ...a) => api.invoke('editor:call', m, ...a);
+  const MUTATES = new Set(['apply', 'pageOp', 'annotOp', 'linkOp', 'setOutline', 'fill', 'fieldOp', 'docOp', 'setProps', 'recognise', 'undo', 'redo']);
+  const call = (m, ...a) => api.invoke('editor:call', m, ...a).then((r) => { if (MUTATES.has(m)) st.rev++; return r; });
   const pref = ctx.settings() || {};
   const st = {
-    sess: null, file, savePath: null, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext', shape: 'rect',
+    sess: null, file, savePath: null, rev: 0, restored: false, zoom: 1, tool: mode === 'sign' ? 'select' : mode === 'pages' ? 'select' : 'edittext', shape: 'rect',
     pending: [], sel: null, pick: null, pages: [], renders: new Map(), lines: new Map(), paras: new Map(), objs: new Map(), selPages: new Set([0]), hits: [], hitIdx: -1,
     fonts: [], style: { font: 'sans', size: 14, color: '#000000', bold: false, italic: false, underline: false, strike: false, bg: 'none', border: 'none', align: 'left', lineHeight: 1.2, spacing: 0, opacity: 1, stroke: '#d13438', fill: 'none', width: 2, hl: '#ffe14d', erase: '#ffffff',
       markup: 'highlight', ul: '#d13438', stamp: 'APPROVED', stampText: '', stampColor: '#d13438', mark: '#107c10', note: '#ffd400', measure: '#d13438' },
@@ -118,25 +119,56 @@ export function openEditor(view, { file, mode }, ctx) {
   const k = () => st.zoom * PT;
 
   call('fonts').then((list) => { st.fonts = list || []; if (st.sel?.type === 'text' || st.sel?.type === 'replace' || ['addtext', 'edittext'].includes(st.tool)) renderProps(); }).catch(() => {});
-  async function load(password) {
+  async function load(password, src = file, quiet = false) {
     try {
-      st.sess = await call('open', file, password);
+      st.sess = await call('open', src, password);
     } catch (e) {
       const msg = String(e.message || e);
       if (/password/i.test(msg)) {
         const pw = await prompt('This PDF is protected', 'Enter the password to open it for editing.', 'password');
-        if (pw) return load(pw);
+        if (pw) return load(pw, src, quiet);
       }
+      if (quiet) return false;
       toast(msg.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), { type: 'error' });
       go();
-      return;
+      return false;
     }
     layout(true);
     fitWidth();
     selectTool(st.tool);
     if (mode === 'sign') setTimeout(signDialog, 200);
     if (mode === 'pages') tip('Drag pages in the panel to reorder. Select several with Ctrl or Shift.');
+    return true;
   }
+  async function start() {
+    const rec = await recover.check();
+    if (rec && (await offerRestore(rec, file))) {
+      let copy = !!rec.data, ok = copy ? await load(undefined, rec.data, true) : await load();
+      if (copy && !ok) { toast('The kept copy couldn’t be opened, so here is the file as it was.', { type: 'error' }); copy = false; ok = await load(); }
+      if (ok) restoreFrom(rec, copy);
+      return;
+    }
+    if (rec) recover.drop();
+    load();
+  }
+  function restoreFrom(rec, copy) {
+    const m = rec.meta || {};
+    st.restored = copy;
+    for (const o of m.pending || []) if (o.page < st.pages.length) addObj(o);
+    st.fieldVals = m.fieldVals || {};
+    Object.assign(st.saveOpts, m.saveOpts || {});
+    if (TOOLS.some((t) => t[0] === m.tool)) selectTool(m.tool);
+    marksChanged();
+    side.draw();
+    updateChrome();
+    toast('Your unsaved edits are back. Save to keep them.', { type: 'success' });
+  }
+  const recover = recovery(api, file, async () => {
+    if (!st.sess || !isDirty()) return null;
+    const meta = { pending: st.pending.map(serializeObj), fieldVals: st.fieldVals, saveOpts: { comments: st.saveOpts.comments, flattenFields: st.saveOpts.flattenFields }, tool: st.tool };
+    const copy = st.sess.dirty || st.restored;
+    return { sig: `${JSON.stringify(meta)}|${st.rev}|${copy ? 'c' : ''}`, meta, ...(copy ? { ext: 'pdf', data: async () => (await call('snapshot', st.sess.id)).bytes } : {}) };
+  });
 
   let io = null, tio = null;
   function layout(rebuildThumbs) {
@@ -1484,9 +1516,9 @@ export function openEditor(view, { file, mode }, ctx) {
     positionObj(o);
     updateChrome();
   }
+  const isDirty = () => st.pending.some((o) => serialize(o)) || !!st.sess?.dirty || st.restored || Object.keys(st.fieldVals).length > 0 || st.saveOpts.protect !== undefined;
   function updateChrome() {
-    const dirty = st.pending.some((o) => serialize(o)) || st.sess?.dirty || Object.keys(st.fieldVals).length > 0 || st.saveOpts.protect !== undefined;
-    $('.dirty', root).hidden = !dirty;
+    $('.dirty', root).hidden = !isDirty();
     $('[data-a=undo]', root).disabled = !(st.pending.length || st.sess?.canUndo);
     $('[data-a=redo]', root).disabled = !(st.sess?.canRedo && !st.pending.length);
   }
@@ -1626,9 +1658,11 @@ export function openEditor(view, { file, mode }, ctx) {
       await flush();
       st.sess = await call('save', st.sess.id, target, saveOptions());
       st.savePath = target;
+      st.restored = false;
       layout(false);
       return true;
     });
+    if (ok) recover.drop();
     if (ok && as) setDocName(root, target);
     if (ok) toast(`Saved ${nameOf(target)}${redactions ? `, with ${redactions} redaction${redactions === 1 ? '' : 's'} applied` : ''}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', target) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', target) }] });
     updateChrome();
@@ -1644,12 +1678,12 @@ export function openEditor(view, { file, mode }, ctx) {
   async function redo() { if (st.sess.canRedo) await busy('Redoing…', async () => { st.sess = await call('redo', st.sess.id); layout(true); }); }
   async function close() {
     commitEditing();
-    const dirty = st.pending.some((o) => serialize(o)) || st.sess?.dirty || Object.keys(st.fieldVals).length > 0 || st.saveOpts.protect !== undefined;
-    if (dirty) {
+    if (isDirty()) {
       const choice = await confirm3(`Save changes to ${nameOf(file)}?`, 'Your edits will be lost if you don’t save them.');
       if (choice === 'cancel') return;
       if (choice === 'save' && !(await save(false))) return;
     }
+    recover.drop();
     go();
   }
 
@@ -1777,7 +1811,7 @@ export function openEditor(view, { file, mode }, ctx) {
   const ro = new ResizeObserver(() => { if (st.fit) { clearTimeout(fitT); fitT = setTimeout(() => (st.fit === 'page' ? fitPage() : fitWidth()), 80); } });
   ro.observe(pagesEl);
 
-  load();
+  start();
 
   const dispose = () => {
     disposed = true;
@@ -1785,6 +1819,7 @@ export function openEditor(view, { file, mode }, ctx) {
     document.removeEventListener('keydown', onSpace);
     document.removeEventListener('keyup', onSpace);
     keys.dispose();
+    recover.dispose();
     io?.disconnect(); tio?.disconnect(); ro.disconnect();
     st.renders.forEach((r) => URL.revokeObjectURL(r.url));
     document.querySelector('.popmenu')?.remove();

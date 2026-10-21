@@ -1,6 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
-import { setDocName, confirm3 } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
 
 const TOOLS = [
   ['adjust', 'sliders', 'Adjust', 'Light, colour, detail and effects. Double-click a slider’s name to reset it.'],
@@ -226,7 +226,29 @@ export function openEditor(view, { file }, ctx) {
     chrome();
     if (st.sess.note) toast(st.sess.note);
     api.invoke('editor:call', 'fonts').then((list) => { st.fonts = list || []; if (MARKUP.has(st.tool)) renderProps(); }).catch(() => {});
+    const rec = await recover.check();
+    if (rec?.meta?.snap && (await offerRestore(rec, file))) await restoreFrom(rec); else if (rec) recover.drop();
   }
+  async function restoreFrom(rec) {
+    const m = rec.meta, s = clone(m.snap);
+    if (s.base > 0) {
+      const b = rec.data ? await call('importBase', st.sess.id, rec.data).catch(() => null) : null;
+      if (b) { st.dims[b.base] = { w: b.w, h: b.h, alpha: b.alpha }; s.base = b.base; } else { s.base = 0; toast('The steps that changed the pixels couldn’t be brought back; the rest of the edits are.'); }
+    }
+    Object.assign(st, { base: s.base, dev: s.dev, output: s.output || { resize: null, canvas: null }, overlays: s.overlays || [], sel: null, spotSel: -1, eyeSel: -1, look: null });
+    st.dev.spots ||= []; st.dev.red_eye ||= []; st.dev.masks ||= [];
+    st.savePath = m.savePath || null; st.saveFmt = m.saveFmt || null;
+    commit('Restored unsaved edits');
+    selectTool(TOOLS.some((t) => t[0] === m.tool) ? m.tool : 'adjust');
+    layout();
+    refresh();
+    toast('Your unsaved edits are back. Save to keep them.', { type: 'success' });
+  }
+  const recover = recovery(api, file, async () => {
+    if (!st.sess || keyOf(snap()) === st.savedKey) return null;
+    const s = snap(), meta = { snap: s, savePath: st.savePath, saveFmt: st.saveFmt, tool: st.tool };
+    return { sig: keyOf([s, st.tool]), meta, ...(s.base > 0 ? { ext: 'png', after: (r) => call('exportBase', st.sess.id, s.base, r.data) } : {}) };
+  });
 
   const dpr = () => window.devicePixelRatio || 1;
   let kd = 1;
@@ -1541,6 +1563,7 @@ export function openEditor(view, { file }, ctx) {
     if (!res) return false;
     st.savePath = res.path; st.saveFmt = fmt;
     st.savedKey = keyOf(snap());
+    recover.drop();
     if (as) setDocName(root, res.path);
     chrome();
     toast(`Saved ${nameOf(res.path)} (${res.w} × ${res.h})`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', res.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', res.path) }] });
@@ -1581,6 +1604,7 @@ export function openEditor(view, { file }, ctx) {
       if (choice === 'cancel') return;
       if (choice === 'save' && !(await save(false))) return;
     }
+    recover.drop();
     go();
   }
 
@@ -1667,6 +1691,7 @@ export function openEditor(view, { file }, ctx) {
     document.removeEventListener('keydown', onSpace);
     document.removeEventListener('keyup', onSpace);
     keys.dispose();
+    recover.dispose();
     ro.disconnect();
     if (pv.url) URL.revokeObjectURL(pv.url);
     st.thumbs.forEach((u) => URL.revokeObjectURL(u));

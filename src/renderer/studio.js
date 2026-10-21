@@ -1,6 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, form, defaultsFor, clean } from './ui.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
-import { setDocName, confirm3 } from './editor-kit.js';
+import { setDocName, confirm3, recovery, offerRestore } from './editor-kit.js';
 
 const PT = 96 / 72;
 const MORE = {
@@ -74,7 +74,7 @@ export function openEditor(view, { file, mode }, ctx) {
   const icon = (n, size = '') => (MORE[n] ? svg(MORE[n], size) : ctx.icon(n, size));
   const call = (m, ...a) => api.invoke('edit:call', 'studio', m, ...a);
   if (!document.querySelector('link[href="studio.css"]')) document.head.append(h('<link rel="stylesheet" href="studio.css">'));
-  const st = { sess: null, model: null, tool: null, busy: false, savePath: null, families: [], formats: [], tools: null, toolOpts: {}, disposed: false };
+  const st = { sess: null, model: null, tool: null, busy: false, savePath: null, restored: false, families: [], formats: [], tools: null, toolOpts: {}, disposed: false };
   let root, stageWrap, propsEl, sideEl, statusEl, bodyEl;
 
   const paintRange = (r) => r.style.setProperty('--p', `${((r.value - r.min) / (r.max - r.min)) * 100}%`);
@@ -193,9 +193,10 @@ export function openEditor(view, { file, mode }, ctx) {
     propsEl.querySelectorAll('input[type=range]').forEach(paintRange);
     propsEl.scrollTop = keepScroll;
   }
+  const isDirty = () => !!(st.sess?.dirty || st.restored);
   function updateChrome() {
     const s = st.sess;
-    $('.dirty', root).hidden = !s?.dirty;
+    $('.dirty', root).hidden = !isDirty();
     $('[data-a=undo]', root).disabled = !s?.canUndo;
     $('[data-a=redo]', root).disabled = !s?.canRedo;
     $('[data-a=history]', root).disabled = !s || (s.labels || []).length < 2;
@@ -252,6 +253,8 @@ export function openEditor(view, { file, mode }, ctx) {
     const r = await busy('Saving…', () => call('save', st.sess.id, st.savePath || edited(st.sess.saveExt)));
     if (!r) return false;
     st.savePath = r.path;
+    st.restored = false;
+    recover.drop();
     setSess(r);
     toast(`Saved ${nameOf(r.path)}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', r.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', r.path) }] });
     return true;
@@ -276,8 +279,8 @@ export function openEditor(view, { file, mode }, ctx) {
       if (target === file) { toast('Choose another name: the original stays as it is.', { type: 'error' }); return; }
       const r = await busy(`Saving ${label}…`, () => call('save', st.sess.id, target, opts));
       if (!r) return;
+      if (ext === st.sess.saveExt) { st.savePath = r.path; st.restored = false; recover.drop(); setDocName(root, r.path); }
       setSess(r);
-      if (ext === st.sess.saveExt) { st.savePath = r.path; setDocName(root, r.path); }
       toast(`Saved ${nameOf(r.path)}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', r.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', r.path) }] });
     });
   }
@@ -296,13 +299,18 @@ export function openEditor(view, { file, mode }, ctx) {
     setTimeout(() => document.addEventListener('pointerdown', function off(e) { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('pointerdown', off); } }), 0);
   }
   async function close() {
-    if (st.sess?.dirty) {
+    if (isDirty()) {
       const choice = await confirm3(`Save changes to ${nameOf(file)}?`, 'Your edits will be lost if you don’t save them.');
       if (choice === 'cancel') return;
       if (choice === 'save' && !(await save(false))) return;
     }
+    recover.drop();
     go();
   }
+  const recover = recovery(api, file, async () => {
+    if (!st.sess || !isDirty()) return null;
+    return { sig: `${st.sess.rev}|${st.tool}`, meta: { tool: st.tool, savePath: st.savePath }, ext: st.sess.saveExt, after: (r) => call('snapshot', st.sess.id, r.data) };
+  });
   function ask(title, fields, okLabel = 'OK') {
     return new Promise((resolve) => {
       const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2></div><div class="foot"><button class="btn" data-a="no">Cancel</button><button class="btn primary" data-a="ok">${esc(okLabel)}</button></div></div></div>`);
@@ -392,14 +400,24 @@ export function openEditor(view, { file, mode }, ctx) {
 
   (async () => {
     try {
-      const s = await call('open', file, app);
+      const rec = await recover.check();
+      let s = null, back = false;
+      if (rec?.data && (await offerRestore(rec, file))) {
+        s = await call('open', rec.data, app, file).catch(() => null);
+        if (s) back = true; else toast('The kept copy couldn’t be opened, so here is the file as it was.', { type: 'error' });
+      } else if (rec) recover.drop();
+      if (!s) s = await call('open', file, app);
       if (st.disposed) { call('close', s.id).catch(() => {}); return; }
       st.families = s.families || [];
       st.formats = s.formats || [];
       st.looks = s.looks || [];
+      st.restored = back;
+      if (back) st.savePath = rec.meta?.savePath || null;
       setSess(s);
       A.ready?.();
-      selectTool(A.tools[0][1][0][0]);
+      const tools = A.tools.flatMap(([, ids]) => ids.map((x) => x[0]));
+      selectTool(back && tools.includes(rec.meta?.tool) ? rec.meta.tool : tools[0]);
+      if (back) toast('Your unsaved edits are back. Save to keep them.', { type: 'success' });
     } catch (e) {
       toast(clean(e), { type: 'error' });
       go();
@@ -411,6 +429,7 @@ export function openEditor(view, { file, mode }, ctx) {
     st.disposed = true;
     document.removeEventListener('keydown', onKey);
     keys.dispose();
+    recover.dispose();
     A.dispose?.();
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
