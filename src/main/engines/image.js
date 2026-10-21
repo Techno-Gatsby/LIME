@@ -202,8 +202,8 @@ async function toPngOrJpeg(p) {
 
 const FORMATS = {
   jpg: (s, q) => s.jpeg({ quality: q, mozjpeg: true }),
-  png: (s, q, o) => s.png({ compressionLevel: 9, palette: !!o.palette, quality: o.palette ? q : 100 }),
-  webp: (s, q, o) => s.webp({ quality: q, lossless: !!o.lossless, effort: 5 }),
+  png: (s, q, o) => s.png({ compressionLevel: 9, palette: !!o.palette, quality: o.palette ? q : 100, ...(o.palette ? { effort: 10 } : {}) }),
+  webp: (s, q, o) => s.webp({ quality: q, lossless: !!o.lossless, effort: 6 }),
   avif: (s, q) => s.avif({ quality: Math.max(30, q - 20), effort: 4 }),
   tiff: (s) => s.tiff({ compression: 'lzw' }),
   gif: (s) => s.gif({ effort: 7 }),
@@ -260,7 +260,7 @@ async function writeAs(pipe, to, out, opts = {}) {
   if (KEEP_ICC.has(to)) pipe = (await pipe.metadata().catch(() => ({}))).space === 'cmyk' ? pipe.withIccProfile('srgb') : pipe.keepIccProfile();
   if (KEEP_EXIF.has(to) && !opts.strip) pipe = pipe.keepExif();
   try {
-    if (FORMATS[to]) await FORMATS[to](pipe, q, opts).toFile(out);
+    if (FORMATS[to]) { await FORMATS[to](pipe, q, opts).toFile(out); if (to === 'png' && opts.optimise) await require('./codecs').oxipngFile(out, opts.optimise); }
     else if (WRITERS[to]) await fsp.writeFile(out, await WRITERS[to](pipe, q, { name: U.base(out), ...opts }));
     else await viaPng(pipe, to, out, q);
     return out;
@@ -321,7 +321,7 @@ async function convert(p, opts, ctx) {
     return writeAnimation(await readAnimation(p), to, out(), opts);
   }
   const n = await pageCount(p);
-  if (n < 2) return writeAs((await open(p, { side: ICON_SIDE[to] })).rotate(), to, out(), opts);
+  if (n < 2) return writeAs((await open(p, { side: ICON_SIDE[to] })).rotate(), to, out(), { optimise: { level: 2 }, ...opts });
   if (to === 'tiff') { const o = out(); try { return await writeAs(sharp()(p, { pages: -1, limitInputPixels: false }), to, o, opts); } catch (_) { await fsp.rm(o, { force: true }); } }
   const dir = ctx.out.folder(p, `${U.base(p)} - pages`);
   for (let i = 0; i < n; i++) {
@@ -351,7 +351,7 @@ async function compress(p, opts, ctx) {
   let pipe = (await open(p, { animated: to === 'gif' || to === 'webp' })).rotate();
   if (opts.maxSide) pipe = pipe.resize({ width: +opts.maxSide, height: +opts.maxSide, fit: 'inside', withoutEnlargement: true });
   const out = ctx.out.file(p, `${U.base(p)}-compressed.${to}`);
-  await writeAs(pipe, to, out, { quality: q, palette: to === 'png' && level !== 'low', strip: true });
+  await writeAs(pipe, to, out, { quality: q, palette: to === 'png' && level !== 'low', strip: true, optimise: { level: 3, alpha: true } });
   const after = (await fsp.stat(out)).size;
   if (after >= before) {
     await fsp.copyFile(p, out);

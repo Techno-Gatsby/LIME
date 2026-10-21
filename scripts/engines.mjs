@@ -285,6 +285,33 @@ async function models() {
   }
 }
 
+// Ghostscript as WebAssembly (one build for every platform; fonts and colour profiles are inside it).
+const GS = { version: '10.06.0', url: 'https://registry.npmjs.org/@okathira/ghostpdl-wasm/-/ghostpdl-wasm-1.1.0.tgz', sha256: '1c266b526354429272b0a446b3340d86d3652a563a453b2550a2ef32bec4084d' };
+async function codecs() {
+  const dir = mk(path.join(V, 'codecs', TARGET)), file = path.join(dir, 'manifest.json'), dest = path.join(dir, 'ghostscript.tar.br');
+  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  // The version is in the folder name, so a newer build unpacks beside the old one rather than being skipped.
+  const top = `ghostscript-${GS.version}`;
+  if (has(dest) && manifest.ghostscript?.file === `${top}/gs.mjs`) return;
+  const tgz = await get(GS.url, 'ghostpdl-wasm-1.1.0.tgz');
+  const sum = (await import('node:crypto')).createHash('sha256').update(fs.readFileSync(tgz)).digest('hex');
+  if (sum !== GS.sha256) throw new Error(`ghostpdl-wasm: SHA-256 ${sum} is not the pinned ${GS.sha256}`);
+  const tmp = path.join(CACHE, 'gs');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  mk(path.join(tmp, top));
+  sh(TAR, ['-xzf', tgz, '-C', path.join(tmp, top), '--strip-components=2', 'package/dist/gs.js', 'package/dist/gs.wasm']);
+  sh(TAR, ['-xzf', tgz, '-C', path.join(tmp, top), '--strip-components=1', 'package/LICENSE']);
+  fs.renameSync(path.join(tmp, top, 'gs.js'), path.join(tmp, top, 'gs.mjs'));
+  const tar = path.join(CACHE, 'gs.tar');
+  sh(TAR, ['-cf', tar, '-C', tmp, top]);
+  await brotli(fs.readFileSync(tar), dest);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tar, { force: true });
+  manifest.ghostscript = { version: GS.version, file: `${top}/gs.mjs` };
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  console.log('▣ ghostscript', GS.version, `${(fs.statSync(dest).size / 1048576).toFixed(1)} MB`);
+}
+
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
@@ -292,5 +319,6 @@ if (!only || only === 'apps') await apps();
 if (!only || only === 'web') await webs();
 if (!only || only === 'helpers') await helpers();
 if (!only || only === 'models') await models();
+if (!only || only === 'codecs') await codecs();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);
