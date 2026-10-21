@@ -653,6 +653,13 @@ const MULTI = {
 const SINGLE_OUTPUT = new Set(['hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
+// An editor is offered once its module ships with the app; until then its tool and slices are left out.
+const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js' };
+const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
+if (unshipped.size) {
+  TOOLS.splice(0, TOOLS.length, ...TOOLS.filter((t) => !unshipped.has(t.id)));
+  for (const w of Object.values(WHEELS)) for (const k of ['convert', 'tools']) if (w[k]) w[k] = w[k].filter((x) => !unshipped.has(x.tool));
+}
 const get = (id) => TOOLS.find((t) => t.id === id);
 function accepts(t, files) {
   if (!t || t.noFiles) return false;
