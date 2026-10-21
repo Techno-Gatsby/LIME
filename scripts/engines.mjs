@@ -288,7 +288,7 @@ async function ai() {
     await new Promise((ok, no) => { const tar = spawn(TAR, ['-cf', '-', '-C', tmp, id], { stdio: ['ignore', 'pipe', 'inherit'] }); tar.on('error', no); tar.stdout.pipe(zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 } })).pipe(fs.createWriteStream(dest)).on('finish', ok).on('error', no); });
     fs.rmSync(tmp, { recursive: true, force: true });
     if (process.env.LIME_AI_TIDY) fs.rmSync(archive, { force: true });
-    manifest[id] = { version: M.version, file: Object.keys(M.pick)[0] };
+    manifest[id] = { version: M.version, file: `${id}/${Object.keys(M.pick)[0]}` };
     console.log('♪', id, `${(fs.statSync(dest).size / 1048576).toFixed(1)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   }
