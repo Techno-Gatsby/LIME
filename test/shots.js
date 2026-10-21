@@ -242,6 +242,13 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await tool('heal');
         await settle();
         await shot('46-imgedit-heal', e);
+        await tool('mask');
+        await ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(), p = (fx, fy) => ({ bubbles: true, button: 0, clientX: b.left + b.width * fx, clientY: b.top + b.height * fy }); m.dispatchEvent(new PointerEvent('pointerdown', p(0.5, 0.02))); window.dispatchEvent(new PointerEvent('pointermove', p(0.5, 0.45))); window.dispatchEvent(new PointerEvent('pointerup', p(0.5, 0.45))); })()`);
+        await sleep(300);
+        await slide('mask.exposure', -1.3);
+        await slide('mask.temp', -30);
+        await settle();
+        await shot('46b-imgedit-mask', e);
         await ejs('window.lime.invoke("settings:set", { theme: "dark" })');
         await tool('adjust');
         await settle();
@@ -274,6 +281,12 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await ejs('document.querySelector(\'[data-a="saveas"]\').click()');
         await sleep(400);
         await shot('54-imgedit-saveas', e);
+        await ejs('document.querySelector(".scrim [data-a=no]").click()');
+        await tool('adjust');
+        e.setSize(860, 620);
+        await sleep(600);
+        await settle();
+        await shot('55-imgedit-narrow', e);
         e.destroy();
       }
     }

@@ -11,6 +11,7 @@ const TOOLS = [
   ['resize', 'resize', 'Resize', 'Set the size in pixels or percent, or the canvas around the image.'],
   ['heal', 'heal', 'Heal', 'Click a spot, or brush over a blemish or wire, to remove it.'],
   ['redeye', 'pupil', 'Red eye', 'Click the middle of each red eye.'],
+  ['mask', 'mask', 'Masks', 'Light and colour in one part of the photo: drag a gradient or paint where it should go.'],
   ['text', 'textT', 'Text', 'Click where you want to type.'],
   ['draw', 'pen', 'Draw', 'Draw freehand with the mouse, pen or finger.'],
   ['rect', 'square', 'Box', 'Drag to draw a rectangle. Hold Shift for a square.'],
@@ -18,9 +19,9 @@ const TOOLS = [
   ['arrow', 'arrow', 'Arrow', 'Drag to draw an arrow.'],
   ['line', 'line', 'Line', 'Drag to draw a line. Hold Shift for straight angles.'],
 ];
-const GROUPS = [['Develop', ['adjust', 'looks', 'enhance']], ['Frame', ['crop', 'resize']], ['Retouch', ['heal', 'redeye']], ['Mark up', ['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']]];
+const GROUPS = [['Develop', ['adjust', 'looks', 'enhance']], ['Frame', ['crop', 'resize']], ['Retouch', ['heal', 'redeye', 'mask']], ['Mark up', ['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']]];
 const MARKUP = new Set(['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']);
-const KEYS = { c: 'crop', j: 'heal', t: 'text', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line', e: 'redeye', d: 'adjust' };
+const KEYS = { c: 'crop', j: 'heal', t: 'text', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line', e: 'redeye', m: 'mask', d: 'adjust' };
 const COLORS = ['#ffffff', '#000000', '#d13438', '#ff8c00', '#ffd400', '#2fb344', '#0f6cbd', '#8a3ffc', '#ff4fa3'];
 const FONTS = [['sans', 'Noto Sans', '"Noto Sans",Arial,sans-serif'], ['serif', 'Noto Serif', '"Noto Serif",Georgia,serif'], ['mono', 'Noto Sans Mono', '"Noto Sans Mono",Consolas,monospace'],
   ['carlito', 'Carlito', 'Carlito,Calibri,sans-serif'], ['caveat', 'Caveat (handwriting)', 'Caveat,cursive'], ['dancing', 'Dancing Script', '"Dancing Script",cursive']];
@@ -52,7 +53,7 @@ const PANELS = [
   ['Effects', [S('vignette.amount', 'Vignette'), S('vignette.midpoint', 'Midpoint', 0, 100), S('vignette.feather', 'Feather', 0, 100), S('grain.amount', 'Grain', 0, 100), S('grain.size', 'Grain size', 0, 100), S('grain.roughness', 'Roughness', 0, 100)]],
   ['Optics', [S('optics.distortion', 'Distortion'), S('optics.vignetting', 'Vignetting')]],
 ];
-const DEFAULTS = { 'detail.sharpen_radius': 1, 'detail.nr_detail': 50, 'vignette.midpoint': 50, 'vignette.feather': 50, 'grain.size': 25, 'grain.roughness': 50, 'grading.blending': 50, 'profile.amount': 100 };
+const DEFAULTS = { 'mask.amount': 100, 'mask.feather': 50, 'detail.sharpen_radius': 1, 'detail.nr_detail': 50, 'vignette.midpoint': 50, 'vignette.feather': 50, 'grain.size': 25, 'grain.roughness': 50, 'grading.blending': 50, 'profile.amount': 100 };
 const RAINBOW = 'linear-gradient(90deg,#e8453c,#f2d230,#4cb84c,#2ec4c4,#3d7be8,#d64fc0,#e8453c)';
 
 const ENHANCE = [
@@ -76,6 +77,7 @@ export function openEditor(view, { file }, ctx) {
     tool: 'adjust', zoom: 'fit', sel: null, spotSel: -1, eyeSel: -1, busy: false, before: false, look: null, mixer: 'red',
     style: { font: 'sans', size: 0.06, color: '#ffffff', bold: true, italic: false, align: 'left', textStyle: 'shadow', bg: '#000000', opacity: 1, stroke: '#d13438', width: 0.006, fill: 'none' },
     heal: { mode: 'remove', size: 0.02, feather: 50, opacity: 100 }, eye: { size: 0.025, pupil: 50, darken: 50 },
+    maskSel: -1, maskNew: 'linear', paint: { size: 0.04, feather: 50, flow: 100, erase: false },
     seq: 0, fonts: [], looks: null, thumbs: new Map(),
   };
   const root = h(`<div class="editor imged">
@@ -190,7 +192,7 @@ export function openEditor(view, { file }, ctx) {
     if (i < 0 || i >= st.hist.length) return;
     st.at = i;
     const s = clone(st.hist[i].state);
-    Object.assign(st, { base: s.base, dev: s.dev, output: s.output, overlays: s.overlays, sel: null, spotSel: -1, eyeSel: -1, look: null });
+    Object.assign(st, { base: s.base, dev: s.dev, output: s.output, overlays: s.overlays, sel: null, spotSel: -1, eyeSel: -1, look: null, maskSel: Math.min(st.maskSel, (s.dev.masks || []).length - 1) });
     endText(true);
     layout();
     renderProps();
@@ -224,7 +226,7 @@ export function openEditor(view, { file }, ctx) {
     if (disposed) { call('close', st.sess.id).catch(() => {}); return; }
     st.dims[0] = { w: st.sess.w, h: st.sess.h, alpha: st.sess.alpha };
     st.dev = st.sess.dev;
-    st.dev.spots ||= []; st.dev.red_eye ||= [];
+    st.dev.spots ||= []; st.dev.red_eye ||= []; st.dev.masks ||= [];
     st.style.size = 0.06; st.style.width = 0.006;
     sheet.innerHTML = '';
     sheet.append(photo, ink, marks);
@@ -555,7 +557,8 @@ export function openEditor(view, { file }, ctx) {
         marks.append(el);
       });
     }
-    if (st.tool === 'heal' || st.tool === 'redeye') {
+    if (st.tool === 'mask') drawMaskMarks();
+    if (st.tool === 'heal' || st.tool === 'redeye' || (st.tool === 'mask' && maskKind() === 'brush')) {
       brush = h('<div class="brush" hidden></div>');
       marks.append(brush);
       sizeBrush();
@@ -570,7 +573,7 @@ export function openEditor(view, { file }, ctx) {
   }
   function sizeBrush() {
     if (!brush) return;
-    const d = 2 * (st.tool === 'heal' ? (st.spotSel >= 0 ? st.dev.spots[st.spotSel]?.size ?? st.heal.size : st.heal.size) : st.eye.size) * L() * kd;
+    const d = 2 * (st.tool === 'heal' ? (st.spotSel >= 0 ? st.dev.spots[st.spotSel]?.size ?? st.heal.size : st.heal.size) : st.tool === 'mask' ? st.paint.size : st.eye.size) * L() * kd;
     Object.assign(brush.style, { width: `${d}px`, height: `${d}px` });
   }
 
@@ -685,6 +688,13 @@ export function openEditor(view, { file }, ctx) {
     d.orientation = kind === 'right' ? orientName((turn + 1) % 4, flip) : kind === 'left' ? orientName((turn + 3) % 4, flip) : kind === 'flipH' ? orientName((4 - turn) % 4, flip ^ 1) : orientName((6 - turn) % 4, flip ^ 1);
     d.spots = d.spots.map((s) => ({ ...s, points: s.points.map((p) => { const [x, y] = P1(p.x, p.y); return { x, y }; }), source_offset: s.source_offset && (([x, y]) => ({ x, y }))(V1(s.source_offset.x, s.source_offset.y)) }));
     d.red_eye = d.red_eye.map((e) => { const [x, y] = P1(e.center.x, e.center.y); return { ...e, center: { x, y }, ...(steps % 2 ? { rx: e.ry, ry: e.rx } : {}) }; });
+    const NP = (q) => { const [x, y] = P1(q.x, q.y); return { x, y }; };
+    for (const m of d.masks || []) for (const c of m.components || []) {
+      const sh = c.shape;
+      if (sh.kind === 'linear') { sh.start = NP(sh.start); sh.end = NP(sh.end); }
+      if (sh.kind === 'radial') { sh.center = NP(sh.center); sh.angle = cw ? sh.angle + 90 * steps : -sh.angle; }
+      if (sh.kind === 'brush') sh.strokes = sh.strokes.map((k) => ({ ...k, points: k.points.map(NP) }));
+    }
     // Frame units: points move with the picture; text keeps reading the right way and moves by its middle.
     const F = (x, y) => { const [u, v] = P1(x / w, y / hh), [nw, nh] = steps % 2 ? [hh, w] : [w, hh]; return [u * nw, v * nh]; };
     for (const o of st.overlays) {
@@ -719,6 +729,7 @@ export function openEditor(view, { file }, ctx) {
     const [ox, oy] = outPt(e), [lx, ly] = lFromOut(ox, oy);
     if (st.tool === 'heal') { e.preventDefault(); brushSpot(e); return; }
     if (st.tool === 'redeye') { e.preventDefault(); addEye(ox, oy); return; }
+    if (st.tool === 'mask') { e.preventDefault(); maskPointer(e); return; }
     const o = MARKUP.has(st.tool) ? hit(lx, ly) : null;
     if (o) { select(o); dragObj(e, o, false); return; }
     if (!MARKUP.has(st.tool)) { select(null); return; }
@@ -840,6 +851,7 @@ export function openEditor(view, { file }, ctx) {
   function removeSel() {
     if (st.sel) { st.overlays = st.overlays.filter((x) => x !== st.sel); st.sel = null; commit('Delete'); drawInk(); drawMarks(); renderProps(); return true; }
     if (st.tool === 'heal' && st.spotSel >= 0) { st.dev.spots.splice(st.spotSel, 1); st.spotSel = -1; commit('Remove spot'); refresh(); drawMarks(); renderProps(); return true; }
+    if (st.tool === 'mask' && st.maskSel >= 0) { st.dev.masks.splice(st.maskSel, 1); st.maskSel = -1; commit('Delete mask'); refresh(); drawMarks(); renderProps(); return true; }
     if (st.tool === 'redeye' && st.eyeSel >= 0) { st.dev.red_eye.splice(st.eyeSel, 1); st.eyeSel = -1; commit('Remove red eye'); refresh(); drawMarks(); renderProps(); return true; }
     return false;
   }
@@ -893,6 +905,126 @@ export function openEditor(view, { file }, ctx) {
     drawMarks();
     renderProps();
     refresh();
+  }
+
+  // ── Masks ───────────────────────────────────────────────────────────────────────────────────────────────────
+  // Lightroom's local adjustments: a linear or radial gradient, or painted strokes, each with its own sliders.
+  // Shapes are kept where LightCraft keeps them, in fractions of the turned image before straightening.
+  const MASK_ADJUST = { exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, temp: 0, tint: 0, texture: 0, clarity: 0, dehaze: 0, hue: 0, saturation: 0, sharpness: 0, noise: 0, moire: 0, defringe: 0, color_hue: 0, color_sat: 0, amount: 100 };
+  const MASK_KINDS = [['linear', 'line', 'Linear'], ['radial', 'circle', 'Radial'], ['brush', 'pen', 'Brush']];
+  const maskOf = () => (st.maskSel >= 0 ? st.dev.masks[st.maskSel] : null);
+  const maskKind = () => maskOf()?.components?.[0]?.shape?.kind || st.maskNew;
+  function newMask(shape) {
+    const id = Math.max(0, ...st.dev.masks.map((m) => m.id || 0)) + 1;
+    st.dev.masks.push({ id, name: `Mask ${id}`, visible: true, invert: false, adjust: { ...MASK_ADJUST }, components: [{ op: 'add', invert: false, shape }] });
+    st.maskSel = st.dev.masks.length - 1;
+    return st.dev.masks[st.maskSel];
+  }
+  const dispN = (q) => outFromNorm(q.x, q.y).map((v) => v * kd);
+  const normAt = (e) => { const [u, v] = normFromOut(...outPt(e)); return { x: u, y: v }; };
+  function drawMaskMarks() {
+    const m = maskOf();
+    st.dev.masks.forEach((mk, i) => {
+      const sh = mk.components?.[0]?.shape;
+      const at = sh?.kind === 'linear' ? { x: (sh.start.x + sh.end.x) / 2, y: (sh.start.y + sh.end.y) / 2 } : sh?.kind === 'radial' ? sh.center : sh?.strokes?.[0]?.points?.[0];
+      if (!at || mk === m) return;
+      const [x, y] = dispN(at);
+      const pin = h(`<div class="mpin" title="${esc(mk.name)}: click to select" style="left:${x}px;top:${y}px"></div>`);
+      pin.addEventListener('pointerdown', (e) => { e.stopPropagation(); st.maskSel = i; drawMarks(); renderProps(); });
+      marks.append(pin);
+    });
+    if (!m) return;
+    const sh = m.components[0].shape, l = L() * kd;
+    const dot = (x, y, part, title) => { const d = h(`<div class="mdot" data-part="${part}" title="${title}" style="left:${x}px;top:${y}px"></div>`); d.addEventListener('pointerdown', (e) => dragMask(e, part)); marks.append(d); };
+    if (sh.kind === 'linear') {
+      const [ax, ay] = dispN(sh.start), [bx, by] = dispN(sh.end), ang = Math.atan2(by - ay, bx - ax), len = Math.hypot(bx - ax, by - ay);
+      // Full effect at the first line, none past the second.
+      const clip = h('<div class="mclip"></div>');
+      for (const [x, y, cls] of [[ax, ay, 'full'], [bx, by, 'none']]) clip.append(h(`<div class="mline ${cls}" style="left:${x}px;top:${y}px;transform:translate(-50%,0) rotate(${ang + Math.PI / 2}rad)"></div>`));
+      clip.append(h(`<div class="mspan" style="left:${ax}px;top:${ay}px;width:${len}px;transform:rotate(${ang}rad)"></div>`));
+      marks.append(clip);
+      dot(ax, ay, 'start', 'Full effect here: drag to move');
+      dot(bx, by, 'end', 'No effect past here: drag to move');
+      dot((ax + bx) / 2, (ay + by) / 2, 'move', 'Drag to move the gradient');
+    } else if (sh.kind === 'radial') {
+      const [cx, cy] = dispN(sh.center), a = ((sh.angle || 0) + geo().angle) * Math.PI / 180;
+      marks.append(h(`<div class="mell" style="left:${cx}px;top:${cy}px;width:${2 * sh.rx * l}px;height:${2 * sh.ry * l}px;transform:translate(-50%,-50%) rotate(${a}rad)"></div>`));
+      dot(cx, cy, 'move', 'Drag to move');
+      dot(cx + Math.cos(a) * sh.rx * l, cy + Math.sin(a) * sh.rx * l, 'rx', 'Drag to resize and turn');
+      dot(cx - Math.sin(a) * sh.ry * l, cy + Math.cos(a) * sh.ry * l, 'ry', 'Drag to resize');
+    } else if (sh.kind === 'brush') {
+      const svg = h('<svg class="spotpath mpaint" width="100%" height="100%"></svg>');
+      svg.innerHTML = sh.strokes.map((k) => `<polyline class="${k.erase ? 'erase' : ''}" points="${k.points.map((q) => dispN(q).join(',')).join(' ')}" stroke-width="${Math.max(2, 2 * k.size * l)}"/>`).join('');
+      marks.append(svg);
+    }
+  }
+  function maskPointer(e) {
+    const m = maskOf(), kind = maskKind();
+    if (m && kind === 'brush') return paintMask(e, m);
+    if (m) { st.maskSel = -1; drawMarks(); renderProps(); }
+    const start = normAt(e);
+    const l = L(), [W, H] = frame();
+    const shape = st.maskNew === 'linear' ? { kind: 'linear', start, end: { ...start } } : st.maskNew === 'radial' ? { kind: 'radial', center: start, rx: 0.001, ry: 0.001, angle: -geo().angle, feather: 50, invert: false } : { kind: 'brush', strokes: [] };
+    const mk = newMask(shape);
+    if (shape.kind === 'brush') { paintMask(e, mk, true); return; }
+    const move = (ev) => {
+      const p = normAt(ev);
+      if (shape.kind === 'linear') shape.end = p;
+      else { const [ox, oy] = outFromNorm(start.x, start.y), [px, py] = outPt(ev); shape.rx = Math.max(0.005, Math.abs(px - ox) / l); shape.ry = Math.max(0.005, Math.abs(py - oy) / l); }
+      drawMarks();
+      refresh(true);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      // A click without a drag makes a gradient of a useful size.
+      if (shape.kind === 'linear' && Math.hypot((shape.end.x - start.x) * W, (shape.end.y - start.y) * H) < 4 / kd) shape.end = { x: start.x, y: Math.min(1, start.y + 0.25) };
+      if (shape.kind === 'radial' && shape.rx < 0.01 && shape.ry < 0.01) { shape.rx = 0.2; shape.ry = 0.15; }
+      commit(shape.kind === 'linear' ? 'Linear gradient' : 'Radial gradient');
+      drawMarks(); renderProps(); refresh();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  function paintMask(e, m, fresh) {
+    const sh = m.components[0].shape, p = st.paint;
+    const stroke = { auto_mask: false, density: 100, erase: !!p.erase, feather: p.feather, flow: p.flow, points: [normAt(e)], size: p.size };
+    sh.strokes.push(stroke);
+    drawMarks();
+    const move = (ev) => {
+      const q = normAt(ev), last = stroke.points[stroke.points.length - 1], [W, H] = frame();
+      if (Math.hypot((q.x - last.x) * W, (q.y - last.y) * H) < p.size * L() * 0.2) return;
+      stroke.points.push(q);
+      drawMarks();
+      if (brush) { const b = marks.getBoundingClientRect(); Object.assign(brush.style, { left: `${ev.clientX - b.left}px`, top: `${ev.clientY - b.top}px`, }); brush.hidden = false; }
+      refresh(true);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); commit(fresh ? 'Brush mask' : stroke.erase ? 'Erase' : 'Brush'); drawMarks(); renderProps(); refresh(); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+  function dragMask(e, part) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const m = maskOf(), sh = m.components[0].shape, before = clone(sh), p0 = normAt(e), l = L();
+    const move = (ev) => {
+      const p = normAt(ev), dx = p.x - p0.x, dy = p.y - p0.y;
+      if (sh.kind === 'linear') {
+        if (part === 'start' || part === 'move') sh.start = { x: before.start.x + dx, y: before.start.y + dy };
+        if (part === 'end' || part === 'move') sh.end = { x: before.end.x + dx, y: before.end.y + dy };
+      } else if (part === 'move') sh.center = { x: before.center.x + dx, y: before.center.y + dy };
+      else {
+        // Radii and turn from where the handle is dragged, measured in the turned image.
+        const [cx, cy] = outFromNorm(sh.center.x, sh.center.y), [px, py] = outPt(ev), r = Math.hypot(px - cx, py - cy) / l;
+        if (part === 'rx') { sh.rx = Math.max(0.005, r); sh.angle = Math.atan2(py - cy, px - cx) * 180 / Math.PI - geo().angle; } else sh.ry = Math.max(0.005, r);
+      }
+      drawMarks();
+      refresh(true);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); commit('Move mask'); refresh(); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
   }
 
   // ── Steps that run in the worker ────────────────────────────────────────────────────────────────────────────
@@ -981,7 +1113,7 @@ export function openEditor(view, { file }, ctx) {
     const [k0, t0] = asShot(), r = key === 'temp' ? v : wbGet('temp'), t = key === 'tint' ? v : wbGet('tint');
     st.dev.wb = !r && !t ? { mode: 'asShot', temp: k0, tint: t0, ...(st.sess.kelvin ? { scale: 'kelvin' } : {}) } : { mode: 'custom', temp: Math.round(1e6 / (1e6 / k0 - 0.8 * r)), tint: t0 + t, ...(st.sess.kelvin ? { scale: 'kelvin' } : {}) };
   }
-  const value = (d) => (d.key === 'temp' || d.key === 'tint' ? wbGet(d.key) : Number(getPath(st.dev, d.key) ?? 0));
+  const value = (d) => (d.get ? d.get() : d.key === 'temp' || d.key === 'tint' ? wbGet(d.key) : Number(getPath(st.dev, d.key) ?? 0));
   const defaultOf = (d) => DEFAULTS[d.key] ?? 0;
   const fmtOf = (d, v) => (d.key === 'temp' && st.sess.kelvin ? `${st.dev.wb.mode === 'asShot' ? asShot()[0] : st.dev.wb.temp} K` : d.fmt ? d.fmt(v) : d.mid ? signed(v) : String(Math.round(v)));
   function slider(d, onSet = null) {
@@ -1019,17 +1151,17 @@ export function openEditor(view, { file }, ctx) {
     if (t === 'resize') return resizePanel();
     if (t === 'heal') return healPanel();
     if (t === 'redeye') return eyePanel();
+    if (t === 'mask') return maskPanel();
     return markupPanel();
   }
   function adjustPanel() {
     const bw = st.dev.treatment === 'bw';
     props.append(h('<canvas class="hist" aria-label="Histogram"></canvas>'), h('<div class="histinfo"></div>'));
-    const top = h(`<div class="row nowrap"><button class="btn" data-x="auto" title="LightCraft sets light and colour for this photo">${icon('sparkle', 'sm')}Auto</button><div class="seg" role="group"><button data-x="color" aria-pressed="${!bw}">Colour</button><button data-x="bw" aria-pressed="${bw}">B&amp;W</button></div><button class="btn subtle fixed" data-x="resetall" title="Back to the original image (Undo brings the edits back)">Reset</button></div>`);
+    const top = h(`<div class="row nowrap"><button class="btn" data-x="auto" title="LightCraft sets light and colour for this photo">${icon('sparkle', 'sm')}Auto</button><div class="seg" role="group"><button data-x="color" aria-pressed="${!bw}">Colour</button><button data-x="bw" aria-pressed="${bw}">B&amp;W</button></div></div>`);
     top.addEventListener('click', (e) => {
       const x = e.target.closest('[data-x]')?.dataset.x;
       if (x === 'auto') runDevelop('auto', {}, 'Auto');
       if (x === 'color' || x === 'bw') { st.dev.treatment = x === 'bw' ? 'bw' : 'color'; commit(x === 'bw' ? 'Black & white' : 'Colour'); renderProps(); refresh(); }
-      if (x === 'resetall') resetAll();
     });
     props.append(top);
     props.append(profileRow());
@@ -1041,6 +1173,9 @@ export function openEditor(view, { file }, ctx) {
       if (title === 'Optics') rows.unshift(toggle('optics.lens_profile', 'Lens profile corrections'), toggle('optics.remove_ca', 'Remove chromatic aberration'));
       props.append(section(title, rows, { open: ['Light', 'Colour', 'Presence'].includes(title), reset: () => { resetKeys(defs.map((d) => d.key)); if (title === 'Curve') st.dev.curve.master = []; if (title === 'Optics') Object.assign(st.dev.optics, { lens_profile: false, remove_ca: false }); } }));
     }
+    const all = h(`<button class="btn subtle" data-x="resetall" style="justify-self:start" title="Back to the original image; Undo brings the edits back">${icon('again', 'sm')}Reset all edits</button>`);
+    all.addEventListener('click', resetAll);
+    props.append(all);
   }
   // LightCraft's profiles, as Lightroom's: the starting look, with an amount for the creative ones.
   function profileRow() {
@@ -1326,6 +1461,44 @@ export function openEditor(view, { file }, ctx) {
     props.append(h(`<p class="tip">${st.dev.red_eye.length ? `${st.dev.red_eye.length} eye${st.dev.red_eye.length === 1 ? '' : 's'} fixed. ` : ''}Click the middle of each red eye; the pupil inside the circle is found and darkened.</p>`));
     props.onclick = (e) => { if (st.tool === 'redeye' && e.target.closest('[data-x=del]')) removeSel(); };
   }
+  function maskPanel() {
+    const m = maskOf(), kind = maskKind();
+    props.append(head(m ? m.name : 'Masks', m ? `<button class="btn danger" data-x="del">${icon('delete', 'sm')}Delete</button>` : ''));
+    const kinds = h(`<div class="seg full">${MASK_KINDS.map(([id, ic, label]) => `<button class="tb" data-k="${id}" aria-pressed="${!m && st.maskNew === id}" title="New ${label.toLowerCase()} mask">${icon(ic)}<span class="lbl">${label}</span></button>`).join('')}</div>`);
+    kinds.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) { st.maskNew = b.dataset.k; st.maskSel = -1; drawMarks(); renderProps(); tip(`Drag on the photo to ${b.dataset.k === 'brush' ? 'paint the mask' : `place the ${b.dataset.k} gradient`}.`); } });
+    props.append(h('<div class="label">New mask</div>'), kinds);
+    if (st.dev.masks.length) {
+      const list = h(`<div class="chips">${st.dev.masks.map((mk, i) => `<button class="chip" data-m="${i}" aria-pressed="${i === st.maskSel}">${esc(mk.name)} · ${esc({ linear: 'Linear', radial: 'Radial', brush: 'Brush' }[mk.components?.[0]?.shape?.kind] || 'Mask')}</button>`).join('')}</div>`);
+      list.addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (b) { st.maskSel = Number(b.dataset.m); drawMarks(); renderProps(); } });
+      props.append(list);
+    }
+    props.onclick = (e) => { if (st.tool === 'mask' && e.target.closest('[data-x=del]')) removeSel(); };
+    if (!m) {
+      props.append(h(`<p class="tip">${{ linear: 'Drag from where the effect is strongest to where it fades out, such as from the top of a sky down to the horizon.', radial: 'Drag out an oval around what to brighten or darken; Invert works outside it instead.', brush: 'Paint over the part to change; the size and softness are set after you start.' }[st.maskNew]}</p>`));
+      return;
+    }
+    const sh = m.components[0].shape;
+    const A = (key, label, min = -100, max = 100, step = 1, more = {}) => slider({ key: `mask.${key}`, label, min, max, step, mid: min < 0, get: () => m.adjust[key] ?? (key === 'amount' ? 100 : 0), ...more }, (v) => { m.adjust[key] = v; });
+    props.append(section('Light', [A('exposure', 'Exposure', -4, 4, 0.01, { fmt: (v) => signed(v, 2) }), A('contrast', 'Contrast'), A('highlights', 'Highlights'), A('shadows', 'Shadows'), A('whites', 'Whites'), A('blacks', 'Blacks')]));
+    props.append(section('Colour', [A('temp', 'Temp', -100, 100, 1, { track: TEMP.track }), A('tint', 'Tint', -100, 100, 1, { track: TINT.track }), A('saturation', 'Saturation')]));
+    props.append(section('Presence and detail', [A('texture', 'Texture'), A('clarity', 'Clarity'), A('dehaze', 'Dehaze'), A('sharpness', 'Sharpness'), A('noise', 'Noise', 0, 100)]));
+    const shape = [A('amount', 'Amount', 0, 200, 1, { mid: false, fmt: (v) => `${Math.round(v)}%` })];
+    if (kind === 'radial') shape.push(slider({ key: 'mask.feather', label: 'Feather', min: 0, max: 100, step: 1, get: () => sh.feather ?? 50 }, (v) => { sh.feather = v; }));
+    if (kind !== 'brush') {
+      const inv = h(`<label class="switch"><span class="text-sm">${kind === 'radial' ? 'Invert: change outside the oval' : 'Invert'}</span><input type="checkbox"${m.invert ? ' checked' : ''}></label>`);
+      $('input', inv).addEventListener('change', (e) => { m.invert = e.target.checked; commit('Invert mask'); refresh(); });
+      shape.push(inv);
+    } else {
+      const P = st.paint, upd = (k) => (v) => { P[k] = v; if (k === 'size') sizeBrush(); };
+      for (const [k, label, min, max, step, fmt] of [['size', 'Brush size', 0.005, 0.25, 0.001, (v) => `${Math.round(v * L())} px`], ['feather', 'Softness', 0, 100, 1, (v) => String(Math.round(v))], ['flow', 'Flow', 1, 100, 1, (v) => `${Math.round(v)}%`]]) {
+        shape.push(slider({ key: `paint.${k}`, label, min, max, step, fmt, get: () => P[k], live: () => {}, done: () => {} }, upd(k)));
+      }
+      const er = h(`<div class="seg full text"><button class="tb" data-er="0" aria-pressed="${!P.erase}"><span class="lbl">Paint</span></button><button class="tb" data-er="1" aria-pressed="${!!P.erase}"><span class="lbl">Erase</span></button></div>`);
+      er.addEventListener('click', (e) => { const b = e.target.closest('[data-er]'); if (b) { P.erase = b.dataset.er === '1'; renderProps(); } });
+      shape.push(er);
+    }
+    props.append(section(kind === 'brush' ? 'Brush' : 'Shape', shape));
+  }
   function markupPanel() {
     const o = st.sel, s = st.style, t = o ? (o.type === 'ink' ? 'draw' : o.type) : st.tool, v = o || s;
     const apply = (patch) => { if (o) { Object.assign(o, patch); drawInk(); drawMarks(); commit('Style'); if (editing === o) restyleEdit(); } else Object.assign(s, patch); };
@@ -1546,7 +1719,8 @@ export function openEditor(view, { file }, ctx) {
 
   load();
 
-  return () => {
+  const dispose = () => {
+    if (disposed) return;
     disposed = true;
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('keyup', onKey);
@@ -1557,4 +1731,7 @@ export function openEditor(view, { file }, ctx) {
     st.thumbs.forEach((u) => URL.revokeObjectURL(u));
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
+  // The window closing ends the session too, so its working copies are removed.
+  window.addEventListener('pagehide', dispose, { once: true });
+  return dispose;
 }

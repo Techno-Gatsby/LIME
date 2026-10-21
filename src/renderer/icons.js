@@ -72,6 +72,7 @@ const P = {
   flipV: 'M3 12h18M7.5 8.5L12 4l4.5 4.5zM7.5 15.5L12 20l4.5-4.5z',
   level: 'M3 15.5L21 8.5M4 20h16',
   pupil: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 100-6 3 3 0 000 6zM12 12h.01',
+  mask: 'M12 21a9 9 0 100-18 9 9 0 000 18zM12 3v18M15.5 3.7v16.6M19 6.5v11',
 };
 export function icon(name, size = '') {
   const d = P[name] || P.doc;

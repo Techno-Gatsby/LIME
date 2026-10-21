@@ -1080,6 +1080,37 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${ir.status} ${ir.name.padEnd(44)}        ${ir.detail}`);
   results.push(ir);
 
+  const im = { name: 'edit image · mask, resize, canvas, transparency', status: 'PASS', detail: '' };
+  try {
+    const src = path.join(OUT, 'editalpha.png');
+    fs.copyFileSync(fx('alpha.png'), src);
+    const { win, ejs, wait, idle, slide, press, saved } = await openImage(src);
+    // A linear gradient darkens the top of the green disc and fades out above its middle.
+    await ejs('document.querySelector(\'[data-tool="mask"]\').click()');
+    await press(0.5, 0.02, [0.5, 0.42]);
+    if (!(await wait('document.querySelector(".imged").__imged.st.dev.masks.length === 1', 3000))) throw new Error('no mask was added');
+    await slide('mask.exposure', -2);
+    await idle();
+    await ejs('document.querySelector(\'[data-tool="resize"]\').click()');
+    await ejs(`(() => { const i = document.querySelector('.props [data-d="pct"]'); i.value = 50; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await ejs('document.querySelector(\'.props [data-q="5"]\').click()');
+    await ejs('document.querySelector(\'.props .swatches [data-c="transparent"]\').click()');
+    await idle();
+    await ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const out = await saved(path.join(OUT, 'editalpha (edited).png'));
+    const { data, info } = await sharp(out).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    if (info.width !== 330 || info.height !== 330) throw new Error(`saved ${info.width}×${info.height}, wanted 330×330 (half size, then 15 px of canvas around)`);
+    const px = (x, y) => data.subarray((y * info.width + x) * 4, (y * info.width + x) * 4 + 4);
+    if (px(3, 3)[3] !== 0 || px(165, 8)[3] !== 0) throw new Error('the canvas and the clear corners are not transparent');
+    const band = (y0, y1) => { let s = 0, n = 0; for (let y = y0; y < y1; y++) for (let x = 120; x < 210; x++) { const p = px(x, y); if (p[3] > 250) { s += 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]; n++; } } return n ? s / n : NaN; };
+    const top = band(60, 90), bottom = band(240, 270);
+    if (!(top < bottom - 20)) throw new Error(`the mask did not darken the top: ${top.toFixed(0)} against ${bottom.toFixed(0)} below`);
+    im.detail = `330×330 with a clear canvas, top of the disc ${top.toFixed(0)} against ${bottom.toFixed(0)} below the gradient`;
+    win.destroy();
+  } catch (e) { im.status = 'FAIL'; im.detail = e.message; }
+  console.log(`${im.status} ${im.name.padEnd(44)}        ${im.detail}`);
+  results.push(im);
+
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };
   try {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);

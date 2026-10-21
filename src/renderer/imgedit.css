@@ -122,3 +122,13 @@
 .imged .props { overflow-x: hidden; }
 .imged .spotpath { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .imged .spotpath polyline { fill: none; stroke: rgba(255, 255, 255, .22); stroke-linecap: round; stroke-linejoin: round; }
+.imged .stage.t-mask .marks { cursor: crosshair; }
+.imged .mdot { position: absolute; width: 13px; height: 13px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, .45); transform: translate(-50%, -50%); cursor: move; z-index: 2; }
+.imged .mpin { position: absolute; width: 11px; height: 11px; border-radius: 50%; background: rgba(255, 255, 255, .85); box-shadow: 0 0 0 1px rgba(0, 0, 0, .45); transform: translate(-50%, -50%); cursor: pointer; }
+.imged .mline { position: absolute; width: 4000px; height: 0; border-top: 1.5px solid rgba(255, 255, 255, .9); box-shadow: 0 0 0 .5px rgba(0, 0, 0, .3); transform-origin: 50% 0; pointer-events: none; }
+.imged .mline.none { border-top-style: dashed; }
+.imged .mspan { position: absolute; height: 0; border-top: 1px dashed rgba(255, 255, 255, .6); transform-origin: 0 0; pointer-events: none; }
+.imged .mell { position: absolute; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, .9); box-shadow: 0 0 0 .5px rgba(0, 0, 0, .35), inset 0 0 0 .5px rgba(0, 0, 0, .35); pointer-events: none; }
+.imged .mpaint polyline { stroke: rgba(214, 64, 64, .42); }
+.imged .mpaint polyline.erase { stroke: rgba(255, 255, 255, .5); }
+.imged .mclip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }

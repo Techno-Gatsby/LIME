@@ -121,7 +121,17 @@ async function addBase(s, file, { raw = false } = {}) {
   return { base: i, w: b.w, h: b.h, alpha: !!mask, raw };
 }
 
+// Working copies left behind by an editor that never closed (Lime quit, or crashed) go after a day.
+async function sweep() {
+  const now = Date.now();
+  for (const d of await fsp.readdir(U.cfg.tmp).catch(() => [])) {
+    if (!d.startsWith('imgedit-')) continue;
+    const p = path.join(U.cfg.tmp, d), st = await fsp.stat(p).catch(() => null);
+    if (st && now - st.mtimeMs > 864e5 && ![...sessions.values()].some((s) => s.dir === p)) fsp.rm(p, { recursive: true, force: true }).catch(() => {});
+  }
+}
 async function open(file) {
+  sweep();
   const s = { id: ++seq, file, dir: await U.tmpDir('imgedit'), bases: [], n: 0 };
   sessions.set(s.id, s);
   try {
