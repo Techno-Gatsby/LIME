@@ -642,6 +642,8 @@ sounds.play = (kind, c, t = c.currentTime + 0.01) => {
 };
 let flashT = null;
 async function launchApp(app) {
+  const open = app.ring?.find((r) => r.appOpen) || (S.items?.apps || []).find((x) => x.id === app.id)?.ring.find((r) => r.appOpen);
+  if (open) return pick(open);
   flash(`Opening ${app.name}…`);
   try { await api.invoke('apps:open', app.id, S.files.length ? S.files : S.peek || []); } catch (e) { flash(String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); }
 }

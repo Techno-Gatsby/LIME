@@ -588,10 +588,11 @@ const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vector
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
-  const ring = [{ action: 'craft', app: id, label: 'Open', hint: 'Full app', desc: ok ? `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${a.name}, with every tool` : `${a.name} isn’t in this build of Lime`, ...(ok ? {} : { off: true }) }];
-  // Then the app's editor in Lime, for the files given (or a file to choose), and the app's actions.
+  const full = { action: 'craft', app: id, label: 'Full app', hint: 'Own window', desc: ok ? `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${a.name}, with every tool` : `${a.name} isn’t in this build of Lime`, ...(ok ? {} : { off: true }) };
+  // Open is the app inside Lime: its editor in a Lime window, for the files given or a file to choose. The app's own
+  // program is the next slice.
   const edit = (EDIT_IN[id] || []).map((t) => tools.get(t)).find((t) => t && (!files.length || tools.accepts(t, files)));
-  if (edit) ring.push({ tool: edit.id, label: 'Edit', hint: 'In Lime', desc: edit.desc, ...(files.length ? {} : { exts: tools.extsFor(edit) }) });
+  const ring = edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
