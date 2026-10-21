@@ -11,7 +11,6 @@ html, body, #view { height: 100%; overflow: hidden; }
 .topbar .dirty::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #e0851f; vertical-align: 1px; }
 .topbar .grow { flex: 1; align-self: stretch; -webkit-app-region: drag; }
 .topbar .btn { height: 30px; }
-/* A row of related buttons in one rounded tray. */
 .seg { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 9px; background: var(--surface-3); }
 .seg .tb { height: 28px; border-radius: 7px; }
 .seg .tb[aria-pressed="true"] { background: var(--surface); color: var(--accent-strong); box-shadow: 0 0 0 .5px var(--line-2), 0 1px 2px rgba(0, 0, 0, .12); }
@@ -128,7 +127,6 @@ html, body, #view { height: 100%; overflow: hidden; }
 .props details.more[open] { display: grid; gap: 10px; }
 .swatches button[data-c="none"] { background: linear-gradient(135deg, transparent 45%, var(--danger) 45% 55%, transparent 55%), #fff !important; }
 
-/* Save with its options beside it, and the Document menu. */
 .splitbtn { display: inline-flex; }
 .splitbtn .btn { height: 30px; }
 .splitbtn .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -144,7 +142,6 @@ html, body, #view { height: 100%; overflow: hidden; }
 .popmenu .mrow { padding: 6px 10px; font-size: 12.5px; }
 label.row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink); }
 
-/* Dialogs with a live preview of the page. */
 .dialog.wide { width: min(800px, calc(100vw - 32px)); }
 .dialog .dlg { display: flex; gap: 20px; align-items: flex-start; }
 .dlgform { flex: 1; min-width: 0; display: grid; gap: 11px; align-content: start; }
@@ -171,7 +168,6 @@ label.row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; col
 .checks li.note::before { content: "i"; color: var(--ink-3); font-style: italic; }
 @media (max-width: 720px) { .dialog .dlg { flex-direction: column; } .dlgpreview { width: 100%; } }
 
-/* Bookmarks, comments and fields in the side panel. */
 .bmlist { display: grid; gap: 1px; }
 .bm { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; outline: none; }
 .bm .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -200,7 +196,6 @@ label.row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; col
 .cmme { margin-top: auto; padding-top: 8px; }
 .swatches.small { grid-template-columns: repeat(7, 20px); justify-content: start; gap: 8px; }
 
-/* Comments, links and form fields on the page. */
 .pmark { position: absolute; z-index: 2; border-radius: 2px; }
 .pannot { cursor: pointer; }
 .pannot:hover { outline: 1.5px dashed var(--accent); outline-offset: 1px; }
@@ -231,7 +226,6 @@ label.row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; col
 .flash { position: absolute; z-index: 4; border: 2px solid var(--accent); border-radius: 4px; pointer-events: none; animation: flash 1.4s ease forwards; }
 @keyframes flash { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 
-/* The keyboard shortcuts (?), listed by what they do. */
 .dialog.keys { width: min(760px, calc(100vw - 32px)); }
 .keycols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 28px; max-height: calc(100vh - 230px); overflow: auto; }
 .keycols section { min-width: 0; }
@@ -241,7 +235,6 @@ label.row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; col
 .krow .kk i { font-style: normal; color: var(--ink-3); font-size: 11px; padding: 0 3px; }
 kbd.k { font: 600 11px/1 var(--font); min-width: 22px; text-align: center; padding: 4px 6px; border-radius: 5px; background: var(--surface-3); color: var(--ink-2); box-shadow: inset 0 -1px 0 var(--line-2); }
 
-/* Tool settings on the right. */
 .props .fkinds { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .props .fkinds .tb { justify-content: flex-start; height: 32px; background: var(--surface-3); }
 .props .fkinds .tb[aria-pressed="true"] { background: var(--surface); color: var(--accent-strong); box-shadow: 0 0 0 1px var(--accent); }

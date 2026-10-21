@@ -1,8 +1,4 @@
 'use strict';
-// The image editor's engine. Light, colour, detail, effects, crop, straighten, rotation, spot healing and red eye
-// are LightCraft develop settings, kept as data and rendered by LightCraft from the untouched image each time, so
-// every edit stays adjustable. Pixel steps (PhotoCraft actions and Lime's own tools) make a new base image under
-// those settings. Text and shapes are drawn by the editor and laid on top when saving.
 const U = require('./engines/util');
 const { fs, fsp, path, os } = U;
 
@@ -14,23 +10,18 @@ const sessions = new Map();
 let seq = 0;
 const get = (id) => { const s = sessions.get(id); if (!s) throw new Error('This image was closed.'); return s; };
 
-// What LightCraft opens itself; anything else is decoded by Lime first.
 const LC_READS = new Set(['jpg', 'jpeg', 'jfif', 'png', 'gif', 'webp', 'heic', 'heif', 'hif', 'jxl', 'tif', 'tiff', ...U.GROUPS.raw]);
 const SHARP_READS = new Set(['jpg', 'jpeg', 'jfif', 'png', 'webp', 'tif', 'tiff', 'avif']);
-// Previews come from the smallest of these copies that has enough pixels, else from the image itself.
 const PROXIES = [1280, 2560];
-// Formats Save can keep; others are saved as PNG (RAW as JPG).
 const KEEP = { jpg: 'jpg', jpeg: 'jpg', jfif: 'jpg', png: 'png', webp: 'webp', avif: 'avif', tif: 'tiff', tiff: 'tiff', heic: 'heic', heif: 'heic', hif: 'heic', gif: 'gif', bmp: 'bmp', jxl: 'jxl', tga: 'tga', qoi: 'qoi', jp2: 'jp2' };
 const EXIF_FORMATS = new Set(['jpg', 'png', 'webp', 'avif', 'heic']);
 const NO_ALPHA = new Set(['jpg', 'heic', 'bmp']);
 
 async function lightcraft(args, okCodes) {
   const bin = await crafts().cli('lightcraft');
-  // The CPU path renders previews and the saved file alike, so what is shown is what is saved.
   return U.run(bin, args, { cwd: os.tmpdir(), okCodes, env: { NO_COLOR: '1', LIGHTCRAFT_GPU: '0' }, errorMessage: 'LightCraft couldn’t finish', timeout: 300000 });
 }
 const jsonLines = (s) => String(s).split(/\r?\n/).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
-// Runs LightCraft commands on one image and returns their results; each step is [command, params].
 async function lightRun(s, src, steps) {
   const script = path.join(s.dir, `run-${++s.n}.jsonl`);
   await fsp.writeFile(script, steps.map(([command, params]) => JSON.stringify({ command, params: params || {} })).join('\n'));
@@ -49,7 +40,6 @@ async function render(s, src, out, settings, extra = []) {
   return out;
 }
 const UNIT = { x0: 0, y0: 0, x1: 1, y1: 1 };
-// What a mask (an image's transparency) needs: the same framing and nothing else.
 const geometryOnly = (dev) => ({ orientation: dev.orientation, geometry: dev.geometry, crop: { ...dev.crop, flip_h: false, flip_v: false } });
 function settingsFor(dev, mode) {
   if (mode === 'before') return geometryOnly(dev);
@@ -57,7 +47,6 @@ function settingsFor(dev, mode) {
   return dev;
 }
 
-// The ICC profile's own name, so the saved file can keep the colour space it came in.
 function iccName(buf) {
   try {
     const n = buf.readUInt32BE(128);
@@ -92,13 +81,11 @@ async function makeProxies(s, file, tag) {
   }
   return list;
 }
-// The copy to render from for an output of `size` pixels on its long edge, given how much of the frame is kept.
 function sourceFor(b, size, dev, mask) {
   const r = dev?.crop?.geometry?.rect, keep = r ? Math.max(0.05, Math.max(r.x1 - r.x0, r.y1 - r.y0)) : 1;
   const need = size / keep, list = mask ? b.maskProxies : b.proxies;
   return (list || []).find((p) => p.side >= need)?.file || (mask ? b.mask : b.path);
 }
-// A base is a picture LightCraft can read (RGB), with its transparency kept beside it as a grey mask.
 async function addBase(s, file, { raw = false } = {}) {
   const i = s.bases.length, tag = `b${i}`;
   let pathRgb = file, mask = null;
@@ -111,7 +98,6 @@ async function addBase(s, file, { raw = false } = {}) {
     }
     if (alpha || !LC_READS.has(U.ext(file)) || m.space === 'cmyk') {
       pathRgb = path.join(s.dir, `${tag}.tif`);
-      // CMYK is turned into RGB through its own profile; anything else keeps its colour space.
       const pipe = sharp()(file, { failOn: 'none' }).removeAlpha();
       await (m.space === 'cmyk' ? pipe.toColourspace('srgb') : pipe.keepIccProfile()).tiff({ compression: 'none' }).toFile(pathRgb);
     }
@@ -123,7 +109,6 @@ async function addBase(s, file, { raw = false } = {}) {
   return { base: i, w: b.w, h: b.h, alpha: !!mask, raw };
 }
 
-// Working copies left behind by an editor that never closed (Lime quit, or crashed) go after a day.
 async function sweep() {
   const now = Date.now();
   for (const d of await fsp.readdir(U.cfg.tmp).catch(() => [])) {
@@ -140,7 +125,6 @@ async function open(file) {
     const e = U.ext(file), raw = U.groupOf(file) === 'raw';
     let src = file, note = '';
     if (!raw) {
-      // Turned upright first when the camera only noted which way up it was, so every tool sees the same pixels.
       const m = await sharp()(file, { failOn: 'none' }).metadata().catch(() => null);
       if (!m || !LC_READS.has(e) || (m.orientation && m.orientation > 1) || ['psd', 'psb', 'pcraft'].includes(e)) {
         src = path.join(s.dir, 'original.tif');
@@ -153,8 +137,6 @@ async function open(file) {
     }
     const b = await addBase(s, src, { raw });
     const info = s.bases[0].info;
-    // The saved file keeps the colour space LightCraft can render in, and the original's Exif: from the original
-    // itself when sharp reads it, else from a tiny copy LightCraft writes with the camera data.
     const meta = await sharp()(file, { failOn: 'none' }).metadata().catch(() => null);
     s.space = spaceOf(meta?.icc);
     if (SHARP_READS.has(e) && meta && s.space && meta.space !== 'cmyk') s.carrier = file;
@@ -170,7 +152,6 @@ async function open(file) {
   } catch (err) { close(s.id); throw err; }
 }
 
-// Renders what the editor shows: the edit at screen size, the whole frame while cropping, or the original.
 async function preview(id, state, opts = {}) {
   const s = get(id), b = opts.mode === 'before' ? s.bases[0] : s.bases[state.base];
   const size = Math.max(16, Math.round(opts.size || 1600));
@@ -192,7 +173,6 @@ async function preview(id, state, opts = {}) {
     } finally { fsp.rm(am, { force: true }).catch(() => {}); }
   } finally { fsp.rm(out, { force: true }).catch(() => {}); }
 }
-// LightCraft's built-in looks, in its own order and groups.
 let lookList = null;
 async function looks() {
   if (!lookList) {
@@ -201,13 +181,11 @@ async function looks() {
   }
   return lookList;
 }
-// LightCraft's profiles: Color is the plain rendering, the rest are creative starting points.
 let profileList = null;
 async function profiles() {
   if (!profileList) profileList = (jsonLines((await lightcraft(['run', 'profiles.list'])).stdout)[0]?.result || []).map(({ id, name, group }) => ({ id, name, group }));
   return profileList;
 }
-// A small rendering of one LightCraft look on the image, for the Looks panel.
 async function lookThumb(id, preset, size = 112) {
   const s = get(id), b = s.bases[0], out = path.join(s.dir, `look-${++s.n}.jpg`);
   s.thumbSrc ||= (async () => {
@@ -222,8 +200,6 @@ async function lookThumb(id, preset, size = 112) {
   } finally { fsp.rm(out, { force: true }).catch(() => {}); }
 }
 
-// LightCraft's own automatic edits, which answer with settings: Auto, Auto B&W, a look, auto straighten, dust
-// and blemish spots, and spots placed by hand (their source is chosen once here and then kept).
 const DEVELOP = {
   auto: () => [['develop.auto']],
   bw: () => [['develop.treatment', { bw: true }], ['develop.autoBwMix']],
@@ -242,8 +218,6 @@ async function develop(id, state, kind, params = {}) {
   return { dev: res[res.length - 1], result: res[res.length - 2] };
 }
 
-// A flat RGB or RGBA picture of the base for tools that change pixels. A RAW is developed first, with everything
-// but the framing, the post-crop effects and the spots, which carry on as settings on the new base.
 async function pixels(s, state) {
   const b = s.bases[state.base];
   if (b.raw) {
@@ -288,7 +262,6 @@ const PC = {
   glow: [['filter.gallery.diffuseGlow']],
 };
 const LIME = { removeBg: 'remove-background', blurFaces: 'blur-faces', upscale: 'upscale-image' };
-// Applies a PhotoCraft action or a Lime tool to the base; the result becomes a new base under the same settings.
 async function step(id, state, kind, opts = {}) {
   const s = get(id), before = s.bases[state.base];
   const { file, baked } = await pixels(s, state);
@@ -305,7 +278,6 @@ async function step(id, state, kind, opts = {}) {
   const b = await addBase(s, out);
   let dev = null;
   if (baked) {
-    // The RAW's light and colour are now in the pixels; the framing, effects and spots stay settings.
     const d = state.dev, fresh = s.bases[b.base].info.develop;
     dev = { ...fresh, crop: d.crop, orientation: d.orientation, vignette: d.vignette, grain: d.grain, spots: d.spots, red_eye: d.red_eye };
   }
@@ -314,8 +286,6 @@ async function step(id, state, kind, opts = {}) {
 
 const flatten = (pipe, to, alpha) => (alpha && NO_ALPHA.has(to) ? pipe.flatten({ background: '#ffffff' }) : pipe);
 const tiffBuf = (pipe, deep) => (deep ? pipe.toColourspace('rgb16') : pipe).keepIccProfile().tiff({ compression: 'none' }).toBuffer({ resolveWithObject: true });
-// Saves the edit at full size: LightCraft renders it, then the drawing goes on top, then the size and canvas change,
-// then it is written with the original's metadata and colour profile.
 async function save(id, state, overlay, target, fmt = {}) {
   const s = get(id), b = s.bases[state.base];
   const to = fmt.to === 'jpeg' ? 'jpg' : fmt.to === 'tif' ? 'tiff' : fmt.to || (U.groupOf(s.file) === 'raw' ? 'jpg' : KEEP[U.ext(s.file)] || 'png');
@@ -346,7 +316,6 @@ async function save(id, state, overlay, target, fmt = {}) {
       const bg = o.canvas.color === 'transparent' ? { r: 0, g: 0, b: 0, alpha: 0 } : o.canvas.color || '#ffffff';
       let pipe = sharp()(cur.data);
       if (o.canvas.color === 'transparent') pipe = pipe.ensureAlpha();
-      // Growing pads with the colour; shrinking cuts from around the anchor.
       const ext = { top: Math.max(0, top), bottom: Math.max(0, ch - h - top), left: Math.max(0, left), right: Math.max(0, cw - w - left), background: bg };
       cur = await tiffBuf(pipe.extend(ext), deep);
       if (cw < w || ch < h) cur = await tiffBuf(sharp()(cur.data).extract({ left: Math.max(0, -left), top: Math.max(0, -top), width: cw, height: ch }), deep);
@@ -358,8 +327,6 @@ async function save(id, state, overlay, target, fmt = {}) {
     return { path: final.path || final, w: m.width, h: m.height, to, bytes: fs.statSync(final.path || final).size };
   } finally { fsp.rm(tif, { force: true }).catch(() => {}); }
 }
-// The original goes in first so its Exif comes along (turned upright), then the edit replaces every pixel; its
-// colour profile is the one the edit was rendered in.
 async function encode(s, buf, to, out, { quality, alpha, deep }) {
   await fsp.mkdir(path.dirname(out), { recursive: true });
   let pipe;

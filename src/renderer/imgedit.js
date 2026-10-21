@@ -2,9 +2,6 @@ import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
 import { setDocName, confirm3 } from './editor-kit.js';
 
-// The image editor. Light, colour, crop, healing and the rest are LightCraft develop settings rendered by the
-// worker (imgedit.js there), so what is shown is a screen-sized rendering of exactly what Save writes. Text and
-// shapes are drawn here, on a canvas, the same way for the screen and for the saved file.
 const TOOLS = [
   ['adjust', 'sliders', 'Adjust', 'Light, colour, detail and effects. Double-click a slider’s name to reset it.'],
   ['looks', 'looks', 'Looks', 'Pick a look; the amount slider sets how strong it is.'],
@@ -29,7 +26,6 @@ const FONTS = [['sans', 'Noto Sans', '"Noto Sans",Arial,sans-serif'], ['serif', 
   ['carlito', 'Carlito', 'Carlito,Calibri,sans-serif'], ['caveat', 'Caveat (handwriting)', 'Caveat,cursive'], ['dancing', 'Dancing Script', '"Dancing Script",cursive']];
 const fontCss = (f) => (String(f).startsWith('sys:') ? `"${String(f).slice(4).replace(/["\\]/g, '')}","Noto Sans",sans-serif` : (FONTS.find((x) => x[0] === f) || FONTS[0])[2]);
 const ASPECTS = [['free', 'Free'], ['orig', 'Original'], ['1:1', '1:1'], ['4:5', '4:5'], ['3:2', '3:2'], ['4:3', '4:3'], ['16:9', '16:9'], ['5:7', '5:7'], ['2:1', '2:1']];
-// The camera's orientation tag as a turn (quarter turns clockwise) after an optional mirror.
 const ORIENT = { Normal: [0, 0], FlipH: [0, 1], Rotate180: [2, 0], FlipV: [2, 1], Rotate90: [1, 0], Rotate270: [3, 0], Transverse: [1, 1], Transpose: [3, 1] };
 const orientName = (rot, flip) => Object.keys(ORIENT).find((k) => ORIENT[k][0] === rot && ORIENT[k][1] === flip) || 'Normal';
 const HUES = [['red', '#e8453c'], ['orange', '#f08a24'], ['yellow', '#f2d230'], ['green', '#4cb84c'], ['aqua', '#2ec4c4'], ['blue', '#3d7be8'], ['purple', '#8a5ce6'], ['magenta', '#d64fc0']];
@@ -40,7 +36,6 @@ const setPath = (o, p, v) => { const ks = p.split('.'), last = ks.pop(); ks.redu
 const signed = (n, d = 0) => `${n > 0 ? '+' : ''}${Number(n).toFixed(d)}`;
 const plain = (msg) => String(msg?.message || msg || '').replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
-// Lightroom's basic panel and the rest, as LightCraft develop controls.
 const TEMP = { key: 'temp', label: 'Temp', min: -100, max: 100, step: 1, mid: true, track: 'linear-gradient(90deg,#3d7be8,#e9e2c8,#f2c230)' };
 const TINT = { key: 'tint', label: 'Tint', min: -100, max: 100, step: 1, mid: true, track: 'linear-gradient(90deg,#3fae4a,#e6e1e6,#d64fc0)' };
 const S = (key, label, min = -100, max = 100, step = 1, more = {}) => ({ key, label, min, max, step, mid: min < 0, ...more });
@@ -116,9 +111,6 @@ export function openEditor(view, { file }, ctx) {
   const ink = h('<canvas class="ink"></canvas>');
   const marks = h('<div class="marks"></div>');
 
-  // ── Geometry ────────────────────────────────────────────────────────────────────────────────────────────────
-  // The frame is the image after rotation and mirroring; straightening turns the picture inside it about the
-  // middle, and the crop is a rectangle in that frame (fractions of its width and height), as LightCraft has it.
   const dimsOf = () => st.dims[st.base] || { w: 1, h: 1 };
   const swapped = () => ORIENT[st.dev.orientation]?.[0] % 2 === 1;
   const frame = () => { const d = dimsOf(); return swapped() ? [d.h, d.w] : [d.w, d.h]; };
@@ -133,14 +125,12 @@ export function openEditor(view, { file }, ctx) {
   };
   const rot = (x, y, a, cx, cy) => { const c = Math.cos(a), s = Math.sin(a), dx = x - cx, dy = y - cy; return [cx + c * dx - s * dy, cy + s * dx + c * dy]; };
   const rad = () => (geo().angle * Math.PI) / 180;
-  // Whether a crop (in frame pixels) lies wholly on the turned picture.
   function inside(x0, y0, x1, y1, a = rad()) {
     const [W, H] = frame(), e = 1e-6 * Math.max(W, H);
     return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].every(([x, y]) => { const [u, v] = rot(x, y, -a, W / 2, H / 2); return u >= -e && v >= -e && u <= W + e && v <= H + e; });
   }
   const toPx = (r) => { const [W, H] = frame(); return [r.x0 * W, r.y0 * H, r.x1 * W, r.y1 * H]; };
   const toRect = ([x0, y0, x1, y1]) => { const [W, H] = frame(); return { x0: x0 / W, y0: y0 / H, x1: x1 / W, y1: y1 / H }; };
-  // Moves a crop towards the middle, then shrinks it, until it fits the turned picture (LightCraft's own rule).
   function fitCrop(r, a = rad()) {
     const [W, H] = frame();
     let [x0, y0, x1, y1] = toPx(r);
@@ -156,14 +146,12 @@ export function openEditor(view, { file }, ctx) {
     [x0, y0, x1, y1] = [W / 2 - w * lo / 2, H / 2 - hh * lo / 2, W / 2 + w * lo / 2, H / 2 + hh * lo / 2];
     return toRect([x0, y0, x1, y1]);
   }
-  // The largest crop of a shape (width ÷ height in pixels) centred on the picture.
   function largest(ratio) {
     const [W, H] = frame();
     let w = W, hh = W / ratio;
     if (hh > H) { hh = H; w = H * ratio; }
     return fitCrop(toRect([(W - w) / 2, (H - hh) / 2, (W + w) / 2, (H + hh) / 2]));
   }
-  // Points LightCraft keeps for spots and red eye are fractions of the turned image before straightening.
   function normFromOut(ox, oy) {
     const [W, H] = frame(), r = geo().rect, [u, v] = rot(r.x0 * W + ox, r.y0 * H + oy, -rad(), W / 2, H / 2);
     return [u / W, v / H];
@@ -172,12 +160,9 @@ export function openEditor(view, { file }, ctx) {
     const [W, H] = frame(), r = geo().rect, [x, y] = rot(u * W, v * H, rad(), W / 2, H / 2);
     return [x - r.x0 * W, y - r.y0 * H];
   }
-  // Text and shapes are kept in the frame, in units of its long edge, so they stay with the picture when the crop
-  // changes and keep their size when it is upscaled.
   const outFromL = (x, y) => { const [W, H] = frame(), r = geo().rect, l = L(); return [x * l - r.x0 * W, y * l - r.y0 * H]; };
   const lFromOut = (ox, oy) => { const [W, H] = frame(), r = geo().rect, l = L(); return [(ox + r.x0 * W) / l, (oy + r.y0 * H) / l]; };
 
-  // ── Edit state and history ──────────────────────────────────────────────────────────────────────────────────
   const editState = () => ({ base: st.base, dev: st.dev, output: effectiveOutput() });
   const snap = () => clone({ base: st.base, dev: st.dev, output: st.output, overlays: st.overlays.map(strip) });
   const strip = (o) => { const { _b, ...rest } = o; return rest; };
@@ -188,7 +173,6 @@ export function openEditor(view, { file }, ctx) {
     st.hist = st.hist.slice(0, st.at + 1);
     st.hist.push({ label, state: s });
     st.at = st.hist.length - 1;
-    // Making another change ends the look being tried, so the next look starts from here.
     if (label !== 'Look') st.look = null;
     chrome();
   }
@@ -218,7 +202,6 @@ export function openEditor(view, { file }, ctx) {
     return o;
   }
 
-  // ── Opening ─────────────────────────────────────────────────────────────────────────────────────────────────
   async function load() {
     try {
       st.sess = await call('open', file);
@@ -245,9 +228,8 @@ export function openEditor(view, { file }, ctx) {
     api.invoke('editor:call', 'fonts').then((list) => { st.fonts = list || []; if (MARKUP.has(st.tool)) renderProps(); }).catch(() => {});
   }
 
-  // ── Preview ─────────────────────────────────────────────────────────────────────────────────────────────────
   const dpr = () => window.devicePixelRatio || 1;
-  let kd = 1; // CSS pixels per pixel of the cropped image (or of the frame while cropping)
+  let kd = 1;
   const viewMode = () => (st.before ? 'before' : st.tool === 'crop' ? 'frame' : 'normal');
   function previewSize(mode, draft) {
     const [W, H] = mode === 'frame' ? frame() : outSize(), long = Math.max(W, H);
@@ -261,7 +243,6 @@ export function openEditor(view, { file }, ctx) {
   }
   let refreshT = null;
   const later = (ms, draft = false) => { clearTimeout(refreshT); refreshT = setTimeout(() => { refreshT = null; refresh(draft); }, ms); };
-  // Renders the newest state; while one rendering is under way, later changes wait for it and only the last is drawn.
   async function refresh(draft = false) {
     clearTimeout(refreshT);
     refreshT = null;
@@ -287,21 +268,18 @@ export function openEditor(view, { file }, ctx) {
         photo.src = url;
         drawHistogram(im);
       } while (pv.again);
-      // A quick rendering while dragging is followed by a sharp one once things settle.
       if (pv.draft) { pv.draft = false; later(220); }
     } catch (e) {
       if (!disposed) tip(plain(e));
     } finally { pv.busy = false; }
   }
 
-  // ── Layout and zoom ─────────────────────────────────────────────────────────────────────────────────────────
   function fitScale() {
     const aw = Math.max(80, stage.clientWidth - 56), ah = Math.max(80, stage.clientHeight - 56);
     if (st.tool === 'crop') { const [W, H] = frame(); return Math.min(aw / W, ah / H); }
     const [w, hh] = outSize(), [cw, ch, rw, rh] = finalSize();
     return Math.min(aw / (cw * w / rw), ah / (ch * hh / rh));
   }
-  // Puts the photo, the drawing layer and the handles at the current zoom.
   function layout(at) {
     if (!st.dev) return;
     const before = at && photo.getBoundingClientRect();
@@ -332,7 +310,6 @@ export function openEditor(view, { file }, ctx) {
     ink.hidden = cropping || st.before;
     zoomMenu();
     if (at && before) {
-      // Keep the spot under the pointer where it was.
       const after = photo.getBoundingClientRect(), fx = (at.x - before.left) / before.width, fy = (at.y - before.top) / before.height;
       stage.scrollLeft += after.left + fx * after.width - at.x;
       stage.scrollTop += after.top + fy * after.height - at.y;
@@ -357,7 +334,6 @@ export function openEditor(view, { file }, ctx) {
     layout(at || (nz === 'fit' ? null : { x: stage.getBoundingClientRect().left + stage.clientWidth / 2, y: stage.getBoundingClientRect().top + stage.clientHeight / 2 }));
   }
 
-  // ── Histogram ───────────────────────────────────────────────────────────────────────────────────────────────
   let histData = null;
   function drawHistogram(im) {
     const c = document.createElement('canvas'), w = 200, hh = Math.max(1, Math.round(200 * im.naturalHeight / im.naturalWidth));
@@ -395,8 +371,6 @@ export function openEditor(view, { file }, ctx) {
     if (info) info.innerHTML = `<span>${histData.clipLo / histData.n > 0.01 ? 'Shadows clipped' : ''}</span><span>${histData.clipHi / histData.n > 0.01 ? 'Highlights clipped' : ''}</span>`;
   }
 
-  // ── Text and shapes ─────────────────────────────────────────────────────────────────────────────────────────
-  // Draws every added thing; t maps frame units to canvas pixels (k pixels per unit, minus the crop corner).
   function drawObjects(cx, t, skip) {
     for (const o of st.overlays) {
       if (o === skip) continue;
@@ -415,7 +389,6 @@ export function openEditor(view, { file }, ctx) {
   }
   function drawText(cx, o, t) {
     const px = o.size * t.k, [x0, y0] = P(t, o.x, o.y), m = textMetrics(cx, o, px), bh = m.lines.length * m.lh;
-    // A font not loaded yet draws as a stand-in; draw again once it has arrived.
     if (!document.fonts.check(cx.font)) document.fonts.load(cx.font).then(() => { if (document.fonts.check(cx.font)) drawInk(); }).catch(() => {});
     o._b = [o.x, o.y, m.bw / t.k, bh / t.k];
     if (o.textStyle === 'label') {
@@ -478,7 +451,6 @@ export function openEditor(view, { file }, ctx) {
     if (st.before) return;
     drawObjects(cx, displayT(kd * dpr()), editing);
   }
-  // The added things at the cropped image's full size, for Save (smaller if a canvas that big can't be made).
   async function renderOverlay() {
     if (!st.overlays.length) return null;
     const [w, hh] = outSize(), k = Math.min(1, 16000 / Math.max(w, hh), Math.sqrt(2.6e8 / (w * hh)));
@@ -514,7 +486,6 @@ export function openEditor(view, { file }, ctx) {
     else if (o.x1 != null) Object.assign(o, { x1: o.x1 + dx, y1: o.y1 + dy, x2: o.x2 + dx, y2: o.y2 + dy });
     else Object.assign(o, { x: o.x + dx, y: o.y + dy });
   }
-  // Scales from the top-left corner of the thing's box; text grows its letters.
   function scaleObj(o, snapO, sx, sy) {
     const [bx, by] = bbox(snapO), f = (x, y) => [bx + (x - bx) * sx, by + (y - by) * sy];
     if (o.type === 'text') o.size = Math.max(0.004, snapO.size * Math.max(0.05, (sx + sy) / 2));
@@ -523,7 +494,6 @@ export function openEditor(view, { file }, ctx) {
     else { [o.x1, o.y1] = f(snapO.x1, snapO.y1); [o.x2, o.y2] = f(snapO.x2, snapO.y2); }
   }
 
-  // ── Marks layer: selection, crop handles, spots, eyes ───────────────────────────────────────────────────────
   let brush = null;
   function drawMarks() {
     marks.innerHTML = '';
@@ -537,7 +507,6 @@ export function openEditor(view, { file }, ctx) {
         const p = sp.points[0], r = Math.max(4, sp.size * l * sc);
         const pts = sp.points.map((q) => outFromNorm(q.x, q.y).map((v) => v * sc));
         const [tx, ty] = pts[0];
-        // A brushed spot shows the path it covers.
         if (pts.length > 1) marks.append(h(`<svg class="spotpath" width="100%" height="100%"><polyline points="${pts.map((q) => q.join(',')).join(' ')}" stroke-width="${2 * r}"/></svg>`));
         const el = h(`<div class="spot${i === st.spotSel ? ' sel' : ''}" title="Spot ${i + 1}: click to select, Delete removes it" style="left:${tx}px;top:${ty}px;width:${2 * r}px;height:${2 * r}px"></div>`);
         el.addEventListener('pointerdown', (e) => { e.stopPropagation(); st.spotSel = i; drawMarks(); renderProps(); });
@@ -581,7 +550,6 @@ export function openEditor(view, { file }, ctx) {
     Object.assign(brush.style, { width: `${d}px`, height: `${d}px` });
   }
 
-  // ── Crop ────────────────────────────────────────────────────────────────────────────────────────────────────
   let cropIntent = null;
   function drawCropBox() {
     const [x0, y0, x1, y1] = toPx(geo().rect).map((v) => v * kd);
@@ -593,7 +561,6 @@ export function openEditor(view, { file }, ctx) {
     marks.append(...['t', 'b', 'l', 'r'].map((k) => h(`<div class="shade" data-s="${k}"></div>`)), box);
     shade(x0, y0, x1, y1);
   }
-  // Darkens what the crop leaves out.
   function shade(x0, y0, x1, y1) {
     const W = marks.clientWidth || parseFloat(marks.style.width), H = marks.clientHeight || parseFloat(marks.style.height);
     const at = { t: [0, 0, W, y0], b: [0, y1, W, H - y1], l: [0, y0, x0, y1 - y0], r: [x1, y0, W - x1, y1 - y0] };
@@ -629,7 +596,6 @@ export function openEditor(view, { file }, ctx) {
         if (handle.includes('s')) y1 = clamp(y1 + dy, y0 + 8, H);
         const ratio = aspectRatio() || (ev.shiftKey ? (start[2] - start[0]) / (start[3] - start[1]) : null);
         if (ratio) {
-          // Keep the shape: the dragged side leads, the other follows from the opposite corner or edge.
           let w = x1 - x0, hh = y1 - y0;
           if (handle === 'n' || handle === 's') w = hh * ratio; else if (handle === 'e' || handle === 'w') hh = w / ratio; else if (w / hh > ratio) w = hh * ratio; else hh = w / ratio;
           if (handle.includes('w')) x0 = x1 - w; else if (handle.includes('e')) x1 = x0 + w; else { const cx = (start[0] + start[2]) / 2; x0 = cx - w / 2; x1 = cx + w / 2; }
@@ -637,7 +603,6 @@ export function openEditor(view, { file }, ctx) {
           if (x0 < 0 || y0 < 0 || x1 > W || y1 > H) return;
         }
       }
-      // Never past the turned picture: go as far towards the pointer as fits.
       const target = [x0, y0, x1, y1];
       if (!inside(...target)) {
         let lo = 0, hi = 1;
@@ -666,7 +631,6 @@ export function openEditor(view, { file }, ctx) {
     }
     if (!live) { cropIntent = null; commit('Straighten'); if (st.tool !== 'crop') layout(); else { drawMarks(); renderProps(); } }
   }
-  // Drag outside the crop to turn the picture, as in Lightroom.
   function dragRotate(e) {
     const r = sheet.getBoundingClientRect(), c = [r.left + r.width / 2, r.top + r.height / 2];
     const a0 = Math.atan2(e.clientY - c[1], e.clientX - c[0]), start = geo().angle;
@@ -677,12 +641,10 @@ export function openEditor(view, { file }, ctx) {
     window.addEventListener('pointerup', up);
   }
   const syncAngle = () => { const r = $('[data-k="angle"] input', props); if (r) { r.value = geo().angle; paintRange(r); $('[data-k="angle"] output', props).textContent = `${geo().angle.toFixed(1)}°`; } };
-  // Turning or mirroring moves the crop, the spots, the red eyes and what was added along with the picture.
   function reorient(kind) {
     const [W, H] = frame(), l = L(), w = W / l, hh = H / l, d = st.dev, g = d.crop.geometry, r = g.rect;
     const [turn, flip] = ORIENT[d.orientation] || [0, 0];
     const cw = kind === 'right' || kind === 'left';
-    // Turning left is three turns right; mirroring vertically is mirroring and turning twice.
     const steps = kind === 'right' ? 1 : kind === 'left' ? 3 : 0;
     const P1 = (u, v) => { for (let i = 0; i < steps; i++) [u, v] = [1 - v, u]; if (kind === 'flipH') u = 1 - u; if (kind === 'flipV') v = 1 - v; return [u, v]; };
     const V1 = (x, y) => { for (let i = 0; i < steps; i++) [x, y] = [-y, x]; if (kind === 'flipH') x = -x; if (kind === 'flipV') y = -y; return [x, y]; };
@@ -699,7 +661,6 @@ export function openEditor(view, { file }, ctx) {
       if (sh.kind === 'radial') { sh.center = NP(sh.center); sh.angle = cw ? sh.angle + 90 * steps : -sh.angle; }
       if (sh.kind === 'brush') sh.strokes = sh.strokes.map((k) => ({ ...k, points: k.points.map(NP) }));
     }
-    // Frame units: points move with the picture; text keeps reading the right way and moves by its middle.
     const F = (x, y) => { const [u, v] = P1(x / w, y / hh), [nw, nh] = steps % 2 ? [hh, w] : [w, hh]; return [u * nw, v * nh]; };
     for (const o of st.overlays) {
       if (o.type === 'ink') o.points = o.points.map(([x, y]) => F(x, y));
@@ -716,7 +677,6 @@ export function openEditor(view, { file }, ctx) {
     renderProps();
   }
 
-  // ── Pointer on the image ────────────────────────────────────────────────────────────────────────────────────
   const outPt = (e) => { const r = marks.getBoundingClientRect(); return [(e.clientX - r.left) / kd, (e.clientY - r.top) / kd]; };
   marks.addEventListener('pointermove', (e) => {
     if (!brush) return;
@@ -774,7 +734,6 @@ export function openEditor(view, { file }, ctx) {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
-  // Fewer points for a drawn line, so the history stays small; what it looks like doesn't change.
   function simplify(pts, eps) {
     if (pts.length < 3) return pts;
     const keep = [pts[0]];
@@ -860,8 +819,6 @@ export function openEditor(view, { file }, ctx) {
     return false;
   }
 
-  // ── Heal and red eye ────────────────────────────────────────────────────────────────────────────────────────
-  // A click is a round spot, a drag a brushed one; LightCraft picks where to take from, once, when it is added.
   function brushSpot(e) {
     const pts = [outPt(e)], r = st.heal.size * L();
     const trail = h('<canvas class="ink" style="pointer-events:none"></canvas>');
@@ -911,9 +868,6 @@ export function openEditor(view, { file }, ctx) {
     refresh();
   }
 
-  // ── Masks ───────────────────────────────────────────────────────────────────────────────────────────────────
-  // Lightroom's local adjustments: a linear or radial gradient, or painted strokes, each with its own sliders.
-  // Shapes are kept where LightCraft keeps them, in fractions of the turned image before straightening.
   const MASK_ADJUST = { exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, temp: 0, tint: 0, texture: 0, clarity: 0, dehaze: 0, hue: 0, saturation: 0, sharpness: 0, noise: 0, moire: 0, defringe: 0, color_hue: 0, color_sat: 0, amount: 100 };
   const MASK_KINDS = [['linear', 'line', 'Linear'], ['radial', 'circle', 'Radial'], ['brush', 'pen', 'Brush']];
   const maskOf = () => (st.maskSel >= 0 ? st.dev.masks[st.maskSel] : null);
@@ -942,7 +896,6 @@ export function openEditor(view, { file }, ctx) {
     const dot = (x, y, part, title) => { const d = h(`<div class="mdot" data-part="${part}" title="${title}" style="left:${x}px;top:${y}px"></div>`); d.addEventListener('pointerdown', (e) => dragMask(e, part)); marks.append(d); };
     if (sh.kind === 'linear') {
       const [ax, ay] = dispN(sh.start), [bx, by] = dispN(sh.end), ang = Math.atan2(by - ay, bx - ax), len = Math.hypot(bx - ax, by - ay);
-      // Full effect at the first line, none past the second.
       const clip = h('<div class="mclip"></div>');
       for (const [x, y, cls] of [[ax, ay, 'full'], [bx, by, 'none']]) clip.append(h(`<div class="mline ${cls}" style="left:${x}px;top:${y}px;transform:translate(-50%,0) rotate(${ang + Math.PI / 2}rad)"></div>`));
       clip.append(h(`<div class="mspan" style="left:${ax}px;top:${ay}px;width:${len}px;transform:rotate(${ang}rad)"></div>`));
@@ -981,7 +934,6 @@ export function openEditor(view, { file }, ctx) {
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      // A click without a drag makes a gradient of a useful size.
       if (shape.kind === 'linear' && Math.hypot((shape.end.x - start.x) * W, (shape.end.y - start.y) * H) < 4 / kd) shape.end = { x: start.x, y: Math.min(1, start.y + 0.25) };
       if (shape.kind === 'radial' && shape.rx < 0.01 && shape.ry < 0.01) { shape.rx = 0.2; shape.ry = 0.15; }
       commit(shape.kind === 'linear' ? 'Linear gradient' : 'Radial gradient');
@@ -1019,7 +971,6 @@ export function openEditor(view, { file }, ctx) {
         if (part === 'end' || part === 'move') sh.end = { x: before.end.x + dx, y: before.end.y + dy };
       } else if (part === 'move') sh.center = { x: before.center.x + dx, y: before.center.y + dy };
       else {
-        // Radii and turn from where the handle is dragged, measured in the turned image.
         const [cx, cy] = outFromNorm(sh.center.x, sh.center.y), [px, py] = outPt(ev), r = Math.hypot(px - cx, py - cy) / l;
         if (part === 'rx') { sh.rx = Math.max(0.005, r); sh.angle = Math.atan2(py - cy, px - cx) * 180 / Math.PI - geo().angle; } else sh.ry = Math.max(0.005, r);
       }
@@ -1031,7 +982,6 @@ export function openEditor(view, { file }, ctx) {
     window.addEventListener('pointerup', up);
   }
 
-  // ── Steps that run in the worker ────────────────────────────────────────────────────────────────────────────
   async function work(label, fn, quiet) {
     if (st.busy) return null;
     st.busy = true;
@@ -1070,7 +1020,6 @@ export function openEditor(view, { file }, ctx) {
     });
   }
 
-  // ── Tools and the panel ─────────────────────────────────────────────────────────────────────────────────────
   function selectTool(t) {
     endText();
     const was = st.tool;
@@ -1105,7 +1054,6 @@ export function openEditor(view, { file }, ctx) {
     $('input', el).addEventListener('change', (e) => { fn(e.target.value); renderProps(); });
     return el;
   };
-  // Relative white balance like Lightroom shows for JPEGs: 0 is as shot, ±100 about ±80 mired; RAWs show kelvin.
   const asShot = () => st.sess.asShot || [6500, 0];
   function wbGet(key) {
     const wb = st.dev.wb, [k0, t0] = asShot();
@@ -1181,7 +1129,6 @@ export function openEditor(view, { file }, ctx) {
     all.addEventListener('click', resetAll);
     props.append(all);
   }
-  // LightCraft's profiles, as Lightroom's: the starting look, with an amount for the creative ones.
   function profileRow() {
     const box = h('<div class="field"></div>'), p = st.dev.profile || { id: 'lc.color', amount: 100 };
     const groups = [...new Set((st.profiles || []).map((x) => x.group))];
@@ -1222,8 +1169,6 @@ export function openEditor(view, { file }, ctx) {
       slider({ ...S(`mixer.${cur}.sat`, 'Saturation'), track: `linear-gradient(90deg,#9a9a9a,${col})` }),
       slider({ ...S(`mixer.${cur}.lum`, 'Luminance'), track: `linear-gradient(90deg,#222,${col},#fff)` })], { open: false, reset: () => resetKeys(HUES.flatMap(([k]) => ['hue', 'sat', 'lum'].map((p) => `mixer.${k}.${p}`))) });
   }
-  // Point curves, like Curves: one for the whole image and one for each of red, green and blue. Drag a point, click
-  // to add one, drag one off the square to remove it.
   const CURVES = [['master', 'RGB', '#3d8a28'], ['red', 'Red', '#e8453c'], ['green', 'Green', '#3fae4a'], ['blue', 'Blue', '#3d7be8']];
   function curveWidget() {
     const box = h('<div class="field"></div>'), ch = st.curveCh || 'master', [, , colour] = CURVES.find((x) => x[0] === ch);
@@ -1269,11 +1214,9 @@ export function openEditor(view, { file }, ctx) {
       c.addEventListener('pointerup', up);
       save(); paint();
     });
-    // Drawn again when its section opens, at its real size.
     requestAnimationFrame(() => c.closest('details')?.addEventListener('toggle', () => requestAnimationFrame(paint)));
     return box;
   }
-  // Monotone cubic through the points, the shape a point curve takes.
   function spline(p) {
     const n = p.length, xs = p.map((q) => q[0]), ys = p.map((q) => q[1]);
     if (n < 2) return () => 0;
@@ -1324,7 +1267,6 @@ export function openEditor(view, { file }, ctx) {
     const all = [{ id: '', name: 'None', group: '' }, ...st.looks];
     grid.innerHTML = all.map((l) => `<button class="look" data-l="${esc(l.id)}" aria-pressed="${(st.look?.id || '') === l.id && (!!st.look || !l.id)}" title="${esc(l.group ? `${l.name} (${l.group})` : 'No look')}"><div class="tn"></div><span>${esc(l.name)}</span></button>`).join('');
     grid.addEventListener('click', (e) => { const b = e.target.closest('[data-l]'); if (b) applyLook(b.dataset.l, st.look?.amount ?? 100); });
-    // Thumbnails of each look on this photo, a few at a time.
     const queue = all.filter((l) => !st.thumbs.has(l.id));
     const show = () => $$('.look', grid).forEach((b) => { const u = st.thumbs.get(b.dataset.l); if (u) $('.tn', b).style.backgroundImage = `url(${u})`; });
     show();
@@ -1338,7 +1280,6 @@ export function openEditor(view, { file }, ctx) {
     };
     if (queue.length && !st.thumbing) { st.thumbing = true; Promise.all([worker(), worker(), worker()]).finally(() => { st.thumbing = false; }); }
   }
-  // Trying looks one after another replaces the last one (one history step); other edits end the trying.
   async function applyLook(id, amount) {
     const trying = st.look && st.look.entry === st.at ? st.look : { before: clone(st.dev), entry: -1 };
     let dev = clone(trying.before);
@@ -1412,7 +1353,6 @@ export function openEditor(view, { file }, ctx) {
     pct.addEventListener('change', (e) => { const p = Number(e.target.value) || 100; apply(w * p / 100, hh * p / 100); });
     pct.addEventListener('click', (e) => { if (e.target.closest('[data-d=reset]')) { st.output.resize = null; commit('Resize'); layout(); renderProps(); } });
     props.append(dims, pct, h(`<p class="tip">The crop is ${w} × ${hh} px.</p>`));
-    // Canvas: more room around the picture (or less), from an anchor, like Photoshop's Canvas Size.
     const canvasRows = [];
     const cdims = h(`<div class="dims"><div class="field"><label class="label">Width</label><input class="input" type="number" min="1" data-c="w" value="${c ? c.w : rw}"></div><span></span><div class="field"><label class="label">Height</label><input class="input" type="number" min="1" data-c="h" value="${c ? c.h : rh}"></div></div>`);
     const anchor = (c?.anchor || [0.5, 0.5]).join(',');
@@ -1470,7 +1410,6 @@ export function openEditor(view, { file }, ctx) {
       $(`[data-k="${k}"] input`, props).value = val;
       $(`[data-k="${k}"] output`, props).textContent = fmt(val);
     }
-    // Animals' eyes glow green, yellow or white rather than red; LightCraft treats them differently.
     const pet = h(`<label class="switch"><span class="text-sm">Pet eye</span><input type="checkbox"${(sel ? sel.pet : st.eye.pet) ? ' checked' : ''}></label>`);
     $('input', pet).addEventListener('change', (ev) => { if (sel) { sel.pet = ev.target.checked; commit('Pet eye'); refresh(); } else st.eye.pet = ev.target.checked; });
     props.append(pet, h(`<p class="tip">${st.dev.red_eye.length ? `${st.dev.red_eye.length} eye${st.dev.red_eye.length === 1 ? '' : 's'} fixed. ` : ''}Click the middle of each red eye; the pupil inside the circle is found and darkened.</p>`));
@@ -1555,7 +1494,6 @@ export function openEditor(view, { file }, ctx) {
     } else props.append(h(`<p class="tip">${TOOLS.find((x) => x[0] === st.tool)?.[3] || ''}</p>`));
   }
 
-  // ── History menu ────────────────────────────────────────────────────────────────────────────────────────────
   function historyMenu(btn) {
     document.querySelector('.histmenu')?.remove();
     const r = btn.getBoundingClientRect(), base = root.getBoundingClientRect();
@@ -1566,7 +1504,6 @@ export function openEditor(view, { file }, ctx) {
     menu.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if (b) { restore(Number(b.dataset.i)); menu.remove(); document.removeEventListener('pointerdown', close, true); } });
   }
 
-  // ── Before and after ────────────────────────────────────────────────────────────────────────────────────────
   let badge = null;
   function showBefore(on) {
     if (st.before === on || !st.dev) return;
@@ -1582,12 +1519,9 @@ export function openEditor(view, { file }, ctx) {
     refresh();
   }
 
-  // ── Saving ──────────────────────────────────────────────────────────────────────────────────────────────────
   const FORMATS = [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['avif', 'AVIF'], ['tiff', 'TIFF'], ['heic', 'HEIC']];
   const LOSSY = ['jpg', 'webp', 'avif', 'heic'];
   const stem = () => nameOf(file).replace(/\.[^.]+$/, '');
-  // Save writes "<name> (edited).<ext>" beside the original (or where Save as… last put it); Save as… picks a format,
-  // then asks, suggesting the same. The original is never written over.
   async function save(as) {
     endText();
     let target = st.savePath, fmt = st.saveFmt || { to: st.sess.keep };
@@ -1650,7 +1584,6 @@ export function openEditor(view, { file }, ctx) {
     go();
   }
 
-  // ── Wiring ──────────────────────────────────────────────────────────────────────────────────────────────────
   root.addEventListener('click', (e) => {
     const t = e.target.closest('[data-tool]');
     if (t) { selectTool(t.dataset.tool); return; }
@@ -1672,7 +1605,6 @@ export function openEditor(view, { file }, ctx) {
   ['pointerup', 'pointerleave'].forEach((ev) => cmp.addEventListener(ev, () => showBefore(false)));
   $('.zoom', root).addEventListener('change', (e) => setZoom(e.target.value === 'fit' ? 'fit' : Number(e.target.value)));
   const zoomBy = (f) => setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) * f);
-  // The keys every editor shares (and ?); the ones below are this editor's own.
   const keys = shortcuts([
     ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true })]],
     ['Edit', [key('Mod+Z', 'Undo', undo), key(['Mod+Shift+Z', 'Mod+Y'], 'Redo', redo), key('Mod+D', 'Duplicate what is selected'), key(['Delete', 'Backspace'], 'Delete it'), key(['ArrowLeft', 'ArrowRight'], 'Nudge it (Shift: 10 px)'), key('\\', 'Hold to see the original')]],
@@ -1681,7 +1613,6 @@ export function openEditor(view, { file }, ctx) {
   ], { typing: () => !!editing });
   const onKey = (e) => {
     if (document.querySelector('.scrim') || editing) return;
-    // A slider keeps its arrow keys, but the shortcuts still work after dragging one.
     const slid = e.target.matches?.('input[type=range], input[type=checkbox]');
     if (e.target.matches?.('input, textarea, select') && !slid) return;
     if (slid && (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End')) return;
@@ -1706,7 +1637,6 @@ export function openEditor(view, { file }, ctx) {
     const d = Math.max(-60, Math.min(60, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
     setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) * Math.exp(-d * 0.0065), { x: e.clientX, y: e.clientY });
   }, { passive: false });
-  // Hold Space and drag (or drag with the middle button) to move around a zoomed-in photo.
   let spaceDown = false;
   const onSpace = (e) => { if (e.code === 'Space' && !editing && !e.target.matches?.('input, textarea, select, [contenteditable]')) { spaceDown = e.type === 'keydown'; stage.classList.toggle('panning', spaceDown); if (spaceDown) e.preventDefault(); } };
   document.addEventListener('keydown', onSpace);
@@ -1725,7 +1655,6 @@ export function openEditor(view, { file }, ctx) {
   let roT = null;
   const ro = new ResizeObserver(() => { clearTimeout(roT); roT = setTimeout(() => { if (st.zoom === 'fit' || st.tool === 'crop') layout(); }, 60); });
   ro.observe(stage);
-  // For the tests: the edit as data, and a way to wait for the preview to catch up.
   root.__imged = { st, refresh, layout, commit, selectTool, idle: () => !pv.busy && !st.busy && !pv.again && !refreshT, normFromOut, outFromNorm };
 
   load();
@@ -1743,7 +1672,6 @@ export function openEditor(view, { file }, ctx) {
     st.thumbs.forEach((u) => URL.revokeObjectURL(u));
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
-  // The window closing ends the session too, so its working copies are removed.
   window.addEventListener('pagehide', dispose, { once: true });
   return dispose;
 }

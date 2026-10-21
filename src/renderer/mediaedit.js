@@ -2,9 +2,6 @@ import { $, $$, esc, h, nameOf, dirOf, sep, clean } from './ui.js';
 import { shortcuts, key, helpButton } from './shortcuts.js';
 import { setDocName, confirm3 } from './editor-kit.js';
 
-// The audio and video editor. Every change is a value in one edit list (E): the preview shows it live (WebGL for the
-// picture, Web Audio for the sound, a cleaned-up copy for noise and pitch), and Save hands the same list to the worker,
-// which renders it with one FFmpeg run.
 const IC = {
   play: 'M8 5.5v13l10.5-6.5z', pause: 'M8 5h3v14H8zM13 5h3v14h-3z', stepBack: 'M17 6l-7 6 7 6zM7 6v12', stepFwd: 'M7 6l7 6-7 6zM17 6v12',
   trim: 'M9 4H5v16h4M15 4h4v16h-4', split: 'M6 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM8.2 7.8L20 19M8.2 16.2L20 5',
@@ -52,7 +49,7 @@ const SIZES = [[0, 'Original'], [2160, '2160p (4K)'], [1440, '1440p'], [1080, '1
 const ASPECTS = [['free', 'Free'], ['orig', 'Full'], ['16:9', '16:9'], ['9:16', '9:16'], ['1:1', '1:1'], ['4:5', '4:5'], ['4:3', '4:3']];
 const ZERO_COLOUR = { temperature: 0, tint: 0, brightness: 0, contrast: 0, gamma: 0, saturation: 0 };
 const ZERO_AUDIO = { gain: 0, normalise: false, target: -16, eq: 'flat', bass: 0, treble: 0, mid: 0, midHz: 3000, lowcut: 0, denoise: '', hum: 0, pitch: 0, mono: false, balance: 0 };
-const N = 64; // colour cube steps, as the worker's HALD picture
+const N = 64;
 
 const fmtT = (t, frac = 2) => {
   t = Math.max(0, Number(t) || 0);
@@ -66,9 +63,6 @@ const ev = (x) => Math.max(2, Math.round(x / 2) * 2);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const dB = (x) => 10 ** (x / 20);
 
-// ── Colour ───────────────────────────────────────────────────────────────────────────────────────────────────────
-// White balance follows FFmpeg's colortemperature (a black-body tint that keeps the lightness), made relative to 6500 K
-// so the middle of the slider changes nothing; the rest follows eq. The result is one cube shared by preview and save.
 function kelvin(k) {
   const t = k / 100;
   const r = t <= 66 ? 1 : 1.29293618606 * (t - 60) ** -0.1332047592;
@@ -116,8 +110,6 @@ function buildCube(c, look, log, mix) {
   return out;
 }
 
-// ── Titles ────────────────────────────────────────────────────────────────────────────────────────────────────────
-// Drawn the same way for the preview and, at the output size, for the picture FFmpeg lays over the video.
 function drawTitle(g, W, H, t, op = 1) {
   if (!String(t.text || '').trim() || op <= 0) return null;
   const lines = String(t.text).split('\n');
@@ -128,7 +120,6 @@ function drawTitle(g, W, H, t, op = 1) {
   g.textAlign = t.align || 'center';
   const font = () => { g.font = `${t.bold ? 700 : 400} ${px}px ${fontCss(t.font)}`; return Math.max(...lines.map((l) => g.measureText(l).width)); };
   let bw = font();
-  // Words that would run off a narrow (cropped or upright) picture are made smaller to fit.
   if (bw > W * 0.92) { px *= (W * 0.92) / bw; bw = font(); }
   const lh = px * 1.22, bh = lh * lines.length, cx = t.x * W, cy = t.y * H;
   const x = t.align === 'left' ? cx - bw / 2 : t.align === 'right' ? cx + bw / 2 : cx;
@@ -155,7 +146,6 @@ const titleOpacity = (t, o) => {
   return f > 0 ? clamp(Math.min((o - t.start) / f, (t.end - o) / f), 0, 1) : 1;
 };
 
-// ── Preview drawing ───────────────────────────────────────────────────────────────────────────────────────────────
 const VS = `#version 300 es
 in vec2 p; out vec2 uv; void main() { uv = vec2(p.x * .5 + .5, .5 - p.y * .5); gl_Position = vec4(p, 0., 1.); }`;
 const FS = `#version 300 es
@@ -213,7 +203,6 @@ function glView(canvas) {
     },
   };
 }
-// Without WebGL the picture is drawn with the 2D canvas and the colour cube applied to the pixels on screen.
 function flatView(canvas) {
   const g = canvas.getContext('2d', { willReadFrequently: true });
   let cube = null;
@@ -222,7 +211,6 @@ function flatView(canvas) {
     draw(src, map, fade) {
       const W = canvas.width, H = canvas.height, sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
       if (!sw || !sh) return;
-      // map takes output (u, v) to source (s, t): s = a u + c v + e, t = b u + d v + f (column-major mat3).
       const [a, b, , c, d, , e, f] = map, det = a * d - b * c;
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.fillStyle = '#000';
@@ -294,7 +282,6 @@ export function openEditor(view, { file }, ctx) {
   const props = $('.props', root), status = $('.ed-status', root), tl = $('.me-tl', root), tlc = $('canvas', tl), hbar = $('.hbar', tl), timeEl = $('.me-time', root), lenEl = $('.me-len', root);
   let disposed = false, viewer = null, media = null, aux = null, musicEl = null;
 
-  // ── Edit list ──────────────────────────────────────────────────────────────────────────────────────────────────
   const fresh = (d) => ({
     inT: 0, outT: d, segs: [{ a: 0, b: d, off: false }], loop: 1, speed: 1, reverse: false,
     rotate: 0, hflip: false, vflip: false, crop: null, aspect: 'free', size: 0, color: { ...ZERO_COLOUR }, look: '', lookMix: 100, log: '', stabilise: false,
@@ -330,7 +317,6 @@ export function openEditor(view, { file }, ctx) {
     const [W0, H0] = e.rotate % 180 ? [v.height, v.width] : [v.width, v.height];
     const crop = e.crop ? [Math.round((e.crop.x * W0) / 2) * 2, Math.round((e.crop.y * H0) / 2) * 2, ev(e.crop.w * W0), ev(e.crop.h * H0)] : null;
     if (crop) { crop[2] = Math.min(crop[2], W0 - crop[0]); crop[3] = Math.min(crop[3], H0 - crop[1]); }
-    // A shape picked from the presets is kept exact (9:16 stays 9:16 in whole even pixels), so a resize gives 1080 × 1920.
     if (crop && /^\d+:\d+$/.test(e.aspect)) {
       const [p, q] = e.aspect.split(':').map(Number);
       let k = Math.floor(Math.min(crop[2] / p, crop[3] / q));
@@ -343,9 +329,7 @@ export function openEditor(view, { file }, ctx) {
     return { rotate: e.rotate, hflip: e.hflip, vflip: e.vflip, crop, out: [W, H], W, H, W0, H0, cw, ch };
   }
 
-  // ── History ────────────────────────────────────────────────────────────────────────────────────────────────────
   let lastKey = null, lastAt = 0;
-  // One step per action; a slider dragged or a field typed in keeps adding to the same step for a moment.
   function edit(fn, key, quiet) {
     const now = Date.now();
     if (!(key && key === lastKey && now - lastAt < 1200)) { st.hist.push(JSON.stringify(st.E)); if (st.hist.length > 300) st.hist.shift(); st.fut = []; }
@@ -372,7 +356,6 @@ export function openEditor(view, { file }, ctx) {
     drawTl();
   }
 
-  // ── Player ─────────────────────────────────────────────────────────────────────────────────────────────────────
   let ac = null, nodes = null;
   function makeMedia() {
     media = document.createElement(st.kind === 'video' ? 'video' : 'audio');
@@ -385,8 +368,6 @@ export function openEditor(view, { file }, ctx) {
     media.addEventListener('ended', () => { if (st.playing) tick(); });
     if (media.requestVideoFrameCallback) { const onFrame = () => { if (disposed) return; redraw(); media.requestVideoFrameCallback(onFrame); }; media.requestVideoFrameCallback(onFrame); }
   }
-  // The sound path: original (or cleaned-up copy) → low cut, bass, presence, treble → mono or balance → gain → fade →
-  // with the music → limiter → preview volume. The music dips while the clip's own sound is loud, as when saved.
   function makeGraph() {
     try { ac = new AudioContext(); } catch (_) { return; }
     const n = {};
@@ -417,7 +398,6 @@ export function openEditor(view, { file }, ctx) {
   }
   function totalGain() {
     const a = E().audio;
-    // Levelling sets the gain that brings the edit to the target loudness; otherwise it is the slider's.
     if (a.normalise) return st.loud && st.loudFor === loudKey() && Number.isFinite(st.loud.lufs) ? clamp(a.target - st.loud.lufs, -30, 30) : 0;
     return a.gain;
   }
@@ -436,8 +416,6 @@ export function openEditor(view, { file }, ctx) {
     n.low.frequency.value = a.lowcut > 0 ? a.lowcut : 10;
     set(n.bass.gain, a.bass); set(n.treble.gain, a.treble);
     n.mid.frequency.value = a.midHz || 3000; set(n.mid.gain, a.mid || 0);
-    // Mono: down to one channel the way speakers mix it, then the same on both sides; a mono clip still gets two
-    // channels so it can be moved left or right.
     Object.assign(n.chan, { channelCount: a.mono ? 1 : 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
     const bal = a.mono ? 0 : a.balance;
     set(n.gl.gain, Math.min(1, 1 - bal)); set(n.gr.gain, Math.min(1, 1 + bal));
@@ -448,7 +426,6 @@ export function openEditor(view, { file }, ctx) {
   }
   function frameMap(full) {
     const e = E(), g = geom();
-    // Output (u, v) → before the crop → before the flips → before the turn: source (s, t), as a column-major mat3.
     let m = [1, 0, 0, 0, 1, 0, 0, 0, 1];
     const mul = (A, B) => { const r = new Array(9); for (let c = 0; c < 3; c++) for (let rr = 0; rr < 3; rr++) r[c * 3 + rr] = A[rr] * B[c * 3] + A[3 + rr] * B[c * 3 + 1] + A[6 + rr] * B[c * 3 + 2]; return r; };
     if (!full && g.crop) m = mul([g.crop[2] / g.W0, 0, 0, 0, g.crop[3] / g.H0, 0, g.crop[0] / g.W0, g.crop[1] / g.H0, 1], m);
@@ -512,7 +489,6 @@ export function openEditor(view, { file }, ctx) {
     badges.innerHTML = tags.map(([c, t]) => `<span class="me-badge ${c}">${esc(t)}</span>`).join('');
     timeEl.innerHTML = `${fmtT(s)} <span>/ ${fmtT(dur())}</span>`;
   }
-  // Colour: the cube is rebuilt whenever a slider, the look or its strength changes; looks come from the worker.
   let cubeQueued = false;
   function refreshColour() {
     if (cubeQueued) return;
@@ -528,7 +504,6 @@ export function openEditor(view, { file }, ctx) {
   }
   const lutOf = (id) => (st.luts.has(id) ? Promise.resolve(st.luts.get(id)) : call('lut', id).then((b) => { const u = new Uint8Array(b); st.luts.set(id, u); return u; }).catch((er) => { toast(clean(er), { type: 'error' }); return null; }));
 
-  // Playing skips what is cut, repeats for Loop and stops at the end.
   let raf = 0;
   function tick() {
     raf = 0;
@@ -611,7 +586,6 @@ export function openEditor(view, { file }, ctx) {
   const playPause = () => (st.playing ? pause() : play());
   function step(n) { pause(); seek((media?.currentTime ?? st.t) + n / (st.kind === 'video' ? fps() : 10)); }
 
-  // ── Timeline ───────────────────────────────────────────────────────────────────────────────────────────────────
   const PAD = 14;
   const rows = () => {
     const H = tlc.clientHeight, r = { ruler: [0, 22] };
@@ -657,7 +631,6 @@ export function openEditor(view, { file }, ctx) {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, W, H);
     g.fillStyle = C['--surface-2']; g.fillRect(0, 0, W, H);
-    // Ruler.
     const steps = [0.04, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600], stp = steps.find((x) => x * st.zoom >= 76) || 3600;
     g.fillStyle = C['--surface']; g.fillRect(0, R.ruler[0], W, R.ruler[1]);
     g.font = '10.5px system-ui, sans-serif'; g.textBaseline = 'middle';
@@ -668,7 +641,6 @@ export function openEditor(view, { file }, ctx) {
       g.fillStyle = C['--ink-3']; g.fillText(fmtT(t, stp < 1 ? (stp < 0.1 ? 2 : 1) : 0), x + 4, 9);
     }
     const x0 = xOf(0), x1 = xOf(d), top = R.strip ? R.strip[0] : R.wave[0], last = R.music || R.titles || R.wave, bottom = last[0] + last[1];
-    // Pictures along the clip, fetched for the slots in view at this zoom.
     if (R.strip) {
       const [y, hh] = R.strip, v = st.s.video, tw = Math.max(24, (hh * v.width) / v.height), slot = tw / st.zoom;
       g.fillStyle = dark ? '#0b0c0e' : '#2a2d31'; g.fillRect(Math.max(0, x0), y, Math.min(W, x1) - Math.max(0, x0), hh);
@@ -682,7 +654,6 @@ export function openEditor(view, { file }, ctx) {
       for (let i = first; i * slot < d && xOf(i * slot) < W; i++) g.fillRect(Math.round(xOf(i * slot)), y, 1, hh);
       if (want.length) { want.forEach((k) => thumbWant.add(k)); clearTimeout(thumbT); thumbT = setTimeout(fetchThumbs, 60); }
     }
-    // Waveform, on a decibel scale so quiet sound shows, at the level the gain makes it.
     if (R.wave && R.wave[1]) {
       const [y, hh] = R.wave, mid = y + hh / 2, gain = dB(totalGain()) * (e.mute ? 0 : 1);
       g.fillStyle = C['--surface']; g.fillRect(Math.max(0, x0), y, Math.min(W, x1) - Math.max(0, x0), hh);
@@ -702,7 +673,6 @@ export function openEditor(view, { file }, ctx) {
         }
       } else { g.fillStyle = C['--line']; g.fillRect(Math.max(0, x0), mid, Math.min(W, x1) - Math.max(0, x0), 1); }
     }
-    // Titles and music, where they fall in the clip (their times are in the saved clip, before any loop).
     const pieces = (o0, o1) => {
       const out = [], k = e.speed;
       let P = 0;
@@ -719,7 +689,6 @@ export function openEditor(view, { file }, ctx) {
     };
     if (R.titles) for (const t of e.titles) bar(R.titles, pieces(t.start, t.end), st.selTitle === t.id ? C['--accent'] : '#5b7fd6', String(t.text).split('\n')[0]);
     if (R.music && e.music) bar(R.music, pieces(0, e.music.loop || e.music.fit || !st.musicDur ? outLen() / e.loop : Math.min(st.musicDur, outLen() / e.loop)), '#9a6bd1', nameOf(e.music.file));
-    // What is cut: hatched, darker; the part selected for Delete is outlined.
     const hatch = (a, b) => {
       const xa = Math.max(-2, xOf(a)), xb = Math.min(W + 2, xOf(b));
       if (xb <= xa) return;
@@ -743,7 +712,6 @@ export function openEditor(view, { file }, ctx) {
       const sg = e.segs[st.sel], xa = xOf(Math.max(sg.a, e.inT)), xb = xOf(Math.min(sg.b, e.outT));
       if (xb > xa) { g.strokeStyle = C['--accent']; g.lineWidth = 2; g.strokeRect(xa + 1, top + 1, xb - xa - 2, bottom - top - 2); }
     }
-    // Trim handles.
     const handle = (t, left) => {
       const x = xOf(t);
       g.fillStyle = '#f5b400';
@@ -753,7 +721,6 @@ export function openEditor(view, { file }, ctx) {
       g.fillStyle = '#f5b400'; g.fillRect(left ? x - 1 : x - 9, top, 10, 2); g.fillRect(left ? x - 1 : x - 9, bottom - 2, 10, 2);
     };
     handle(e.inT, true); handle(e.outT, false);
-    // Playhead.
     const px = Math.round(xOf(st.playing && media ? media.currentTime : st.t)) + 0.5;
     g.fillStyle = '#ff3b30'; g.fillRect(px - 0.75, 4, 1.5, bottom - 4);
     g.beginPath(); g.moveTo(px - 6, 2); g.lineTo(px + 6, 2); g.lineTo(px + 6, 10); g.lineTo(px, 16); g.lineTo(px - 6, 10); g.closePath(); g.fill();
@@ -770,8 +737,6 @@ export function openEditor(view, { file }, ctx) {
     }));
     drawTl();
   }
-  // Dragging on the ruler or in the strip moves the playhead (and picks the part under it); the yellow handles trim;
-  // the black marks between parts can be dragged to move a split.
   tlc.addEventListener('pointerdown', (ev0) => {
     if (!st.s || ev0.button !== 0) return;
     const r = tlc.getBoundingClientRect(), x = ev0.clientX - r.left, y = ev0.clientY - r.top, e = E(), R = rows(), near = (t, px = 7) => Math.abs(xOf(t) - x) <= px;
@@ -820,7 +785,6 @@ export function openEditor(view, { file }, ctx) {
   }, { passive: false });
   hbar.addEventListener('scroll', () => { st.scroll = hbar.scrollLeft; drawTl(); });
 
-  // ── Crop and title dragging on the picture ─────────────────────────────────────────────────────────────────────
   let cropEl = null;
   function placeCrop() {
     if (!cropping()) { cropEl?.remove(); cropEl = null; return; }
@@ -851,7 +815,6 @@ export function openEditor(view, { file }, ctx) {
         if (d.includes('n')) { const ny = clamp(y + dy, 0, y + hh - min); hh += y - ny; y = ny; }
         if (d.includes('s')) hh = clamp(hh + dy, min, 1 - y);
         if (k) {
-          // Keep the shape: the dragged side leads, the other follows, within the picture.
           if (d === 'n' || d === 's') w = hh * k; else hh = w / k;
           if (x + w > 1) { w = 1 - x; hh = w / k; }
           if (y + hh > 1) { hh = 1 - y; w = hh * k; }
@@ -880,7 +843,6 @@ export function openEditor(view, { file }, ctx) {
     window.addEventListener('pointerup', up);
   }
 
-  // ── Worker jobs that follow the edit ───────────────────────────────────────────────────────────────────────────
   let prepRun = 0;
   const prepKey = () => { const a = E().audio; return a.denoise || a.hum || a.pitch ? `${a.denoise}|${a.hum}|${a.pitch}` : ''; };
   function keepPrepared(force) {
@@ -933,7 +895,6 @@ export function openEditor(view, { file }, ctx) {
     redraw();
   }
   let musicFor = null, musicT = null;
-  // Remix runs again only once the length has stopped changing for a moment.
   function loadMusic() {
     const m = E().music, key = m ? `${m.file}|${m.fit ? outLen().toFixed(1) : ''}` : null;
     if (key === musicFor) return;
@@ -950,7 +911,6 @@ export function openEditor(view, { file }, ctx) {
       syncMusic(true);
     }, m?.fit ? 700 : 0);
   }
-  // A job in the worker with its progress in the status line.
   async function job(kind, fn, label) {
     let done = false;
     const poll = async () => { while (!done && !disposed) { const p = (await call('progress', st.s.id).catch(() => ({})))[kind]; if (!done) tip(`${p?.label || label.replace(/…$/, '')}… ${p?.f ? `${Math.round(p.f * 100)}%` : ''}`, true); await new Promise((r) => setTimeout(r, 250)); } };
@@ -959,7 +919,6 @@ export function openEditor(view, { file }, ctx) {
     try { return await fn(); } finally { done = true; tip(null); }
   }
 
-  // ── Header, info and properties ────────────────────────────────────────────────────────────────────────────────
   function chrome() {
     if (!st.s) return;
     const dirty = JSON.stringify(st.E) !== st.saved;
@@ -998,10 +957,8 @@ export function openEditor(view, { file }, ctx) {
     props.querySelectorAll('input[type=range]').forEach(paintRange);
     props.scrollTop = keepScroll;
   }
-  // Small builders for the panels.
   const sec = (title, ...kids) => { const el = h(`<div class="me-sec">${title ? `<h3>${esc(title)}</h3>` : ''}</div>`); kids.flat().filter(Boolean).forEach((k) => el.append(typeof k === 'string' ? h(k) : k)); props.append(el); return el; };
   const note = (txt) => h(`<p class="tip">${esc(txt)}</p>`);
-  // `local` controls set the panel's own settings (not the edit list), so they leave no undo step.
   function slider(label, get, set, { min, max, step = 1, fmt = (v) => v, key, local }) {
     const v = get(), el = h(`<div class="field"><label class="label">${esc(label)}</label><div class="range"><input type="range" min="${min}" max="${max}" step="${step}" value="${v}" aria-label="${esc(label)}"><output>${esc(fmt(v))}</output></div></div>`);
     const r = $('input', el), out = $('output', el), put = (x, quiet) => (local ? set(null, x) : edit((e) => set(e, x), key || label, quiet));
@@ -1263,7 +1220,6 @@ export function openEditor(view, { file }, ctx) {
     st.loadingLooks = false;
     renderPropsIf('colour');
   }
-  // Each look shown on the frame under the playhead.
   async function paintSwatches() {
     const imgs = $$('img[data-swatch]', props);
     if (!imgs.length || !media || media.readyState < 2) return;
@@ -1346,7 +1302,6 @@ export function openEditor(view, { file }, ctx) {
     if (a === 'out') edit((x) => { x.outT = clamp(t, x.inT + 0.05, dur()); });
   }
 
-  // ── Saving ─────────────────────────────────────────────────────────────────────────────────────────────────────
   function edlBase() {
     const e = E(), g = geom();
     return {
@@ -1370,8 +1325,6 @@ export function openEditor(view, { file }, ctx) {
     }
     return out;
   }
-  // Everything that runs in the background (the cleaned-up sound, the loudness, the colour cube) is finished first, so
-  // the file matches what was shown.
   async function ready() {
     await keepPrepared(prepKey() && !st.prep && !st.prepping);
     await st.prepping;
@@ -1382,8 +1335,6 @@ export function openEditor(view, { file }, ctx) {
     }
     if (cubeQueued || [E().look, E().log].some((id) => id && !st.luts.has(id))) { await Promise.all([E().look, E().log].filter(Boolean).map(lutOf)); st.cube = st.kind === 'video' ? buildCube(E().color, st.luts.get(E().look), st.luts.get(E().log), E().lookMix) : null; }
   }
-  // Save writes "<name> (edited).<ext>" beside the original (or where Save as… last put it); Save as… picks a format,
-  // then asks, suggesting the same. The original is never written over (FFmpeg reads it while it writes).
   async function save(as) {
     if (st.busy) return false;
     if (!kept().length) { toast('Every part of the clip is cut, so there is nothing to save.', { type: 'error' }); return false; }
@@ -1464,9 +1415,7 @@ export function openEditor(view, { file }, ctx) {
     go();
   }
 
-  // ── Wiring ─────────────────────────────────────────────────────────────────────────────────────────────────────
   root.addEventListener('click', (ev2) => {
-    // Space plays and pauses, so it mustn't also press the button last clicked.
     if (ev2.target.closest('.toolbar, .me-transport, .topbar')) ev2.target.closest('button')?.blur();
     const t = ev2.target.closest('[data-tool]');
     if (t) { selectTool(t.dataset.tool); return; }
@@ -1479,9 +1428,7 @@ export function openEditor(view, { file }, ctx) {
     })[a]?.();
   });
   $('.me-vol input', root).addEventListener('input', (ev2) => { if (nodes) nodes.master.gain.value = Number(ev2.target.value) ** 2; else if (media) media.volume = Number(ev2.target.value); });
-  // Lets go of the part or title picked, as Escape does in the other editors.
   const deselect = () => { if (st.sel < 0 && !st.selTitle) return; st.sel = -1; st.selTitle = null; renderProps(); redraw(); drawTl(); };
-  // The keys every editor shares (and ?); the ones below are this editor's own.
   const keys = shortcuts([
     ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true })]],
     ['Edit', [key('Mod+Z', 'Undo', undo), key(['Mod+Shift+Z', 'Mod+Y'], 'Redo', redo), key('I', 'Trim the start to the playhead'), key('O', 'Trim the end to the playhead'), key('S', 'Split at the playhead'), key(['Delete', 'Backspace'], 'Cut out the part picked, or delete the title'), key('Escape', 'Deselect', deselect)]],
@@ -1552,7 +1499,6 @@ export function openEditor(view, { file }, ctx) {
     st.ready = true;
     tip(st.kind === 'video' ? 'Space plays. Drag the yellow handles to trim; S splits at the playhead.' : 'Space plays. Drag the yellow handles to trim; S splits at the playhead.');
   }
-  // For the tests and screenshots.
   window.__media = { st, E, seek, act, selectTool, save, play, pause, kept, outLen, geom, edit: (fn) => edit(fn), addTitle, setTool: selectTool };
   load();
 

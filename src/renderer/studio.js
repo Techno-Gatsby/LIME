@@ -2,11 +2,7 @@ import { $, $$, esc, h, nameOf, dirOf, sep, form, defaultsFor, clean } from './u
 import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
 import { setDocName, confirm3 } from './editor-kit.js';
 
-// The app editors: VectorCraft (Illustrator-like), DesignCraft (InDesign), EffectCraft (After Effects) and FilmCraft
-// timelines (Premiere). One shell, like the PDF editor's, and a part for each app. Every change is made by the app's
-// engine in the worker (src/main/studio.js) and becomes a step that can be undone.
 const PT = 96 / 72;
-// Strokes the app editors need beyond icons.js, drawn the same way (24×24, 1.7 px).
 const MORE = {
   palette: 'M12 3a9 9 0 000 18c1 0 1.6-.7 1.6-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6h1.9A4.8 4.8 0 0021 10.8C21 6.5 17 3 12 3zM7.5 12.5h.01M9 8h.01M13.5 6.8h.01M17 9.5h.01',
   arrange: 'M4 4v16M8 6h11v4H8zM8 14h7v4H8z',
@@ -81,7 +77,6 @@ export function openEditor(view, { file, mode }, ctx) {
   const st = { sess: null, model: null, tool: null, busy: false, savePath: null, families: [], formats: [], tools: null, toolOpts: {}, disposed: false };
   let root, stageWrap, propsEl, sideEl, statusEl, bodyEl;
 
-  // ── Building blocks for the properties panel ──────────────────────────────────────────────────────────────────
   const paintRange = (r) => r.style.setProperty('--p', `${((r.value - r.min) / (r.max - r.min)) * 100}%`);
   const ui = {
     head: (t, sub) => h(`<h3>${esc(t)}${sub ? ` <span class="sub">${esc(sub)}</span>` : ''}</h3>`),
@@ -94,7 +89,6 @@ export function openEditor(view, { file, mode }, ctx) {
       return b;
     },
     row: (...els) => { const d = h('<div class="srow"></div>'); d.append(...els.flat().filter(Boolean)); return d; },
-    // A grid of actions, each an icon over a short label.
     tiles: (items) => {
       const d = h(`<div class="tiles">${items.map(([id, ic, label, title, off]) => `<button class="tb" data-t="${esc(id)}" title="${esc(title || label)}" ${off ? 'disabled' : ''}>${icon(ic)}<span class="lbl">${esc(label)}</span></button>`).join('')}</div>`);
       d.addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b && !b.disabled) items.find((x) => x[0] === b.dataset.t)?.[5]?.(); });
@@ -146,7 +140,6 @@ export function openEditor(view, { file, mode }, ctx) {
       return el;
     },
     colorpick: (val, fn, label) => { const el = h(`<label class="colorpick${label ? ' wide' : ''}" title="${esc(label || 'Colour')}"><input type="color" value="${esc(val)}">${label ? `<span>${esc(val)}</span>` : ''}</label>`); $('input', el).addEventListener('change', (e) => fn(e.target.value)); return el; },
-    // Each colour of the work: click to swap it for another everywhere it is used.
     recolor: (colors, fn) => {
       const el = h(`<div class="recolor">${colors.map((c, i) => `<label class="rc" title="${esc(c.title || c.hex)}"><i style="background:${esc(c.hex)}"></i><span class="t">${esc(c.hex)}</span><span class="m">${esc(c.meta || '')}</span><input type="color" value="${esc(c.hex)}" data-i="${i}" aria-label="Change ${esc(c.hex)}"></label>`).join('') || '<p class="tip">No colours.</p>'}</div>`);
       el.addEventListener('change', (e) => { const i = e.target.dataset.i; if (i != null && e.target.value.toLowerCase() !== colors[i].hex.toLowerCase()) fn(colors[i], e.target.value); });
@@ -154,7 +147,6 @@ export function openEditor(view, { file, mode }, ctx) {
     },
   };
 
-  // ── Talking to the worker ────────────────────────────────────────────────────────────────────────────────────
   function tip(msg, keep) {
     statusEl.hidden = !msg;
     statusEl.textContent = msg || '';
@@ -177,7 +169,6 @@ export function openEditor(view, { file, mode }, ctx) {
     A.sync?.(s, was !== s.rev);
     refresh();
   }
-  // Applies one change through the app's engine; it becomes a step in the history.
   async function act(label, op, params = {}) {
     const s = await busy(`${label}…`, () => call('apply', st.sess.id, op, params, label));
     if (!s) return null;
@@ -220,7 +211,6 @@ export function openEditor(view, { file, mode }, ctx) {
     drawProps();
   }
 
-  // ── Export panel: Save a copy in another format, and the app's one-click actions from the wheel ──────────────
   function exportPanel() {
     const label = A.tools.flatMap(([, ids]) => ids).find((x) => x[0] === 'export')?.[2] || 'Export';
     const out = [ui.head(label), ui.group('Save a copy as', ui.list(st.formats.map(([ext, label]) => ({ text: label, meta: `.${ext}`, icon: 'save' })), (it) => saveAs(st.formats.find(([, l]) => l === it.text)[0])))];
@@ -255,9 +245,6 @@ export function openEditor(view, { file, mode }, ctx) {
     }
   }
 
-  // ── Saving ────────────────────────────────────────────────────────────────────────────────────────────────────
-  // Save writes "<name> (edited).<ext>" beside the original (or where Save as… last put it); Save as… picks a format,
-  // then asks, suggesting the same. The original is never written over.
   const base = nameOf(file).replace(/\.[^.]+$/, '');
   const edited = (ext) => `${dirOf(st.savePath || file)}${sep}${base} (edited).${ext}`;
   async function save(as) {
@@ -269,7 +256,6 @@ export function openEditor(view, { file, mode }, ctx) {
     toast(`Saved ${nameOf(r.path)}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', r.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', r.path) }] });
     return true;
   }
-  // Save as…: pick a format (and, for some, how), then where.
   function saveAs(pre) {
     const OPTS = A.saveOptions || {};
     let ext = pre || st.sess.saveExt, opts = {};
@@ -317,7 +303,6 @@ export function openEditor(view, { file, mode }, ctx) {
     }
     go();
   }
-  // A small form in a dialog, e.g. find and replace. Resolves with the values, or null.
   function ask(title, fields, okLabel = 'OK') {
     return new Promise((resolve) => {
       const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2></div><div class="foot"><button class="btn" data-a="no">Cancel</button><button class="btn primary" data-a="ok">${esc(okLabel)}</button></div></div></div>`);
@@ -389,7 +374,6 @@ export function openEditor(view, { file, mode }, ctx) {
   });
   $('.find', root)?.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && st.sess) A.find && A.onFind?.(e.target.value.trim(), e.shiftKey); });
   $('.zoom', root)?.addEventListener('change', (e) => A.stage.command?.('zoomto', e.target.value));
-  // The keys every editor shares (and ?), with the app's own tool letters and the keys it handles itself.
   const cmd = (c, v) => () => A.stage.command?.(c, v);
   const keys = shortcuts([
     ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true }),
@@ -430,13 +414,10 @@ export function openEditor(view, { file, mode }, ctx) {
     A.dispose?.();
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
-  // The working copies are thrown away when the window goes, however it is closed.
   window.addEventListener('pagehide', dispose);
   return dispose;
 }
 
-// Playback is a small video the app renders of the whole thing, once for each step. It is made while editing goes on;
-// if there has been a change by the time it is ready, it isn't played.
 async function prepare(E, el, state) {
   if (state.preparing) return null;
   const rev = E.st.sess.rev;
@@ -452,7 +433,6 @@ async function prepare(E, el, state) {
   return p;
 }
 
-// ── Pages and artboards: a scrolling column of pages drawn by the app, with zoom, as in the PDF editor ─────────────
 function pageStage(E, cfg) {
   const el = h('<section class="pages" tabindex="-1"></section>');
   const ps = { zoom: 1, pages: [], renders: new Map(), io: null, sig: '' };
@@ -505,7 +485,6 @@ function pageStage(E, cfg) {
       p.el.classList.add('ready');
     } catch (_) {} finally { if (p.rendering === want) p.rendering = null; }
   }
-  // After a change: the same pages are drawn again in place, or laid out afresh if their number or size changed.
   function refresh() {
     const list = cfg.pages(), sig = list.map((p) => `${r1(p.w)}x${r1(p.h)}`).join(',');
     if (sig !== ps.sig) { const first = !ps.sig; ps.sig = sig; build(); if (first) requestAnimationFrame(fitWidth); return; }
@@ -537,7 +516,6 @@ function pageStage(E, cfg) {
   function fitWidth() {
     if (!ps.pages.length) return;
     const w = Math.max(...ps.pages.map((p) => p.w)), hh = Math.max(...ps.pages.map((p) => p.h));
-    // Small artwork is shown big enough to work on, but a page is never wider than the view.
     setZoom(Math.min(cfg.fitMax || 3, (el.clientWidth - 96) / (w * PT), ps.pages.length === 1 ? (el.clientHeight - 72) / (hh * PT) : Infinity));
   }
   function fitPage() {
@@ -559,7 +537,6 @@ function pageStage(E, cfg) {
     const d = Math.max(-60, Math.min(60, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
     setZoom(ps.zoom * Math.exp(-d * 0.0065), { x: e.clientX, y: e.clientY });
   }, { passive: false });
-  // Hold Space and drag, or drag with the middle button, to move around.
   let spaceDown = false;
   const onSpace = (e) => { if (e.code === 'Space' && !e.target.matches?.('input, textarea, select, [contenteditable]')) { spaceDown = e.type === 'keydown'; el.classList.toggle('panning', spaceDown); if (spaceDown) e.preventDefault(); } };
   document.addEventListener('keydown', onSpace);
@@ -585,7 +562,6 @@ function pageStage(E, cfg) {
   return { el, k, refresh, decorate, command, scrollTo, visiblePage, fitWidth, dispose, pages: () => ps.pages };
 }
 
-// A strip of page or artboard thumbnails with buttons above, as in the PDF editor.
 function thumbStrip(E, cfg) {
   const el = h(`<div class="strip"><div class="ops">${cfg.ops.map(([id, ic, title]) => `<button class="tb" data-op="${id}" title="${esc(title)}">${E.icon(ic, 'sm')}</button>`).join('')}</div><div class="tlist"></div></div>`);
   const list = $('.tlist', el);
@@ -629,7 +605,6 @@ function thumbStrip(E, cfg) {
   function refresh() {
     const items = cfg.items(), sig = items.map((it) => `${it.label}:${r1(it.w)}x${r1(it.h)}`).join(',');
     if (sig !== ts.sig) { ts.sig = sig; build(); } else {
-      // Thumbnails on screen are drawn again for the new step.
       $$('.pthumb', list).forEach((t) => { const b = t.getBoundingClientRect(), r = el.getBoundingClientRect(); if (b.bottom > r.top - 300 && b.top < r.bottom + 300) { ts.io.unobserve(t); ts.io.observe(t); } });
     }
     mark();
@@ -638,7 +613,6 @@ function thumbStrip(E, cfg) {
   return { el, refresh, mark, dispose: () => { ts.io?.disconnect(); ts.urls.forEach((u) => URL.revokeObjectURL(u)); } };
 }
 
-// ── VectorCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const SHAPES = [['rect', 'Rectangle', 'square'], ['ellipse', 'Ellipse', 'circle'], ['star', 'Star', 'sparkle'], ['line', 'Line', 'line']];
 const TRACE_PRESETS = [['Auto Color', 'Colour (auto)'], ['Flat Logo', 'Flat logo'], ['16 Colors', '16 colours'], ['Black and White Logo', 'Black & white'], ['Line Art', 'Line art'], ['Sketched Art', 'Sketch'], ['High Fidelity Photo', 'Photo (detailed)']];
 const BOARD_SIZES = [['same', 'Same as this one'], ['1080x1080', 'Square 1080 px'], ['1920x1080', 'Wide 1920 × 1080'], ['1080x1920', 'Story 1080 × 1920'], ['595x842', 'A4'], ['612x792', 'Letter'], ['1200x628', 'Social link 1200 × 628']];
@@ -668,7 +642,6 @@ function vectorApp(E) {
     },
     disabled: () => ({ del: boards().length < 2 }),
   });
-  // Objects on an artboard, back to front so the one in front takes the click.
   function decorate(i, p, k) {
     p.layer.querySelectorAll('.vobj').forEach((x) => x.remove());
     const a = boards()[i];
@@ -683,7 +656,6 @@ function vectorApp(E) {
     }
   }
   function select(list) { v.sel = list; stage.decorate(); E.drawProps(); }
-  // Click to select (Shift adds), drag to move: the move is one step when the mouse is let go.
   function grab(e, o, k) {
     if (e.button !== 0) return;
     e.stopPropagation();
@@ -730,7 +702,6 @@ function vectorApp(E) {
     }
     if (['select', 'arrange', 'path', 'color'].includes(st.tool) && v.sel.length) select([]);
   }
-  // Type where the artboard was clicked: Enter places the text, Escape drops it.
   function typeAt(p, [x, y], a, k) {
     p.layer.querySelector('.vtype')?.remove();
     const box = h(`<input class="vtype" placeholder="Type, then press Enter" style="left:${x * k}px;top:${y * k}px;font-size:${Math.max(12, v.size * k)}px;color:${v.color}">`);
@@ -833,7 +804,6 @@ function vectorApp(E) {
   function selectPanel(sel) {
     const m = st.model;
     if (!sel.length) {
-      // Layers, with the eye and the lock as in the app's Layers panel.
       const layers = h(`<div class="lyrs">${m.layers.map((l) => `<div class="lyr" style="padding-left:${6 + l.depth * 14}px"><button class="tb icon" data-ly="${l.id}" data-k="visible" title="${l.visible ? 'Hide' : 'Show'} ${esc(l.name)}">${E.icon(l.visible ? 'eye' : 'eyeOff', 'sm')}</button><button class="tb icon ${l.locked ? 'on' : ''}" data-ly="${l.id}" data-k="locked" title="${l.locked ? 'Unlock' : 'Lock'} ${esc(l.name)}">${E.icon(l.locked ? 'lock' : 'unlock', 'sm')}</button><span>${esc(l.name)}</span></div>`).join('')}</div>`);
       layers.addEventListener('click', (e) => { const b = e.target.closest('[data-ly]'); if (!b) return; const l = m.layers.find((x) => x.id === Number(b.dataset.ly)); E.act(b.dataset.k === 'visible' ? (l.visible ? 'Hide layer' : 'Show layer') : (l.locked ? 'Unlock layer' : 'Lock layer'), 'layer', { id: l.id, [b.dataset.k]: !l[b.dataset.k] }); });
       return [ui.head('Artwork', `${plural(m.objects.length, 'object')}, ${plural(m.artboards.length, 'artboard')}`),
@@ -931,7 +901,6 @@ function vectorApp(E) {
   };
 }
 
-// ── DesignCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const MM = 72 / 25.4;
 const PAGE_SIZES = [['custom', 'Custom'], ['595.28x841.89', 'A4'], ['419.53x595.28', 'A5'], ['841.89x1190.55', 'A3'], ['612x792', 'Letter'], ['612x1008', 'Legal'], ['792x1224', 'Tabloid'], ['396x612', 'Half letter']];
 function layoutApp(E) {
@@ -1066,7 +1035,6 @@ function layoutApp(E) {
     if (tool === 'preflight') {
       if (!d.preflight) { runPreflight(); return [ui.head('Preflight'), ui.tip('Checking…')]; }
       const r = d.preflight;
-      // Each problem, with the fix where there is one: clicking it shows where it is.
       const fix = (x) => {
         if (x.kind === 'overset' && x.item != null) return ['Grow the frame', () => E.act('Fit frame to text', 'fitFrame', { ids: [x.item] })];
         if (x.kind === 'emptyText' && x.item != null) return ['Delete it', () => E.act('Delete frame', 'deleteItems', { ids: [x.item] })];
@@ -1098,7 +1066,6 @@ function layoutApp(E) {
     d.q = q;
     if (!q) return;
     const res = await E.query('find', { ...f, find: q }).catch(() => []);
-    // Each match with a little of the story around it.
     const stories = new Map(st.model.stories.map((s) => [s.id, s.preview || '']));
     d.finds = res.map((x) => ({ ...x, context: x.text + (stories.get(x.story) ? `  ·  ${stories.get(x.story).slice(0, 40)}` : '') }));
     if (st.tool !== 'find') E.selectTool('find'); else E.drawProps();
@@ -1135,12 +1102,10 @@ function layoutApp(E) {
   };
 }
 
-// ── EffectCraft ─────────────────────────────────────────────────────────────────────────────────────────────────────
 const COMP_SIZES = [['1920x1080', 'HD 1920 × 1080'], ['1280x720', 'HD 1280 × 720'], ['3840x2160', '4K 3840 × 2160'], ['1080x1080', 'Square 1080 × 1080'], ['1080x1350', 'Portrait 1080 × 1350'], ['1080x1920', 'Story 1080 × 1920'], ['custom', 'Custom']];
 const SPEEDS = [['0.5', '0.5×'], ['0.75', '0.75×'], ['1.25', '1.25×'], ['1.5', '1.5×'], ['2', '2×']];
 const FPS = [['12', '12'], ['15', '15'], ['23.976', '23.976'], ['24', '24'], ['25', '25'], ['29.97', '29.97'], ['30', '30'], ['50', '50'], ['60', '60']];
 const LABEL_COLORS = ['#b53838', '#e4d84c', '#a9cbc7', '#e5bcc9', '#a9a9ca', '#e7c19e', '#b3c7b3', '#677de0', '#4aa44c', '#8e2c9a', '#e8920d', '#7f452a', '#f46dd6', '#3da2a5', '#a89677', '#1e401e'];
-// A few of EffectCraft's effects for a layer, by id.
 const MOTION_EFFECTS = [['ec.blur.gaussian', 'Gaussian Blur'], ['ec.perspective.dropshadow', 'Drop Shadow'], ['ec.stylize.glow', 'Glow'], ['ec.color.tint', 'Tint'], ['ec.color.blackwhite', 'Black & White'], ['ec.color.huesaturation', 'Hue/Saturation'], ['ec.generate.fill', 'Fill'], ['ec.generate.stroke', 'Stroke'], ['ec.blur.radial', 'Radial Blur']];
 function motionApp(E) {
   const { st, ui } = E;
@@ -1167,7 +1132,6 @@ function motionApp(E) {
   }
   const ro = new ResizeObserver(() => { fitCanvas(); frame(); });
   ro.observe($('.screen', el));
-  // The frame under the playhead, drawn by EffectCraft at the size it is shown; while scrubbing only the latest is kept.
   async function frame() {
     if (!st.sess || mo.playing) return;
     const c = comp(), t = Math.min(mo.time, Math.max(0, c.duration - 1 / c.fps)), side = Math.round(Math.min(1600, Math.max(canvas.clientWidth, canvas.clientHeight) * (window.devicePixelRatio || 1)));
@@ -1196,7 +1160,6 @@ function motionApp(E) {
     $('.tc span', el).textContent = fmtTime(c.duration, c.fps);
     $('.ph', el).style.left = `${(mo.time / c.duration) * 100}%`;
   }
-  // Play: a small video of the whole animation, made once for each step.
   async function play() {
     if (mo.playing) { pause(); return; }
     const p = mo.vid?.rev === st.sess.rev ? mo.vid.path : await prepare(E, el, mo);
@@ -1229,7 +1192,6 @@ function motionApp(E) {
     if (m === 'play') play();
     if (m === 'start') seek(0);
   });
-  // With no solid layer showing, the animation is transparent and the grid shows it; otherwise it can be asked for.
   const clear = () => !(st.model?.layers || []).some((l) => l.kind === 'Solid' && l.enabled);
   const alpha = () => mo.transparent || clear();
   const syncAlpha = () => { const box = $('[data-m=alpha]', el); box.checked = alpha(); box.disabled = clear(); canvas.classList.toggle('grid', alpha()); };
@@ -1245,7 +1207,6 @@ function motionApp(E) {
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', up);
   });
-  // The composition's layers, front to back, with their time bars, as in the timeline of a motion app.
   function drawRows() {
     const c = comp(), L = st.model?.layers || [];
     $('.wa', el).style.left = `${(c.workStart / c.duration) * 100}%`;
@@ -1349,10 +1310,8 @@ function motionApp(E) {
   };
 }
 
-// ── FilmCraft timelines ─────────────────────────────────────────────────────────────────────────────────────────────
 const SEQ_SIZES = [['1920x1080', 'HD 1920 × 1080'], ['1280x720', 'HD 1280 × 720'], ['3840x2160', '4K 3840 × 2160'], ['1080x1920', 'Vertical 1080 × 1920'], ['1080x1080', 'Square 1080 × 1080'], ['custom', 'Custom']];
 const CLIP_COLORS = { Violet: '#8a6fd1', Iris: '#6f86d6', Caribbean: '#2aa198', Lavender: '#b48ae0', Cerulean: '#2f8fd8', Forest: '#3c8a3c', Rose: '#d6587a', Mango: '#e69a2e', Purple: '#9b4fc4', Blue: '#3c6fd8', Teal: '#2a9d9d', Magenta: '#cf4fb0', Tan: '#b8956a', Green: '#4caf50', Brown: '#8a5a3c', Yellow: '#d6c03c' };
-// A few of FilmCraft's video effects, by id.
 const FILM_EFFECTS = [['black_white', 'Black & White'], ['gaussian_blur', 'Gaussian Blur'], ['sharpen', 'Sharpen'], ['vignette', 'Vignette'], ['brightness_contrast', 'Brightness & Contrast'], ['tint', 'Tint'], ['horizontal_flip', 'Horizontal Flip'], ['mosaic', 'Mosaic'], ['drop_shadow', 'Drop Shadow'], ['camera_shake', 'Camera Shake'], ['light_leaks', 'Light Leaks'], ['rgb_split', 'RGB Split']];
 function filmApp(E) {
   const { st, ui } = E;
@@ -1478,7 +1437,6 @@ function filmApp(E) {
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', up);
   });
-  // Tracks top to bottom as in the editing apps: video above (V1 nearest the middle), sound below.
   function draw() {
     const q = seq(), k = pxf(), list = tracks();
     inner.style.width = `${Math.max(lanes.clientWidth, q.duration * k + 40)}px`;
@@ -1488,7 +1446,6 @@ function filmApp(E) {
     $('.ltracks', el).innerHTML = list.map((t) => `<div class="lt ${t.kind} ${(t.kind === 'video' ? !t.enabled : t.muted) ? 'off' : ''}">${t.clips.map((c) => `<div class="clip ${t.kind} ${fm.clip === c.id ? 'sel' : ''} ${c.enabled ? '' : 'off'}" data-id="${c.id}" style="left:${c.start * k}px;width:${Math.max(2, c.duration * k - 1)}px;--c:${CLIP_COLORS[c.label] || '#6f86d6'}" title="${esc(`${c.name} · ${fmtTime(c.duration / q.fps)}${c.speed !== 1 ? ` · ${Math.round(c.speed * 100)}%` : ''}`)}">${t.kind === 'video' ? `<i class="th" style="${fm.thumbs.get(c.id) ? `background-image:url(${fm.thumbs.get(c.id)})` : ''}"></i>` : '<i class="wave"></i>'}<span class="cn">${esc(c.name)}</span><span class="cd">${esc(fmtTime(c.duration / q.fps))}${c.speed !== 1 ? ` · ${Math.round(c.speed * 100)}%` : ''}</span></div>`).join('')}${t.transitions.map((x) => `<i class="xf" style="left:${x.start * k}px;width:${Math.max(4, x.duration * k)}px" title="${esc(x.effect.replace(/_/g, ' '))}"></i>`).join('')}</div>`).join('');
     drawHead();
   }
-  // Clip pictures come from the clip's own media, from the middle of the part used.
   async function loadThumbs() {
     const want = seq().video.flatMap((t) => t.clips).filter((c) => c.item != null).map((c) => ({ key: c.id, item: c.item, at: Math.round((c.sourceIn + c.sourceOut) / 2) }));
     const got = await E.call('thumbs', st.sess.id, want).catch(() => ({}));
@@ -1496,7 +1453,6 @@ function filmApp(E) {
     draw();
   }
   const stage = { el, refresh: () => { fitCanvas(); draw(); fm.want = null; frame(); loadThumbs(); } };
-  // The first picture of an edit is often black (a fade in), so it opens on the middle of the first clip.
   const ready = () => { const c = seq().video.flatMap((t) => t.clips).sort((a, b) => a.start - b.start)[0]; if (c) seek(Math.round(c.start + c.duration / 2)); };
   function panel(tool) {
     const q = seq(), c = fm.clip ? clipById(fm.clip) : null;

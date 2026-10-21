@@ -70,7 +70,6 @@ app.addEventListener('click', async (e) => {
     b.disabled = true;
     b.textContent = 'Opening…';
     try { await api.invoke('apps:open', b.dataset.id); b.textContent = 'Open'; } catch (err) {
-      // The reason shows under the app, not only on hover.
       const why = String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
       b.textContent = 'Try again'; b.title = why;
       const t = b.closest('.row').querySelector('.t'), note = t.querySelector('.why') || t.appendChild(Object.assign(document.createElement('small'), { className: 'why' }));

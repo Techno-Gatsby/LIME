@@ -93,7 +93,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   };
   const until = async (code, ms = 4000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await lime(code)) return true; await sleep(100); } return false; };
   const wa = () => screen.getPrimaryDisplay().workArea;
-  // The window covers the work area; what is on screen (the lime, or the wheel) is where the page put it.
   const box = () => debug().placed;
   const dragIn = (wc, type = 'dragenter') => js(`(() => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.txt', { type: 'text/plain' })); window.dispatchEvent(new DragEvent(${JSON.stringify(type)}, { dataTransfer: dt, bubbles: true, cancelable: true })); })()`, wc);
   await check('starts as the lime tab on the right edge', async () => {
@@ -136,16 +135,13 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       await sleep(900);
       const centre = () => debug().bloomAt;
       const c0 = centre(), d0 = Math.hypot(cur.x - c0.x, cur.y - c0.y);
-      // Beside the pointer, outside the ring (radius 147), so neither the file nor what is under it is covered.
       if (d0 < 150 || d0 > 200) throw new Error(`pointer ${Math.round(d0)} px from the centre`);
-      // Dragging on pulls it along on its leash…
       const away = Math.sign(cur.x - c0.x) || 1;
       cur.x += away * 260; cur.y += 40;
       await sleep(700);
       const c1 = centre(), d1 = Math.hypot(cur.x - c1.x, cur.y - c1.y);
       if (Math.hypot(c1.x - c0.x, c1.y - c0.y) < 200) throw new Error(`moved only ${Math.round(Math.hypot(c1.x - c0.x, c1.y - c0.y))} px`);
       if (Math.abs(d1 - d0) > 6) throw new Error(`leash ${Math.round(d0)} → ${Math.round(d1)} px`);
-      // …and moving toward it leaves it still, so a slice is a short move in.
       cur.x = Math.round(c1.x + (cur.x - c1.x) * 0.45); cur.y = Math.round(c1.y + (cur.y - c1.y) * 0.45);
       await sleep(500);
       const c2 = centre();
@@ -205,7 +201,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const ring = await lime('return { labels: L.S.ring.map((x) => x.label), back: document.querySelector(".pill [data-a=home]")?.textContent, cap: document.querySelector(".center .cap").textContent };');
     if (!ring.labels.includes('Optimize')) throw new Error(`PdfCraft ring ${ring.labels}`);
     if (!/All apps/.test(ring.back || '')) throw new Error('no way back to the apps');
-    // The middle of the ring is the app itself: a click there opens it (or says why it can't) and stays on its ring.
     await click('.center');
     if (!(await until('return L.S.app === "pdfcraft" && /PdfCraft/.test(document.querySelector(".caption .meta").textContent)', 3000))) throw new Error(`a click on the middle: app ${await lime('return L.S.app')}, caption “${await lime('return document.querySelector(".caption .meta").textContent')}”`);
     const said = await lime('return document.querySelector(".caption .meta").textContent');
@@ -362,7 +357,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       return 'open with photo.jpg';
     });
   }
-  // Stress: the wheel must always come back to one lime at the edge that opens again, whatever order things happen in.
   const wheels = () => BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.isWheel).length;
   const healthy = async (label) => {
     if (!(await until('return L.S.state === "idle" && !L.folding()', 8000))) throw new Error(`${label}: stuck in ${await lime('return L.S.state;')}`);
@@ -373,7 +367,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (b.width > 120 || b.height > 120 || Math.abs(b.x + b.width - (a.x + a.width)) > 1) throw new Error(`${label}: the lime is ${b.width}×${b.height} at ${b.x},${b.y}, not at the edge`);
     if (!r.shown) throw new Error(`${label}: the lime is hidden (${r.cls})`);
     if (r.over) throw new Error(`${label}: still thinks files are over it`);
-    // And it still opens, by a drag and by a click.
     await dragIn(wheel().webContents);
     if (!(await until('return L.S.state === "ready"', 3000))) throw new Error(`${label}: a drag onto the lime didn't open the wheel`);
     await sleep(700);
@@ -437,8 +430,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       await dragIn(wheel().webContents);
       if (!(await until('return L.S.state === "ready"', 3000))) throw new Error(`round ${round}: the drag didn't open the wheel`);
       if (fs.existsSync(fx('photo.jpg'))) { peek([fx('photo.jpg')]); await lime(`await L.setPeek(${JSON.stringify([fx('photo.jpg')])});`); }
-      // Enter a slice, then redraw the ring under the pointer (switching rings, as Alt or Ctrl do): the old slice is
-      // gone without ever reporting a leave. Then the drag leaves the window.
       await dragAt('dragenter', '.petal[data-i="0"]');
       await dragAt('dragover', '.petal[data-i="0"]', { altKey: round % 2 === 0, ctrlKey: round % 3 === 0 });
       await dragAt('dragenter', '.petal[data-i="1"]');
@@ -456,7 +447,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       await sleep(Math.floor(rnd() * 400));
       await dragIn(wheel().webContents, 'dragleave');
       await sleep(Math.floor(rnd() * 1800));
-      // Whatever moment it is caught in, the page and the window agree.
       const st = await lime('return { s: L.S.state, f: L.folding() };'), w = box().width;
       if (st.s === 'idle' && !st.f && w > 120) { await sleep(400); if (box().width > 120 && (await lime('return L.S.state === "idle" && !L.folding();'))) throw new Error(`cycle ${i}: idle but the window is ${w} wide`); }
       if (wheels() !== 1) throw new Error(`cycle ${i}: ${wheels()} wheel windows`);
@@ -478,7 +468,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const w = watcher();
     if (process.platform !== 'darwin' && process.platform !== 'win32') throw Object.assign(new Error('only on Mac and Windows'), { skip: true });
     if (!w) throw new Error('drag watcher did not start');
-    // A folder of its own, where the file isn't the first item, so the selection can't be mistaken for the first item.
     const dir = path.join(OUT, 'drag-selection');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'a first.txt'), 'first');
@@ -506,17 +495,13 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       const post = user32.func('bool __stdcall PostMessageW(void *hwnd, uint32_t msg, uintptr_t w, intptr_t l)');
       const h = find('CabinetWClass', null);
       if (!h) throw new Error('Explorer did not open a window');
-      // Select the file through Explorer's own selection API (select it alone, focus it): Explorer's /select switch
-      // isn't applied reliably on CI machines, and this is what the reader must report.
       require('child_process').execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$w = @((New-Object -ComObject Shell.Application).Windows() | Where-Object { [int64]$_.HWND -eq ${Number(koffi.address(h))} })[0]; $w.Document.SelectItem($w.Document.Folder.ParseName('${path.basename(want)}'), 29)`], { windowsHide: true, timeout: 20000 });
       const tab = child(h, null, 'ShellTabWindowClass', null), b = new Uint16Array(260);
       const title = tab ? String.fromCharCode(...b.subarray(0, text(tab, b, 260))) : '';
       const t = Date.now();
-      // Explorer opens with the folder's first item selected and moves to the file a moment later, so wait for it.
       while (!(got.length === 1 && path.basename(got[0]) === path.basename(want)) && Date.now() - t < 15000) { got = await require(path.join(__dirname, '..', 'src', 'main', 'shellsel')).query([{ hwnd: Number(koffi.address(h)), tab: title }]); if (got[0] !== want) await sleep(1000); }
       post(h, 0x0010, 0, 0);
     }
-    // Windows may name the same folder by its short 8.3 name (RUNNER~1) or its long one, so compare real paths.
     const real = (p) => { try { return fs.realpathSync.native(p).toLowerCase(); } catch (_) { return path.resolve(p).toLowerCase(); } };
     if (!got.some((g) => real(g) === real(want))) throw new Error(`got ${JSON.stringify(got)}`);
     return got.join(', ');
@@ -601,8 +586,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   results.push(ord);
   await lime(`if (L.S.state !== 'idle') await L.collapse();`).catch(() => {});
 
-  // Every options card, in every variant that reveals more options, with "More options" open: nothing overlaps,
-  // no label or button is cut off, nothing runs off the side, and the Cancel/Convert bar never hides a control.
   await check('options cards · no overlapping or cut-off text', async () => {
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
     await sleep(350);
@@ -646,7 +629,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (bad.length) throw new Error(`${bad.length} problems: ${bad.slice(0, 6).join(' · ')}`);
     return 'every card and variant is clean';
   });
-  // Every wheel ring for every kind of file: each label and hint sits inside its own slice and they don't touch.
   await check('wheel rings · labels stay inside their slices', async () => {
     const kinds = ['photo.jpg', 'anim.gif', 'cursor.cur', 'photo.heic', 'raw.dng', 'doc.pdf', 'doc.docx', 'doc.md', 'sheet.xlsx', 'sheet.csv', 'deck.pptx', 'clip.mp4', 'tone.wav', 'test.dxf', 'part.stp', 'cube.fbx', 'logo.svg', 'archive.zip', 'notes.txt.gz', 'folder',
       'font.ttf', 'mail.eml', 'meeting.msg', 'page.mhtml', 'novel.epub', 'stormy.mobi', 'comic.cbz', 'data.json', 'config.yml', 'contacts.vcf', 'sub.srt', 'timeline.otio', 'anim.json'].map(fx).filter((f) => fs.existsSync(f));
@@ -682,7 +664,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
         bad.push(...r.out);
       }
     }
-    // The apps around the lime, and each app's own ring.
     await lime(`if (L.S.state !== 'idle') await L.collapse();`);
     await sleep(250);
     await lime('L.expand("click"); await L.loadHome();');
@@ -704,7 +685,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (bad.length) throw new Error(`${bad.length} problems: ${[...new Set(bad)].slice(0, 6).join(' · ')}`);
     return `${rings} rings checked`;
   });
-  // Every ring: one label size and one hint size, whatever the longest name; the longest get shortened, never shrunk alone.
   await check('wheel rings · labels share one size in each ring', async () => {
     const probe = (name) => lime(`
       await new Promise((res) => setTimeout(res, 450));
@@ -747,7 +727,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (bad.length) throw new Error(`${bad.length} problems: ${bad.slice(0, 6).join(' · ')}`);
     return `${rings} rings, one size each; the apps share ${home}`;
   });
-  // The sounds are counted as they're triggered (there's no speaker to listen at), and the switch silences them.
   if (fs.existsSync(fx('photo.jpg'))) await check('wheel sounds · a tick per slice, a thud on drop, silent when off', async () => {
     await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
     await sleep(500);
@@ -758,7 +737,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       return { n: L.S.ring.length, ticks: L.sounds.played.tick - before };`);
     const a = await sweep();
     if (a.ticks !== a.n) throw new Error(`${a.ticks} ticks over ${a.n} slices`);
-    // A sweep faster than the ear can follow is thinned, not crackled.
     const fast = await lime('const b = L.sounds.played.tick; for (let k = 0; k < 4; k++) for (let i = 0; i < L.S.ring.length; i++) L.setHot(i); L.setHot(-1); return L.sounds.played.tick - b;');
     if (fast > 2) throw new Error(`${fast} ticks in one burst`);
     await lime('await L.collapse();');
@@ -769,7 +747,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(await until('return L.S.state === "open"', 4000))) throw new Error('the drop did not open the wheel');
     const d1 = await lime('return L.sounds.played.drop;');
     if (d1 !== d0 + 1) throw new Error(`the drop sound played ${d1 - d0} times`);
-    // Rendered offline, each sound is short and quiet: around −18 dBFS, and nothing but the chime over 120 ms.
     const levels = await lime(`
       const out = {};
       for (const kind of ['tick', 'drop', 'open', 'fold', 'done']) {
@@ -870,7 +847,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       while (!found && Date.now() - t4 < 20000) { found = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editme (edited).pdf')).find((p) => fs.existsSync(p)); await sleep(200); }
       if (!found) throw new Error('Save As wrote nothing');
       await sleep(400);
-      // The window and the top bar now show the new name.
       const shown = await js('[document.title, document.querySelector(".topbar .doc b").textContent]', win.webContents);
       if (shown[0] !== 'editme (edited).pdf' || shown[1] !== 'editme (edited).pdf') throw new Error(`after Save as the title shows ${shown.join(' / ')}`);
       ed.detail = `${path.relative(OUT, want)}, ${path.relative(OUT, found)}; title follows Save as`;
@@ -898,7 +874,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     while (wc.isLoading()) await sleep(200);
     const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
     if (!(await wait('!!document.querySelector(\'[data-tool="select"]\') && !!document.querySelector(".pdfpage img.r[src]")'))) throw new Error('editor did not load');
-    // Edit a line in the shaded row: what hides the old words must be the green cell, not a white box.
     await ejs('document.querySelector(\'[data-tool="edittext"]\').click()');
     if (!(await wait('[...document.querySelectorAll(".tline")].length > 3'))) throw new Error('no editable lines');
     await ejs(`(() => { const rows = [...document.querySelectorAll('.tline:not(.mask)')].sort((a, b) => a.offsetTop - b.offsetTop); const el = rows[3]; el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); })()`);
@@ -908,7 +883,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ejs('document.querySelector(\'[data-tool="select"]\').click()');
     if (!(await wait('document.querySelectorAll(".pobj").length >= 3'))) throw new Error(`Select shows ${await ejs('document.querySelectorAll(".pobj").length')} things on the page`);
     const kinds = await ejs('[...document.querySelectorAll(".pobj")].map((x) => x.title.split(":")[0])');
-    // A box dragged across the table and the picture picks both; Escape lets go of them.
     const rect = (want) => ejs(`(() => { const r = document.querySelector('.pobj[title^="${want}"]').getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; })()`);
     const tb = await rect('Table'), pc = await rect('Picture'), from = { x: Math.round(tb.l - 12), y: Math.round(tb.b - 6) }, to = { x: Math.round(pc.l + 60), y: Math.round(pc.b + 10) };
     wc.sendInputEvent({ type: 'mouseDown', x: from.x, y: from.y, button: 'left', clickCount: 1 });
@@ -940,7 +914,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${sel.status} ${sel.name.padEnd(44)}        ${sel.detail}`);
   results.push(sel);
 
-  // At single spacing the lines' glyph boxes overlap, so taking out one line must not nibble at its neighbours.
   const tight = { name: 'edit pdf · a line taken out at single spacing keeps its neighbours', status: 'PASS', detail: '' };
   try {
     const { PDFDocument, StandardFonts } = require('pdf-lib');
@@ -987,7 +960,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const wait = async (code, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
     if (!(await wait('!!document.querySelector(".pdfpage img.r[src]")'))) throw new Error('editor did not load');
     await sleep(600);
-    // A pinch (Ctrl + wheel) at a spot on the page keeps that spot under the pointer.
     const spot = await ejs(`(() => { const b = document.querySelector('.pdfpage').getBoundingClientRect(); return { x: Math.round(b.left + b.width * 0.5), y: Math.round(b.top + Math.min(b.height, innerHeight - b.top) * 0.4) }; })()`);
     const at = (pt) => ejs(`(() => { const b = document.querySelector('.pdfpage').getBoundingClientRect(); return { fx: (${pt.x} - b.left) / b.width, fy: (${pt.y} - b.top) / b.height, w: b.width, h: b.height }; })()`);
     const before = await at(spot);
@@ -1001,7 +973,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const zoomed = `${(after.w / before.w).toFixed(2)}× with ${drift.toFixed(1)} px drift`;
     await ejs(`(() => { const z = document.querySelector('select.zoom'); z.value = 'width'; z.dispatchEvent(new Event('change')); })()`);
     await sleep(400);
-    // Add text with a font and every style, and save.
     await ejs('document.querySelector(\'[data-tool="addtext"]\').click()');
     await ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(); l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + 60, clientY: b.top + b.height * 0.55 })); })()`);
     if (!(await wait('!!document.querySelector(".obj.text[contenteditable]")', 3000))) throw new Error('no text box');
@@ -1077,13 +1048,11 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await press(0.1, 0.12);
     const ring = await ejs(`(() => { const el = [...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED'); return el && el.classList.contains('bordered') && getComputedStyle(el, '::after').borderTopColor; })()`);
     if (ring !== 'rgb(16, 124, 16)') throw new Error(`stamp preview border ${ring}`);
-    // Select the stamp and turn it, make it bigger and fainter from the panel.
     await ejs(`(() => { const el = [...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED'); el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 1, clientY: 1 })); window.dispatchEvent(new PointerEvent('pointerup', {})); })()`);
     if (!(await wait('document.querySelector(".props h3")?.textContent === "Stamp"', 2000))) throw new Error('selecting the stamp did not show its settings');
     for (const [label, v] of [['Size (pt)', 24], ['Rotation (°)', 30], ['Opacity (%)', 80]]) await ejs(`(() => { const n = document.querySelector('.props input.num[aria-label="${label}"]'); n.value = ${v}; n.dispatchEvent(new Event('change')); })()`);
     const turned = await ejs(`getComputedStyle([...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED')).transform`);
     if (!/matrix\(0\.86/.test(turned)) throw new Error(`stamp preview not turned: ${turned} ${JSON.stringify(await ejs(`(() => { const els = [...document.querySelectorAll('.obj.text')]; return { n: els.length, styles: els.map((x) => x.getAttribute('style')), panel: document.querySelector('.props h3')?.textContent, rot: document.querySelector('.props input.num[aria-label="Rotation (°)"]')?.value, sel: document.querySelectorAll('.obj.sel').length, editing: document.activeElement?.className }; })()`))}`);
-    // A stamp in the user's own words.
     await ejs('document.querySelector(\'[data-tool="stamp"]\').click()');
     await ejs(`(() => { const i = [...document.querySelectorAll('.props input[type=text]')].find((x) => /own words/.test(x.closest('.field').textContent)); i.value = 'CHECKED BY JK'; i.dispatchEvent(new Event('input')); })()`);
     await press(0.55, 0.62);
@@ -1093,7 +1062,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(await wait('!!document.querySelector(".obj svg path")', 2000))) throw new Error('no tick on the page');
     await ejs('document.querySelector(\'.props [data-st="date"]\').click()');
     await press(0.1, 0.56);
-    // Underline part of a line of text with the markup tool.
     await ejs('document.querySelector(\'[data-tool="highlight"]\').click()');
     await ejs('document.querySelector(\'.props [data-m="underline"]\').click()');
     await ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * 0.15, y = b.top + b.height * 0.4; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointermove', { clientX: x + b.width * 0.4, clientY: y + b.height * 0.02 })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: x + b.width * 0.4, clientY: y + b.height * 0.02 })); })()`);
@@ -1114,7 +1082,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!lines.some((l) => l.text.includes('CHECKED BY JK'))) throw new Error('own words stamp not in the file');
     const year = String(new Date().getFullYear());
     if (!lines.some((l) => l.text.includes(year) && !was.includes(l.text))) throw new Error('the date is not in the file');
-    // Green ink from the stamp's border and the tick, red from the underline, none of which the page had before.
     const ink = async (id) => {
       const { data, info } = await require('sharp')(await E.render(id, 0, 1.5)).raw().toBuffer({ resolveWithObject: true });
       let green = 0, red = 0;
@@ -1127,7 +1094,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     };
     const a = await ink(s1.id), b = await ink(s2.id);
     if (b.green - a.green < 150) throw new Error(`stamp border and tick: ${b.green - a.green} green pixels`);
-    // Turned 30°, the stamp's green reaches much higher and lower than a level one would (about 40 pt tall).
     {
       const { data, info } = await require('sharp')(await E.render(s2.id, 0, 1.5)).raw().toBuffer({ resolveWithObject: true }), { data: d0 } = await require('sharp')(await E.render(s1.id, 0, 1.5)).raw().toBuffer({ resolveWithObject: true });
       let top = Infinity, bottom = -1;
@@ -1143,8 +1109,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   } catch (e) { stamp.status = 'FAIL'; stamp.detail = e.message; }
   console.log(`${stamp.status} ${stamp.name.padEnd(44)}        ${stamp.detail}`);
   results.push(stamp);
-  // The editor tests below share this: open a copy of a PDF (or one made for the test), drive the editor, then check
-  // what Save wrote. LIME_EDITOR (a pattern) picks some of them while working on the editor.
   const E = require('../src/main/pdfedit');
   const editorTest = async (name, srcName, make, fn) => {
     if (process.env.LIME_EDITOR && !new RegExp(process.env.LIME_EDITOR, 'i').test(name)) return;
@@ -1164,7 +1128,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       const at = (page) => `const l = document.querySelectorAll('.pdfpage .layer')[${page}], b = l.getBoundingClientRect(), p = (u, v) => ({ clientX: b.left + b.width * u, clientY: b.top + b.height * v });`;
       const ed = {
         ejs, wait, wc, src,
-        // Waits for the editor to finish what it is doing (its busy tip goes away).
         idle: async () => { await sleep(250); return wait('document.querySelector(".ed-status").hidden || !/…$/.test(document.querySelector(".ed-status").textContent)', 20000); },
         click: (u, v, page = 0) => ejs(`(() => { ${at(page)} l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ...p(${u}, ${v}) })); window.dispatchEvent(new PointerEvent('pointerup', p(${u}, ${v}))); })()`),
         drag: (u0, v0, u1, v1, page = 0) => ejs(`(() => { ${at(page)} l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ...p(${u0}, ${v0}) })); window.dispatchEvent(new PointerEvent('pointermove', p(${(u0 + u1) / 2}, ${(v0 + v1) / 2}))); window.dispatchEvent(new PointerEvent('pointermove', p(${u1}, ${v1}))); window.dispatchEvent(new PointerEvent('pointerup', p(${u1}, ${v1}))); })()`),
@@ -1211,7 +1174,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (note?.contents !== 'Should this heading be bigger?') throw new Error(`note: ${JSON.stringify(note)}`);
     if (reply?.contents !== 'Yes, 24 pt.' || reply.replyTo !== note.num) throw new Error(`reply: ${JSON.stringify(reply)}`);
     for (const t of ['Highlight', 'Square']) if (!list.some((a) => a.type === t && a.page === 0)) throw new Error(`no ${t} comment in ${list.map((a) => a.type)}`);
-    // Saved again with Flatten chosen: no comments left, but the highlight's yellow is part of the page.
     await ed.press('[data-a="saveopts"]');
     await ed.press('.popmenu [data-k="flatten"]');
     await ed.ejs('document.querySelector(".popmenu")?.remove()');
@@ -1292,7 +1254,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (fields['Full name']?.value !== 'Ada Lovelace') throw new Error(`Full name = ${fields['Full name']?.value}`);
     if (!fields['Check Box1'] || fields['Check Box1'].value === 'Off' || !fields['Check Box1'].value) throw new Error(`tick box = ${fields['Check Box1']?.value}`);
     if (fields.Dropdown1?.value !== 'Coffee' || fields.Dropdown1.options.join() !== 'Tea,Coffee,Water') throw new Error(`drop-down = ${fields.Dropdown1?.value} of ${fields.Dropdown1?.options}`);
-    // Flattening from the Document menu turns them into page content.
     await ed.press('[data-a="docmenu"]');
     await ed.press('.popmenu [data-d="flatfields"]');
     await ed.idle();
@@ -1323,7 +1284,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ed.idle();
     const terms = await ed.ejs('document.querySelectorAll(".obj.redact").length');
     await ed.press('.props [data-pat="email"]');
-    // The address is on every page: wait for all three marks, or the apply below can run before they arrive.
     if (!(await ed.wait(`document.querySelectorAll(".obj.redact").length >= ${terms + 3}`, 8000))) throw new Error('no e-mail address marked');
     await ed.drag(0.15, 0.4, 0.35, 0.5);
     const marked = await ed.ejs('document.querySelectorAll(".obj.redact").length');
@@ -1475,8 +1435,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return `found “${text.slice(0, 40)}…”; the page looks as it did`;
   });
 
-
-  // The app editors: open a sample, make one real change through the panels, Save, and read the saved file back.
   const studio = async (name, sample, appId, fn) => {
     const r = { name, status: 'PASS', detail: '' };
     let win = null;
@@ -1558,7 +1516,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return `${path.relative(OUT, out)}: Aurora_Timelapse gone from V1 and A1, ${v1.length} clips left on V1`;
   });
 
-  // The image editor: open, edit through its panels, save, and measure what was written.
   const sharp = require('sharp');
   const openImage = async (src) => {
     openEditor(src, 'image');
@@ -1589,7 +1546,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const src = path.join(OUT, 'editimg.jpg');
     fs.copyFileSync(fx('photo.jpg'), src);
     const { win, ejs, wait, idle, slide, press, saved } = await openImage(src);
-    // Crop to 4:5, then turn it a quarter right: 853 × 1067 of the 1600 × 1067 photo, lying on its side.
     await ejs('document.querySelector(\'[data-tool="crop"]\').click()');
     await ejs('document.querySelector(\'.props [data-r="4:5"]\').click()');
     await ejs('document.querySelector(\'.props [data-o="right"]\').click()');
@@ -1613,7 +1569,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(b.sat > a.sat + 0.03)) throw new Error(`not more saturated: ${a.sat.toFixed(3)} → ${b.sat.toFixed(3)}`);
     if (b.red < 400 || a.red > 50) throw new Error(`text: ${b.red} red pixels (the photo had ${a.red})`);
     if (!meta.exif || (meta.orientation && meta.orientation !== 1)) throw new Error(`Exif ${meta.exif ? `kept but orientation ${meta.orientation}` : 'lost'}`);
-    // Save as… PNG, through the format choice.
     asked = [];
     await ejs('document.querySelector(\'[data-a="saveas"]\').click()');
     if (!(await wait('!!document.querySelector(".scrim [data-f=png]")', 3000))) throw new Error('no format choice for Save as');
@@ -1625,7 +1580,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await sleep(500);
     const pm = await sharp(png).metadata();
     if (pm.format !== 'png' || pm.width !== b.w || pm.height !== b.h) throw new Error(`Save as wrote ${pm.format} ${pm.width}×${pm.height}`);
-    // Undo goes back through the steps.
     const before = await ejs('document.querySelector(".imged").__imged.st.at');
     await ejs('document.querySelector(\'[data-a="undo"]\').click()');
     const after = await ejs('document.querySelector(".imged").__imged.st.at');
@@ -1672,7 +1626,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const src = path.join(OUT, 'editalpha.png');
     fs.copyFileSync(fx('alpha.png'), src);
     const { win, ejs, wait, idle, slide, press, saved } = await openImage(src);
-    // A linear gradient darkens the top of the green disc and fades out above its middle.
     await ejs('document.querySelector(\'[data-tool="mask"]\').click()');
     await press(0.5, 0.02, [0.5, 0.42]);
     if (!(await wait('document.querySelector(".imged").__imged.st.dev.masks.length === 1', 3000))) throw new Error('no mask was added');
@@ -1698,7 +1651,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${im.status} ${im.name.padEnd(44)}        ${im.detail}`);
   results.push(im);
 
-  // The audio and video editor: drive it as a person would (keys, the timeline, the panels), save, then read the file.
   const mediaEditor = async (src) => {
     openEditor(src, 'media');
     const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
@@ -1730,14 +1682,12 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await at(3.5, 'o');
     await at(1.5, 's');
     await at(2.0, 's');
-    // Pick the middle part on the timeline, then cut it out with Delete.
     await ejs(`(() => { const c = document.querySelector('.me-tl canvas'), r = c.getBoundingClientRect(), M = window.__media, x = r.left + 14 + 1.75 * M.st.zoom - M.st.scroll, y = r.top + 50;
       c.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y, pointerId: 1 })); c.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, pointerId: 1 })); })()`);
     await sleep(150);
     await key('Delete');
     const keep = await ejs('JSON.stringify(window.__media.kept())');
     if (keep !== '[[0.5,1.5],[2,3.5]]') throw new Error(`kept ${keep}`);
-    // Playing from just before the cut carries on after it.
     await ejs('window.__media.seek(1.3); window.__media.play()');
     await sleep(900);
     const played = await ejs('(() => { const t = document.querySelector("video").currentTime; window.__media.pause(); return t; })()');
@@ -1759,7 +1709,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const info = await probeMedia(out);
     if (!info.video || !info.audio) throw new Error(`saved streams: video ${!!info.video}, audio ${!!info.audio}`);
     if (Math.abs(info.duration - 2.5) > 0.15) throw new Error(`saved ${info.duration.toFixed(2)} s, expected 2.5 s`);
-    // Fade from black at the start; the title drawn at the bottom centre, where the saved picture differs from the source.
     const luma = ({ data, info: i }, y0, y1, x0 = 0, x1 = 1) => { let s = 0, n = 0; for (let y = Math.floor(i.height * y0); y < i.height * y1; y += 2) for (let x = Math.floor(i.width * x0); x < i.width * x1; x += 2) { const o = (y * i.width + x) * 3; s += i.channels === 3 ? (data[o] + data[o + 1] + data[o + 2]) / 3 : 0; n++; } return s / n; };
     const first = luma(await frameAt(out, 0.02), 0, 1), mid = luma(await frameAt(out, 1.2), 0, 1);
     if (!(first < mid * 0.35)) throw new Error(`no fade in: first frame ${first.toFixed(0)}, later ${mid.toFixed(0)}`);
@@ -1787,7 +1736,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ejs(`document.querySelector('.props [data-look="lumetri:Neutral Mono"]').click()`);
     await ejs(`window.__media.edit((x) => { x.music = { file: ${JSON.stringify(fx('song.mp3'))}, volume: -6, mode: 'mix', duck: 10, loop: true, fit: false, fadeOut: 1 }; })`);
     if (!(await ed.wait('!!window.__media.st.cube', 15000))) throw new Error('the look was not applied to the preview');
-    // The preview is grey too: sample the drawn picture.
     const grey = await ejs(`(() => { const c = document.querySelector('.me-gl'), t = document.createElement('canvas'); t.width = 64; t.height = 64; const g = t.getContext('2d'); g.drawImage(c, 0, 0, 64, 64); const d = g.getImageData(0, 0, 64, 64).data; let m = 0; for (let i = 0; i < d.length; i += 4) m = Math.max(m, Math.abs(d[i] - d[i + 1]), Math.abs(d[i + 1] - d[i + 2])); return m; })()`);
     if (grey > 24) throw new Error(`the preview still has colour (${grey})`);
     await ejs('window.__media.seek(1)');
@@ -1800,7 +1748,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!fs.existsSync(still)) throw new Error('Save frame wrote nothing');
     const sm = await require('sharp')(still).metadata();
     if (sm.width !== 720 || sm.height !== 720) throw new Error(`frame is ${sm.width}×${sm.height}`);
-    // What the preview shows is what was saved: the turned, flipped, cropped and graded frame, side by side.
     const shown = await ejs(`(() => { const c = document.querySelector('.me-gl'), t = document.createElement('canvas'); t.width = 24; t.height = 24; const g = t.getContext('2d'); g.drawImage(c, 0, 0, 24, 24); return [...g.getImageData(0, 0, 24, 24).data].filter((_, i) => i % 4 !== 3); })()`);
     const saved = await require('sharp')(still).resize(24, 24, { fit: 'fill' }).removeAlpha().raw().toBuffer();
     const off = shown.reduce((s_, v, i) => s_ + Math.abs(v - saved[i]), 0) / shown.length;
@@ -1894,7 +1841,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${(now - was).toFixed(1)} dB louder, fades in from ${start.toFixed(0)} dB`;
   });
 
-  // The same keys in every editor: ? lists them, the tool letters pick tools, Ctrl+S saves.
   await check('editors · one set of shortcuts, ? lists them', async () => {
     const out = [];
     const keyDown = (wc, key, mods = []) => { wc.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers: mods }); wc.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers: mods }); };
@@ -1907,7 +1853,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
       await sleep(400);
       return { win, wc, ejs, wait };
     };
-    // PDF: ? opens the list from the key and from the Help button, c picks Crop, Escape goes back to Select.
     const src = path.join(OUT, 'keys.pdf');
     fs.copyFileSync(fx('doc.pdf'), src);
     let ed = await opened(src, 'edit', '!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")');
@@ -1931,7 +1876,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!fs.existsSync(saved)) throw new Error('Ctrl+S did not save');
     out.push(`PDF: ? and Help list ${rows.length} keys, C = Crop, Esc = Select, Ctrl+S saved ${path.basename(saved)}`);
     ed.win.destroy();
-    // Image: the same letters mean the same (c crop, y red eye, k mask), and ? lists its own keys too.
     const img = path.join(OUT, 'keys.jpg');
     fs.copyFileSync(fx('photo.jpg'), img);
     ed = await opened(img, 'image', '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()');
@@ -1945,7 +1889,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     for (const want of ['Save', 'Close', 'Heal', 'Mask', 'Red eye', 'Hold to see the original']) if (!irows.includes(want)) throw new Error(`the image list lacks ${want}: ${irows.join(', ')}`);
     out.push(`image: C, Y, K, T pick their tools, ? lists ${irows.length} keys`);
     ed.win.destroy();
-    // Video: ? lists the transport keys, and Escape lets go of the part picked.
     const clip = path.join(OUT, 'keys.mp4');
     fs.copyFileSync(fx('clip.mp4'), clip);
     ed = await opened(clip, 'media', '!!window.__media?.st.ready');
@@ -1961,7 +1904,6 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     return out.join('; ');
   });
 
-  // The welcome window: four steps on one screen, and Got it marks it as seen.
   await check('welcome · four steps, Got it marks it seen', async () => {
     openWelcome();
     let w = null;
