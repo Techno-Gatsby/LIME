@@ -61,6 +61,14 @@ const CALLS = {
   'editor.save': editor.save, 'editor.exportPages': editor.exportPages, 'editor.close': editor.close,
 };
 
+// The image, audio/video and app editors each live in their own module: 'image.open' calls imgedit.js's open, and so on.
+const EDITORS = { image: './imgedit', media: './mediaedit', studio: './studio' };
+function editorCall(method) {
+  const [ns, name] = String(method).split('.');
+  const m = EDITORS[ns] ? require(EDITORS[ns]) : null;
+  return m && typeof m[name] === 'function' ? m[name] : null;
+}
+
 parentPort.on('message', async (msg) => {
   if (msg.type === 'cancel') { controllers.get(msg.jobId)?.abort(); return; }
   if (msg.type === 'hostResult') {
@@ -71,7 +79,7 @@ parentPort.on('message', async (msg) => {
   if (msg.type === 'config') { U.configure(msg.cfg); return; }
   if (msg.type === 'call') {
     try {
-      const fn = CALLS[msg.method];
+      const fn = CALLS[msg.method] || editorCall(msg.method);
       if (!fn) throw new Error(`Unknown call ${msg.method}`);
       const result = await fn(...(msg.args || []));
       parentPort.postMessage({ type: 'callResult', id: msg.id, result });

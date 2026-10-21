@@ -547,10 +547,14 @@ async function doAction(item, files) {
 
 // Each app's ring: open the full app, then every Lime tool its engine powers. With no files (the wheel opened by a
 // click) every tool is listed, and choosing one asks for files of the kinds it takes.
+const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'] };
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
   const ring = [{ action: 'craft', app: id, label: 'Open', hint: 'Full app', desc: ok ? `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${a.name}, with every tool` : `${a.name} isn’t in this build of Lime`, ...(ok ? {} : { off: true }) }];
+  // Then the app's editor in Lime, for the files given (or a file to choose), and the app's actions.
+  const edit = (EDIT_IN[id] || []).map((t) => tools.get(t)).find((t) => t && (!files.length || tools.accepts(t, files)));
+  if (edit) ring.push({ tool: edit.id, label: 'Edit', hint: 'In Lime', desc: edit.desc, ...(files.length ? {} : { exts: tools.extsFor(edit) }) });
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
@@ -675,6 +679,8 @@ function registerIpc() {
   hE('picker:data', async (e) => { const d = BrowserWindow.fromWebContents(e.sender)?.pickerData; return d ? { ...d, ...(await call('sheetPreview', d.file)) } : null; });
   hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });
   h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
+  // The other editors: ns is image, media or studio (see worker.js).
+  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
   hE('dialog:open', async (e, o = {}) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });
     return r.canceled ? [] : r.filePaths;
