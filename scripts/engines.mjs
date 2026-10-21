@@ -76,6 +76,11 @@ async function binaries() {
     if (has(dest)) continue;
     fs.writeFileSync(dest, zlib.gunzipSync(fs.readFileSync(await get(`${FF}/${n}-${PLAT}-${ARCH}.gz`))), { mode: 0o755 });
   }
+  if (PLAT === 'darwin' && !has(path.join(BIN, 'lime-ocr'))) {
+    const swiftc = which('swiftc');
+    if (swiftc) sh(swiftc, ['-O', '-target', `${ARCH === 'x64' ? 'x86_64' : 'arm64'}-apple-macos12.0`, '-o', path.join(BIN, 'lime-ocr'), path.join(ROOT, 'scripts', 'lime-ocr.swift')]);
+    else console.warn('! swiftc is not installed, so this build reads text with tesseract instead of Apple Vision');
+  }
   if (PLAT === 'darwin' && !has(path.join(BIN, '7zz'))) {
     const tmp = mk(path.join(CACHE, '7zmac'));
     sh(TAR, ['-xJf', await get(`${SEVEN}/7z2604-mac.tar.xz`), '-C', tmp, '7zz']);
@@ -152,8 +157,6 @@ async function apps() {
     fs.rmSync(tmp, { recursive: true, force: true });
     let app;
     if (WIN) {
-      // The whole portable folder, less the CLI (Lime ships its own copy) and portable.txt, so the app keeps its
-      // settings in its usual per-user folders rather than inside Lime's. PdfCraft's OCR models come along.
       const skip = new RegExp(`/(${id}-cli\\.exe|portable\\.txt)$`);
       const zip = unzipSync(fs.readFileSync(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`)), { filter: (f) => !f.name.endsWith('/') && !skip.test(f.name) });
       app = mk(path.join(tmp, id));
@@ -188,7 +191,6 @@ async function natives() {
   }
 }
 
-// A third argument runs one step alone: engines, crafts or apps.
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
