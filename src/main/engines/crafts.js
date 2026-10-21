@@ -596,6 +596,12 @@ function appFor(file) {
   return id && hasApp(id) ? { id, ...APPS[id] } : null;
 }
 const unpackingApps = new Map();
+// Windows antivirus holds a freshly written program for a moment, and a running copy can't be replaced: wait and retry.
+const settle = async (fn) => {
+  for (let i = 0; ; i++) {
+    try { return await fn(); } catch (e) { if (i >= 12 || !['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'].includes(e.code)) throw e; await new Promise((r) => setTimeout(r, 250 * (i + 1))); }
+  }
+};
 async function bundledApp(id) {
   const m = bundledApps()[id];
   if (!m || !fs.existsSync(appSource(id))) return null;
@@ -603,8 +609,8 @@ async function bundledApp(id) {
   if (fs.existsSync(target)) return target;
   if (!unpackingApps.has(id)) {
     unpackingApps.set(id, (async () => {
-      const part = `${dir}.part`;
-      await fsp.rm(part, { recursive: true, force: true });
+      // Each unpack has a folder of its own, so two at once (or a leftover from one that stopped) never collide.
+      const part = `${dir}.part-${process.pid}-${Date.now()}`;
       await fsp.mkdir(part, { recursive: true });
       const unbrotli = () => fs.createReadStream(appSource(id)).pipe(zlib.createBrotliDecompress());
       if (U.isWin) await pipeline(unbrotli(), fs.createWriteStream(path.join(part, m.file)));
@@ -618,11 +624,12 @@ async function bundledApp(id) {
           pipeline(unbrotli(), tar.stdin).catch(no);
         });
       }
-      await fsp.rm(dir, { recursive: true, force: true });
-      await fsp.rename(part, dir);
+      if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
+      await settle(() => fsp.rm(dir, { recursive: true, force: true }));
+      await settle(() => fsp.rename(part, dir));
       for (const d of await fsp.readdir(root)) if (d.startsWith(`${id}-`) && d !== path.basename(dir)) fsp.rm(path.join(root, d), { recursive: true, force: true }).catch(() => {});
       return target;
-    })().finally(() => unpackingApps.delete(id)));
+    })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingApps.delete(id)));
   }
   return unpackingApps.get(id);
 }

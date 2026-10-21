@@ -841,12 +841,13 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const spot = await ejs(`(() => { const b = document.querySelector('.pdfpage').getBoundingClientRect(); return { x: Math.round(b.left + b.width * 0.5), y: Math.round(b.top + Math.min(b.height, innerHeight - b.top) * 0.4) }; })()`);
     const at = (pt) => ejs(`(() => { const b = document.querySelector('.pdfpage').getBoundingClientRect(); return { fx: (${pt.x} - b.left) / b.width, fy: (${pt.y} - b.top) / b.height, w: b.width, h: b.height }; })()`);
     const before = await at(spot);
-    for (let i = 0; i < 8; i++) { await ejs(`document.querySelector('.pages').dispatchEvent(new WheelEvent('wheel', { deltaY: -12, ctrlKey: true, clientX: ${spot.x}, clientY: ${spot.y}, bubbles: true, cancelable: true }))`); await sleep(30); }
+    const steps = [];
+    for (let i = 0; i < 8; i++) { steps.push(await ejs(`(() => { const p = document.querySelector('.pages'); p.dispatchEvent(new WheelEvent('wheel', { deltaY: -12, ctrlKey: true, clientX: ${spot.x}, clientY: ${spot.y}, bubbles: true, cancelable: true })); return [Math.round(p.scrollTop), p.scrollHeight, p.clientHeight]; })()`)); await sleep(30); }
     await sleep(300);
     const after = await at(spot);
     if (after.w < before.w * 1.4) throw new Error(`pinch zoomed only ${(after.w / before.w).toFixed(2)}×`);
     const drift = Math.hypot((after.fx - before.fx) * after.w, (after.fy - before.fy) * after.h);
-    if (drift > 3) throw new Error(`the spot under the pointer moved ${drift.toFixed(1)} px: ${JSON.stringify({ spot, before, after, view: await ejs('[innerWidth, innerHeight, document.querySelector(".pages").clientWidth, document.querySelector(".pages").scrollTop, devicePixelRatio]') })}`);
+    if (drift > 3) throw new Error(`the spot under the pointer moved ${drift.toFixed(1)} px: ${JSON.stringify({ spot, before, after, view: await ejs('[innerWidth, innerHeight, document.querySelector(".pages").clientWidth, document.querySelector(".pages").scrollTop, devicePixelRatio, document.visibilityState, document.hasFocus()]'), steps })}`);
     const zoomed = `${(after.w / before.w).toFixed(2)}× with ${drift.toFixed(1)} px drift`;
     await ejs(`(() => { const z = document.querySelector('select.zoom'); z.value = 'width'; z.dispatchEvent(new Event('change')); })()`);
     await sleep(400);
@@ -931,7 +932,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(await wait('document.querySelector(".props h3")?.textContent === "Stamp"', 2000))) throw new Error('selecting the stamp did not show its settings');
     for (const [label, v] of [['Size (pt)', 24], ['Rotation (°)', 30], ['Opacity (%)', 80]]) await ejs(`(() => { const n = document.querySelector('.props input.num[aria-label="${label}"]'); n.value = ${v}; n.dispatchEvent(new Event('change')); })()`);
     const turned = await ejs(`getComputedStyle([...document.querySelectorAll('.obj.text')].find((x) => x.textContent === 'APPROVED')).transform`);
-    if (!/matrix\(0\.86/.test(turned)) throw new Error(`stamp preview not turned: ${turned}`);
+    if (!/matrix\(0\.86/.test(turned)) throw new Error(`stamp preview not turned: ${turned} ${JSON.stringify(await ejs(`(() => { const els = [...document.querySelectorAll('.obj.text')]; return { n: els.length, styles: els.map((x) => x.getAttribute('style')), panel: document.querySelector('.props h3')?.textContent, rot: document.querySelector('.props input.num[aria-label="Rotation (°)"]')?.value, sel: document.querySelectorAll('.obj.sel').length, editing: document.activeElement?.className }; })()`))}`);
     // A stamp in the user's own words.
     await ejs('document.querySelector(\'[data-tool="stamp"]\').click()');
     await ejs(`(() => { const i = [...document.querySelectorAll('.props input[type=text]')].find((x) => /own words/.test(x.closest('.field').textContent)); i.value = 'CHECKED BY JK'; i.dispatchEvent(new Event('input')); })()`);

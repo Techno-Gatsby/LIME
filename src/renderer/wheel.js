@@ -48,20 +48,22 @@ function offsetTo(pt) {
   const cl = (v, a, b) => Math.max(a, Math.min(b, v));
   return { x: cl((pt.x - geo.bounds.x) / k - 165, -125, 125), y: cl((pt.y - geo.bounds.y) / k - 194, -150, 180) };
 }
+// The wheel shows on the next frame; a window Windows or macOS thinks is covered gets no frames, so a timer backs it up.
+function unpre() { const go = () => stage.classList.remove('pre'); requestAnimationFrame(go); setTimeout(go, 60); }
 function bloomFrom(pt) {
   const o = offsetTo(pt);
   stage.style.setProperty('--ox', `${o.x}px`);
   stage.style.setProperty('--oy', `${o.y}px`);
   stage.classList.remove('folding');
   stage.classList.add('blooming');
-  requestAnimationFrame(() => stage.classList.remove('pre'));
+  unpre();
   clearTimeout(bloomFrom.t);
   bloomFrom.t = setTimeout(() => stage.classList.remove('blooming'), 900);
 }
 function popIn() {
   stage.classList.remove('folding');
   stage.classList.add('popping');
-  requestAnimationFrame(() => stage.classList.remove('pre'));
+  unpre();
   clearTimeout(popIn.t);
   popIn.t = setTimeout(() => stage.classList.remove('popping'), 500);
 }
@@ -86,7 +88,10 @@ async function doFold({ keepJob = false } = {}) {
   // The lime stays hidden until the window is back at the edge, so it never shows where the wheel was.
   stage.classList.add('tucking');
   try { await layout(); } finally {
-    requestAnimationFrame(() => { stage.classList.remove('tucking'); stage.classList.add('tuck-in'); setTimeout(() => stage.classList.remove('tuck-in'), 700); });
+    let revealed = false;
+    const show = () => { if (revealed) return; revealed = true; stage.classList.remove('tucking'); stage.classList.add('tuck-in'); setTimeout(() => stage.classList.remove('tuck-in'), 700); };
+    requestAnimationFrame(show);
+    setTimeout(show, 60);
   }
   // Files dragged over it while it folded: open again for them.
   if (S.over && S.state === 'idle') expand('edge');
