@@ -1493,7 +1493,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^(convert-video|compress-video) height=(2160|1080|720)$/, 'the 540p clip is never enlarged'], [/^(extract-audio|convert-audio) rate=48000$/, 'the source is 48 kHz already'],
     [/^trace-image transparent=true$/, 'the photo has no white areas to leave out'], [/^poster-frame transparent=false$/, 'the animation has its own black background layer'],
     [/^convert-slides paper=(letter|a4)$/, 'Automatic picks the local paper size'], [/^pages-per-sheet orientation=portrait$/, 'four portrait pages fit best on a portrait sheet'],
-    [/^pdf-page-size orientation=portrait$/, 'the pages are portrait already'] [/^overlay-pdf scale=actual$/, 'the overlay is the same size as the pages'],
+    [/^pdf-page-size orientation=portrait$/, 'the pages are portrait already'], [/^overlay-pdf scale=actual$/, 'the overlay is the same size as the pages'],
     [/^export-layers hidden=true$/, 'the PSD has no hidden layers'], [/^split-scenes sensitivity=(1|100)$/, 'hard cuts are found at any sensitivity, as FilmCraft’s own tests expect'],
     [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
   ];
