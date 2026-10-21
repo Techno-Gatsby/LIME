@@ -1,4 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
+import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
+import { setDocName, confirm3 } from './editor-kit.js';
 
 // The image editor. Light, colour, crop, healing and the rest are LightCraft develop settings rendered by the
 // worker (imgedit.js there), so what is shown is a screen-sized rendering of exactly what Save writes. Text and
@@ -21,7 +23,7 @@ const TOOLS = [
 ];
 const GROUPS = [['Develop', ['adjust', 'looks', 'enhance']], ['Frame', ['crop', 'resize']], ['Retouch', ['heal', 'redeye', 'mask']], ['Mark up', ['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']]];
 const MARKUP = new Set(['text', 'draw', 'rect', 'ellipse', 'arrow', 'line']);
-const KEYS = { c: 'crop', j: 'heal', t: 'text', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line', e: 'redeye', m: 'mask', d: 'adjust' };
+const KEYS = { d: 'adjust', c: 'crop', j: 'heal', y: 'redeye', k: 'mask', t: 'text', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line' };
 const COLORS = ['#ffffff', '#000000', '#d13438', '#ff8c00', '#ffd400', '#2fb344', '#0f6cbd', '#8a3ffc', '#ff4fa3'];
 const FONTS = [['sans', 'Noto Sans', '"Noto Sans",Arial,sans-serif'], ['serif', 'Noto Serif', '"Noto Serif",Georgia,serif'], ['mono', 'Noto Sans Mono', '"Noto Sans Mono",Consolas,monospace'],
   ['carlito', 'Carlito', 'Carlito,Calibri,sans-serif'], ['caveat', 'Caveat (handwriting)', 'Caveat,cursive'], ['dancing', 'Dancing Script', '"Dancing Script",cursive']];
@@ -90,6 +92,7 @@ export function openEditor(view, { file }, ctx) {
         <div class="grow"></div>
         <button class="tb compare" data-a="compare" title="Before and after: hold to see the original (or hold \\)">${icon('compare', 'sm')}<span class="lbl">Before</span></button>
         <div class="seg zoombar"><button class="tb icon" data-a="zoomout" title="Zoom out (Ctrl −)">${icon('zoomOut', 'sm')}</button><select class="zoom" title="Zoom" aria-label="Zoom"></select><button class="tb icon" data-a="zoomin" title="Zoom in (Ctrl +)">${icon('zoomIn', 'sm')}</button><button class="tb icon" data-a="fit" title="Fit (Ctrl 0)">${icon('fit', 'sm')}</button></div>
+        ${helpButton()}
         <button class="btn" data-a="saveas">Save as…</button>
         <button class="btn primary" data-a="save">${icon('save', 'sm')}Save</button>
       </div>
@@ -1583,6 +1586,8 @@ export function openEditor(view, { file }, ctx) {
   const FORMATS = [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['avif', 'AVIF'], ['tiff', 'TIFF'], ['heic', 'HEIC']];
   const LOSSY = ['jpg', 'webp', 'avif', 'heic'];
   const stem = () => nameOf(file).replace(/\.[^.]+$/, '');
+  // Save writes "<name> (edited).<ext>" beside the original (or where Save as… last put it); Save as… picks a format,
+  // then asks, suggesting the same. The original is never written over.
   async function save(as) {
     endText();
     let target = st.savePath, fmt = st.saveFmt || { to: st.sess.keep };
@@ -1591,7 +1596,7 @@ export function openEditor(view, { file }, ctx) {
         const pick = await formatDialog(fmt);
         if (!pick) return false;
         fmt = pick;
-        target = await api.invoke('dialog:save', { defaultPath: `${dirOf(file)}${sep}${stem()}.${pick.to}`, filters: [{ name: pick.to.toUpperCase(), extensions: [pick.to] }] });
+        target = await api.invoke('dialog:save', { defaultPath: `${dirOf(st.savePath || file)}${sep}${stem()} (edited).${pick.to}`, filters: [{ name: pick.to.toUpperCase(), extensions: [pick.to] }] });
         if (!target) return false;
         if (!/\.[a-z0-9]+$/i.test(target)) target += `.${pick.to}`;
       } else target = `${dirOf(file)}${sep}${stem()} (edited).${fmt.to}`;
@@ -1602,6 +1607,7 @@ export function openEditor(view, { file }, ctx) {
     if (!res) return false;
     st.savePath = res.path; st.saveFmt = fmt;
     st.savedKey = keyOf(snap());
+    if (as) setDocName(root, res.path);
     chrome();
     toast(`Saved ${nameOf(res.path)} (${res.w} × ${res.h})`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', res.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', res.path) }] });
     return true;
@@ -1634,14 +1640,6 @@ export function openEditor(view, { file }, ctx) {
       s.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); if (e.key === 'Enter') done({ to, quality: q }); e.stopPropagation(); });
     });
   }
-  function confirm3(title, text) {
-    return new Promise((resolve) => {
-      const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2><p class="muted" style="margin:0">${esc(text)}</p></div><div class="foot"><button class="btn primary" data-a="save">Save</button><button class="btn" data-a="discard">Don’t save</button><button class="btn" data-a="cancel">Cancel</button></div></div></div>`);
-      document.body.append(s);
-      $('[data-a=save]', s).focus();
-      s.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) { s.remove(); resolve(a); } });
-    });
-  }
   async function close() {
     endText();
     if (st.sess && keyOf(snap()) !== st.savedKey) {
@@ -1662,16 +1660,25 @@ export function openEditor(view, { file }, ctx) {
     if (a === 'undo') undo();
     if (a === 'redo') redo();
     if (a === 'history') historyMenu(e.target.closest('button'));
-    if (a === 'zoomin') setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) * 1.25);
-    if (a === 'zoomout') setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) / 1.25);
+    if (a === 'zoomin') zoomBy(1.25);
+    if (a === 'zoomout') zoomBy(1 / 1.25);
     if (a === 'fit') setZoom('fit');
     if (a === 'save') save(false);
     if (a === 'saveas') save(true);
+    if (a === 'help') keys.help();
   });
   const cmp = $('[data-a=compare]', root);
   cmp.addEventListener('pointerdown', (e) => { if (e.button === 0) showBefore(true); });
   ['pointerup', 'pointerleave'].forEach((ev) => cmp.addEventListener(ev, () => showBefore(false)));
   $('.zoom', root).addEventListener('change', (e) => setZoom(e.target.value === 'fit' ? 'fit' : Number(e.target.value)));
+  const zoomBy = (f) => setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) * f);
+  // The keys every editor shares (and ?); the ones below are this editor's own.
+  const keys = shortcuts([
+    ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true })]],
+    ['Edit', [key('Mod+Z', 'Undo', undo), key(['Mod+Shift+Z', 'Mod+Y'], 'Redo', redo), key('Mod+D', 'Duplicate what is selected'), key(['Delete', 'Backspace'], 'Delete it'), key(['ArrowLeft', 'ArrowRight'], 'Nudge it (Shift: 10 px)'), key('\\', 'Hold to see the original')]],
+    ['View', [key(['Mod+Plus', 'Plus'], 'Zoom in', () => zoomBy(1.25)), key(['Mod+Minus', 'Minus'], 'Zoom out', () => zoomBy(1 / 1.25)), key(['Mod+0', '0'], 'Fit', () => setZoom('fit')), key('Mod+1', 'Actual size', () => setZoom(1)), key('Space', 'Hold and drag to move around'), key('?', 'Keyboard shortcuts')]],
+    ['Tools', [...toolKeys(KEYS, selectTool), key('Escape', 'Deselect, or back to Adjust'), key('Enter', 'Finish cropping')]],
+  ], { typing: () => !!editing });
   const onKey = (e) => {
     if (document.querySelector('.scrim') || editing) return;
     // A slider keeps its arrow keys, but the shortcuts still work after dragging one.
@@ -1681,14 +1688,7 @@ export function openEditor(view, { file }, ctx) {
     const c = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
     if (e.key === '\\' && !c) { e.preventDefault(); showBefore(e.type === 'keydown'); return; }
     if (e.type !== 'keydown') return;
-    if (c && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
-    else if (c && k === 'y') { e.preventDefault(); redo(); }
-    else if (c && k === 's') { e.preventDefault(); save(e.shiftKey); }
-    else if (c && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) * 1.25); }
-    else if (c && e.key === '-') { e.preventDefault(); setZoom((st.zoom === 'fit' ? kd * dpr() : st.zoom) / 1.25); }
-    else if (c && e.key === '0') { e.preventDefault(); setZoom('fit'); }
-    else if (c && e.key === '1') { e.preventDefault(); setZoom(1); }
-    else if (c && k === 'd' && st.sel) { e.preventDefault(); const o = addObj(clone(strip(st.sel))); shiftObj(o, 0.02, 0.02); select(o); commit('Duplicate'); drawInk(); }
+    if (c && k === 'd' && st.sel) { e.preventDefault(); const o = addObj(clone(strip(st.sel))); shiftObj(o, 0.02, 0.02); select(o); commit('Duplicate'); drawInk(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && removeSel()) e.preventDefault();
     else if (st.sel && e.key.startsWith('Arrow')) {
       e.preventDefault();
@@ -1697,7 +1697,6 @@ export function openEditor(view, { file }, ctx) {
     }
     else if (e.key === 'Enter' && st.tool === 'crop') selectTool('adjust');
     else if (e.key === 'Escape') { if (st.sel || st.spotSel >= 0 || st.eyeSel >= 0) { st.sel = null; st.spotSel = -1; st.eyeSel = -1; drawMarks(); renderProps(); } else if (st.tool !== 'adjust') selectTool('adjust'); }
-    else if (!c && !e.altKey && KEYS[k]) selectTool(KEYS[k]);
   };
   document.addEventListener('keydown', onKey);
   document.addEventListener('keyup', onKey);
@@ -1738,6 +1737,7 @@ export function openEditor(view, { file }, ctx) {
     document.removeEventListener('keyup', onKey);
     document.removeEventListener('keydown', onSpace);
     document.removeEventListener('keyup', onSpace);
+    keys.dispose();
     ro.disconnect();
     if (pv.url) URL.revokeObjectURL(pv.url);
     st.thumbs.forEach((u) => URL.revokeObjectURL(u));

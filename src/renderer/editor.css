@@ -231,6 +231,16 @@ label.row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; col
 .flash { position: absolute; z-index: 4; border: 2px solid var(--accent); border-radius: 4px; pointer-events: none; animation: flash 1.4s ease forwards; }
 @keyframes flash { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 
+/* The keyboard shortcuts (?), listed by what they do. */
+.dialog.keys { width: min(760px, calc(100vw - 32px)); }
+.keycols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 28px; max-height: calc(100vh - 230px); overflow: auto; }
+.keycols section { min-width: 0; }
+.keycols h3 { font-size: 10.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin: 8px 0 3px; }
+.krow { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 25px; font-size: 12.5px; }
+.krow .kk { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.krow .kk i { font-style: normal; color: var(--ink-3); font-size: 11px; padding: 0 3px; }
+kbd.k { font: 600 11px/1 var(--font); min-width: 22px; text-align: center; padding: 4px 6px; border-radius: 5px; background: var(--surface-3); color: var(--ink-2); box-shadow: inset 0 -1px 0 var(--line-2); }
+
 /* Tool settings on the right. */
 .props .fkinds { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .props .fkinds .tb { justify-content: flex-start; height: 32px; background: var(--surface-3); }

@@ -867,9 +867,13 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (asked.length) {
       const t4 = Date.now();
       let found = null;
-      while (!found && Date.now() - t4 < 20000) { found = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editme.pdf')).find((p) => fs.existsSync(p)); await sleep(200); }
+      while (!found && Date.now() - t4 < 20000) { found = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editme (edited).pdf')).find((p) => fs.existsSync(p)); await sleep(200); }
       if (!found) throw new Error('Save As wrote nothing');
-      ed.detail = `${path.relative(OUT, want)}, ${path.relative(OUT, found)}`;
+      await sleep(400);
+      // The window and the top bar now show the new name.
+      const shown = await js('[document.title, document.querySelector(".topbar .doc b").textContent]', win.webContents);
+      if (shown[0] !== 'editme (edited).pdf' || shown[1] !== 'editme (edited).pdf') throw new Error(`after Save as the title shows ${shown.join(' / ')}`);
+      ed.detail = `${path.relative(OUT, want)}, ${path.relative(OUT, found)}; title follows Save as`;
     } else ed.detail = path.relative(OUT, want);
     win.destroy();
   } catch (e) { ed.status = 'FAIL'; ed.detail = e.message; }
@@ -1616,7 +1620,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ejs('document.querySelector(".scrim [data-f=png]").click(); document.querySelector(".scrim [data-a=ok]").click()');
     const t = Date.now();
     let png = null;
-    while (!png && Date.now() - t < 30000) { png = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editimg.png')).find((p) => fs.existsSync(p)); await sleep(200); }
+    while (!png && Date.now() - t < 30000) { png = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editimg (edited).png')).find((p) => fs.existsSync(p)); await sleep(200); }
     if (!png) throw new Error('Save as PNG wrote nothing');
     await sleep(500);
     const pm = await sharp(png).metadata();
@@ -1888,6 +1892,73 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(start < now - 10)) throw new Error(`no fade in: ${start} dB at the start, ${now} dB later`);
     ed.win.destroy();
     return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${(now - was).toFixed(1)} dB louder, fades in from ${start.toFixed(0)} dB`;
+  });
+
+  // The same keys in every editor: ? lists them, the tool letters pick tools, Ctrl+S saves.
+  await check('editors · one set of shortcuts, ? lists them', async () => {
+    const out = [];
+    const keyDown = (wc, key, mods = []) => { wc.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers: mods }); wc.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers: mods }); };
+    const opened = async (file, mode, ready) => {
+      openEditor(file, mode);
+      const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+      if (!(await wait(ready))) throw new Error(`${mode} editor did not load`);
+      await sleep(400);
+      return { win, wc, ejs, wait };
+    };
+    // PDF: ? opens the list from the key and from the Help button, c picks Crop, Escape goes back to Select.
+    const src = path.join(OUT, 'keys.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    let ed = await opened(src, 'edit', '!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")');
+    keyDown(ed.wc, '?', ['shift']);
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys .krow")', 3000))) throw new Error('? did not show the shortcuts');
+    const rows = await ed.ejs('[...document.querySelectorAll(".scrim.keys .krow > span:first-child")].map((x) => x.textContent)');
+    for (const want of ['Save', 'Save as…', 'Close', 'Undo', 'Redo', 'Zoom in', 'Crop', 'Select']) if (!rows.includes(want)) throw new Error(`the PDF list lacks ${want}: ${rows.join(', ')}`);
+    keyDown(ed.wc, 'Escape');
+    if (!(await ed.wait('!document.querySelector(".scrim.keys")', 3000))) throw new Error('Escape did not close the list');
+    await ed.ejs('document.querySelector(\'[data-a="help"]\').click()');
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys")', 3000))) throw new Error('the Help button did not show the list');
+    await ed.ejs('document.querySelector(".scrim.keys [data-a=ok]").click()');
+    keyDown(ed.wc, 'C');
+    if (!(await ed.wait('document.querySelector(\'[data-tool="crop"]\').getAttribute("aria-pressed") === "true"', 3000))) throw new Error('C did not pick Crop');
+    keyDown(ed.wc, 'Escape');
+    if (!(await ed.wait('document.querySelector(\'[data-tool="select"]\').getAttribute("aria-pressed") === "true"', 3000))) throw new Error('Escape did not go back to Select');
+    keyDown(ed.wc, 'S', ['control']);
+    const saved = path.join(OUT, 'keys (edited).pdf');
+    const t = Date.now();
+    while (!fs.existsSync(saved) && Date.now() - t < 20000) await sleep(200);
+    if (!fs.existsSync(saved)) throw new Error('Ctrl+S did not save');
+    out.push(`PDF: ? and Help list ${rows.length} keys, C = Crop, Esc = Select, Ctrl+S saved ${path.basename(saved)}`);
+    ed.win.destroy();
+    // Image: the same letters mean the same (c crop, y red eye, k mask), and ? lists its own keys too.
+    const img = path.join(OUT, 'keys.jpg');
+    fs.copyFileSync(fx('photo.jpg'), img);
+    ed = await opened(img, 'image', '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()');
+    for (const [k, tool] of [['C', 'crop'], ['Y', 'redeye'], ['K', 'mask'], ['T', 'text']]) {
+      keyDown(ed.wc, k);
+      if (!(await ed.wait(`document.querySelector('[data-tool="${tool}"]').getAttribute("aria-pressed") === "true"`, 3000))) throw new Error(`${k} did not pick ${tool} in the image editor`);
+    }
+    keyDown(ed.wc, '?', ['shift']);
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys .krow")', 3000))) throw new Error('? did not show the image editor’s shortcuts');
+    const irows = await ed.ejs('[...document.querySelectorAll(".scrim.keys .krow > span:first-child")].map((x) => x.textContent)');
+    for (const want of ['Save', 'Close', 'Heal', 'Mask', 'Red eye', 'Hold to see the original']) if (!irows.includes(want)) throw new Error(`the image list lacks ${want}: ${irows.join(', ')}`);
+    out.push(`image: C, Y, K, T pick their tools, ? lists ${irows.length} keys`);
+    ed.win.destroy();
+    // Video: ? lists the transport keys, and Escape lets go of the part picked.
+    const clip = path.join(OUT, 'keys.mp4');
+    fs.copyFileSync(fx('clip.mp4'), clip);
+    ed = await opened(clip, 'media', '!!window.__media?.st.ready');
+    await ed.ejs('window.__media.seek(1.5); window.__media.act("split"); window.__media.st.sel = 1; window.__media.selectTool("trim")');
+    keyDown(ed.wc, 'Escape');
+    if (!(await ed.wait('window.__media.st.sel === -1', 3000))) throw new Error('Escape did not let go of the part');
+    keyDown(ed.wc, '?', ['shift']);
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys .krow")', 3000))) throw new Error('? did not show the video editor’s shortcuts');
+    const mrows = await ed.ejs('[...document.querySelectorAll(".scrim.keys .krow > span:first-child")].map((x) => x.textContent)');
+    for (const want of ['Save', 'Play or pause', 'Split at the playhead', 'Zoom in on the timeline']) if (!mrows.includes(want)) throw new Error(`the video list lacks ${want}: ${mrows.join(', ')}`);
+    out.push(`video: Esc deselects, ? lists ${mrows.length} keys`);
+    ed.win.destroy();
+    return out.join('; ');
   });
 
   // The welcome window: four steps on one screen, and Got it marks it as seen.

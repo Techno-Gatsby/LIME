@@ -78,6 +78,23 @@ Click the lime and pick an app, or drop files and open **Apps**. **Open** starts
 - **FilmCraft** — split into scenes, clean up voices, film-look colour grades, edit-ready ProRes/DNxHR copies, media info, timeline conversion. **Edit** opens OTIO, FCPXML, XML, EDL and AAF timelines on a track view: trim, split, reorder, remove, speed, transitions, effects, looks, titles, markers and sequence settings, then MP4 or any of those formats.
 - **PdfCraft** — optimise, remove hidden data, PDF/A, fillable forms, check redactions, Bates numbers, word count, print check, link web addresses, split at bookmarks, accessibility check, comment summary, compare, header and footer, page background, properties, page labels, export form data and fill a form from data. Lime adds crop marks and bleed, and bookmarks from headings.
 
+## The editors
+
+The PDF, image, video and audio editors and the four app editors work the same way:
+
+- **Save** writes `<name> (edited).<ext>` beside the original (or where Save as… last put it). **Save as…** asks where, suggesting the same name; the original file is never written over. After Save as…, the window shows the new name.
+- **?** (or the Help button in the top bar) lists the keys of the editor you are in. The same keys mean the same everywhere:
+
+| Keys | What |
+|---|---|
+| Ctrl/⌘ S · Ctrl/⌘ Shift S | Save · Save as… |
+| Ctrl/⌘ Z · Ctrl/⌘ Y | Undo · Redo |
+| Ctrl/⌘ W | Close (asks about unsaved edits) |
+| + · − · 0 (with or without Ctrl/⌘) | Zoom in · out · fit |
+| Esc | Deselect, or back to the first tool |
+| V E T X N H P R O A L M C · K J Y D | Select, Edit text, Text, Erase, Note, Mark up, Draw, Box, Oval, Arrow, Line, Measure, Crop · Mask, Heal, Red eye, Adjust (the image editor) |
+| Space · J K L · I O S | Play or pause · back, pause, faster · trim start, trim end, split (video and audio) |
+
 ## Engines
 
 Bundled, all offline: MuPDF and pdf-lib, libvips (sharp), FFmpeg 6.1, 7-Zip 26, Tesseract, IMG.LY background removal, LibreDWG, Open CASCADE, and the command-line engines of the seven ArtCraft apps (PhotoCraft, LightCraft, VectorCraft, DesignCraft, EffectCraft, FilmCraft, PdfCraft). If LibreOffice is installed, Lime uses it for the most faithful Office conversions.

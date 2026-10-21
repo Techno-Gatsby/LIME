@@ -1,4 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, clean } from './ui.js';
+import { shortcuts, key, helpButton } from './shortcuts.js';
+import { setDocName, confirm3 } from './editor-kit.js';
 
 // The audio and video editor. Every change is a value in one edit list (E): the preview shows it live (WebGL for the
 // picture, Web Audio for the sound, a cleaned-up copy for noise and pitch), and Save hands the same list to the worker,
@@ -260,6 +262,7 @@ export function openEditor(view, { file }, ctx) {
         <div class="seg"><button class="tb icon" data-a="undo" title="Undo (Ctrl+Z)" disabled>${icon('undo')}</button><button class="tb icon" data-a="redo" title="Redo (Ctrl+Y)" disabled>${icon('redo')}</button></div>
         <div class="grow"></div>
         <div class="me-info"></div>
+        ${helpButton()}
         <button class="btn" data-a="saveas">Save as…</button>
         <button class="btn primary" data-a="save">${icon('save', 'sm')}Save</button>
       </div>
@@ -1379,6 +1382,8 @@ export function openEditor(view, { file }, ctx) {
     }
     if (cubeQueued || [E().look, E().log].some((id) => id && !st.luts.has(id))) { await Promise.all([E().look, E().log].filter(Boolean).map(lutOf)); st.cube = st.kind === 'video' ? buildCube(E().color, st.luts.get(E().look), st.luts.get(E().log), E().lookMix) : null; }
   }
+  // Save writes "<name> (edited).<ext>" beside the original (or where Save as… last put it); Save as… picks a format,
+  // then asks, suggesting the same. The original is never written over (FFmpeg reads it while it writes).
   async function save(as) {
     if (st.busy) return false;
     if (!kept().length) { toast('Every part of the clip is cut, so there is nothing to save.', { type: 'error' }); return false; }
@@ -1389,10 +1394,11 @@ export function openEditor(view, { file }, ctx) {
       if (!pick) return false;
       opts = pick;
       const ext = pick.format === 'hevc' ? 'mp4' : pick.format;
-      target = await api.invoke('dialog:save', { defaultPath: `${dirOf(file)}${sep}${base} (edited).${ext}`, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+      target = await api.invoke('dialog:save', { defaultPath: `${dirOf(st.savePath || file)}${sep}${base} (edited).${ext}`, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
       if (!target) return false;
     } else if (!target) target = `${dirOf(file)}${sep}${base} (edited).${st.s.save.ext}`;
     else opts = st.saveOpts || opts;
+    if (target === file) { toast('Choose another name: the original stays as it is.', { type: 'error' }); return false; }
     pause();
     st.busy = true;
     const card = h(`<div class="me-busy"><div class="card"><b>Saving ${esc(nameOf(target))}</b><div class="me-bar"><i></i></div><div class="row"><span class="lbl">Getting ready…</span><button class="btn">Cancel</button></div></div></div>`);
@@ -1408,6 +1414,7 @@ export function openEditor(view, { file }, ctx) {
       const res = await call('save', st.s.id, e, target, opts);
       st.savePath = target; st.saveOpts = opts;
       st.saved = JSON.stringify(st.E);
+      if (as) setDocName(root, res.path);
       toast(`Saved ${nameOf(res.path)}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', res.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', res.path) }] });
       return true;
     } catch (er) {
@@ -1450,11 +1457,7 @@ export function openEditor(view, { file }, ctx) {
   }
   async function close() {
     if (JSON.stringify(st.E) !== st.saved && st.s) {
-      const choice = await new Promise((resolve) => {
-        const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>Save changes to ${esc(nameOf(file))}?</h2><p class="muted" style="margin:0">Your edits will be lost if you don’t save them.</p></div><div class="foot"><button class="btn primary" data-a="save">Save</button><button class="btn" data-a="discard">Don’t save</button><button class="btn" data-a="cancel">Cancel</button></div></div></div>`);
-        document.body.append(s);
-        s.addEventListener('click', (ev2) => { const a = ev2.target.closest('[data-a]')?.dataset.a; if (a) { s.remove(); resolve(a); } });
-      });
+      const choice = await confirm3(`Save changes to ${nameOf(file)}?`, 'Your edits will be lost if you don’t save them.');
       if (choice === 'cancel') return;
       if (choice === 'save' && !(await save(false))) return;
     }
@@ -1472,18 +1475,25 @@ export function openEditor(view, { file }, ctx) {
     ({
       close, undo, redo, save: () => save(false), saveas: () => save(true), play: playPause, start: () => { pause(); seek(kept()[0]?.[0] ?? 0); }, back: () => step(-1), fwd: () => step(1),
       in: () => act('in'), out: () => act('out'), split: () => act('split'), cut: () => act('cut'), zin: () => setZoom(st.zoom * 1.6), zout: () => setZoom(st.zoom / 1.6), zfit: () => setZoom(fitZoom()),
+      help: () => keys.help(),
     })[a]?.();
   });
   $('.me-vol input', root).addEventListener('input', (ev2) => { if (nodes) nodes.master.gain.value = Number(ev2.target.value) ** 2; else if (media) media.volume = Number(ev2.target.value); });
+  // Lets go of the part or title picked, as Escape does in the other editors.
+  const deselect = () => { if (st.sel < 0 && !st.selTitle) return; st.sel = -1; st.selTitle = null; renderProps(); redraw(); drawTl(); };
+  // The keys every editor shares (and ?); the ones below are this editor's own.
+  const keys = shortcuts([
+    ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true })]],
+    ['Edit', [key('Mod+Z', 'Undo', undo), key(['Mod+Shift+Z', 'Mod+Y'], 'Redo', redo), key('I', 'Trim the start to the playhead'), key('O', 'Trim the end to the playhead'), key('S', 'Split at the playhead'), key(['Delete', 'Backspace'], 'Cut out the part picked, or delete the title'), key('Escape', 'Deselect', deselect)]],
+    ['Play', [key('Space', 'Play or pause'), key('K', 'Pause'), key('L', 'Play, then faster'), key('J', 'Back a second'), key(['ArrowLeft', 'ArrowRight'], 'A frame back or on (Shift: a second)'), key(['Home', 'End'], 'The start or the end')]],
+    ['View', [key(['Mod+Plus', 'Plus'], 'Zoom in on the timeline', () => setZoom(st.zoom * 1.6)), key(['Mod+Minus', 'Minus'], 'Zoom out', () => setZoom(st.zoom / 1.6)), key(['Mod+0', '0'], 'Fit the whole clip', () => setZoom(fitZoom())), key('?', 'Keyboard shortcuts')]],
+  ]);
   const onKey = (ev2) => {
     if (document.querySelector('.scrim') || !st.s) return;
     if (ev2.target.matches?.('input:not([type=range]):not([type=checkbox]), textarea, select')) return;
     const c = ev2.ctrlKey || ev2.metaKey, k = ev2.key.toLowerCase();
-    if (c && k === 'z' && !ev2.shiftKey) { ev2.preventDefault(); undo(); }
-    else if (c && (k === 'y' || (ev2.shiftKey && k === 'z'))) { ev2.preventDefault(); redo(); }
-    else if (c && k === 's') { ev2.preventDefault(); save(ev2.shiftKey); }
-    else if (c) return;
-    else if (ev2.key === ' ' || k === 'k') { ev2.preventDefault(); if (k === "k") pause(); else playPause(); }
+    if (c) return;
+    if (ev2.key === ' ' || k === 'k') { ev2.preventDefault(); if (k === "k") pause(); else playPause(); }
     else if (k === 'l') { if (st.playing) { st.rate = Math.min(4, st.rate * 2); applySound(); } else play(); }
     else if (k === 'j') { pause(); seek((media?.currentTime ?? st.t) - 1); }
     else if (ev2.key === 'ArrowLeft') { ev2.preventDefault(); step(ev2.shiftKey ? -fps() : -1); }
@@ -1494,8 +1504,6 @@ export function openEditor(view, { file }, ctx) {
     else if (k === 'o') act('out');
     else if (k === 's') act('split');
     else if (ev2.key === 'Delete' || ev2.key === 'Backspace') { ev2.preventDefault(); if (st.tool === 'titles' && st.selTitle) edit((x) => { x.titles = x.titles.filter((y) => y.id !== st.selTitle); }); else act('cut'); }
-    else if (ev2.key === '+' || ev2.key === '=') setZoom(st.zoom * 1.6);
-    else if (ev2.key === '-') setZoom(st.zoom / 1.6);
   };
   document.addEventListener('keydown', onKey);
   const ro = new ResizeObserver(() => { if (!st.s || !st.zoom) return; setZoom(st.atFit ? fitZoom() : st.zoom); layoutFrame(); redraw(); });
@@ -1551,6 +1559,7 @@ export function openEditor(view, { file }, ctx) {
   return () => {
     disposed = true;
     document.removeEventListener('keydown', onKey);
+    keys.dispose();
     ro.disconnect();
     themeWatch.disconnect();
     cancelAnimationFrame(raf);

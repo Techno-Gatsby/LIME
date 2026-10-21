@@ -1,4 +1,6 @@
 import { $, $$, esc, h, nameOf, dirOf, sep, form, defaultsFor, clean } from './ui.js';
+import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
+import { setDocName, confirm3 } from './editor-kit.js';
 
 // The app editors: VectorCraft (Illustrator-like), DesignCraft (InDesign), EffectCraft (After Effects) and FilmCraft
 // timelines (Premiere). One shell, like the PDF editor's, and a part for each app. Every change is made by the app's
@@ -254,10 +256,13 @@ export function openEditor(view, { file, mode }, ctx) {
   }
 
   // ── Saving ────────────────────────────────────────────────────────────────────────────────────────────────────
+  // Save writes "<name> (edited).<ext>" beside the original (or where Save as… last put it); Save as… picks a format,
+  // then asks, suggesting the same. The original is never written over.
   const base = nameOf(file).replace(/\.[^.]+$/, '');
+  const edited = (ext) => `${dirOf(st.savePath || file)}${sep}${base} (edited).${ext}`;
   async function save(as) {
     if (as) return saveAs();
-    const r = await busy('Saving…', () => call('save', st.sess.id, st.savePath || null));
+    const r = await busy('Saving…', () => call('save', st.sess.id, st.savePath || edited(st.sess.saveExt)));
     if (!r) return false;
     st.savePath = r.path;
     setSess(r);
@@ -280,12 +285,13 @@ export function openEditor(view, { file, mode }, ctx) {
       if (a !== 'ok') return;
       s.remove();
       const label = st.formats.find(([x]) => x === ext)?.[1] || ext.toUpperCase();
-      const target = await api.invoke('dialog:save', { defaultPath: `${dirOf(file)}${sep}${base}${ext === st.sess.ext ? ' (edited)' : ''}.${ext}`, filters: [{ name: label, extensions: [ext] }] });
+      const target = await api.invoke('dialog:save', { defaultPath: edited(ext), filters: [{ name: label, extensions: [ext] }] });
       if (!target) return;
+      if (target === file) { toast('Choose another name: the original stays as it is.', { type: 'error' }); return; }
       const r = await busy(`Saving ${label}…`, () => call('save', st.sess.id, target, opts));
       if (!r) return;
       setSess(r);
-      if (ext === st.sess.saveExt) st.savePath = r.path;
+      if (ext === st.sess.saveExt) { st.savePath = r.path; setDocName(root, r.path); }
       toast(`Saved ${nameOf(r.path)}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', r.path) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', r.path) }] });
     });
   }
@@ -310,14 +316,6 @@ export function openEditor(view, { file, mode }, ctx) {
       if (choice === 'save' && !(await save(false))) return;
     }
     go();
-  }
-  function confirm3(title, text) {
-    return new Promise((resolve) => {
-      const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2><p class="muted" style="margin:0">${esc(text)}</p></div><div class="foot"><button class="btn primary" data-a="save">Save</button><button class="btn" data-a="discard">Don’t save</button><button class="btn" data-a="cancel">Cancel</button></div></div></div>`);
-      document.body.append(s);
-      $('[data-a=save]', s).focus();
-      s.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) { s.remove(); resolve(a); } });
-    });
   }
   // A small form in a dialog, e.g. find and replace. Resolves with the values, or null.
   function ask(title, fields, okLabel = 'OK') {
@@ -354,6 +352,7 @@ export function openEditor(view, { file, mode }, ctx) {
         ${A.find ? `<div class="search">${icon('search', 'sm')}<input class="find" type="search" placeholder="${esc(A.find)}" aria-label="${esc(A.find)}"><button class="tb icon" data-a="replace" title="Find and replace (Ctrl H)">${icon('again', 'sm')}</button></div>` : ''}
         ${A.zoom ? `<div class="seg zoombar"><button class="tb icon" data-a="zoomout" title="Zoom out (Ctrl −)">${icon('zoomOut', 'sm')}</button><select class="zoom" title="Zoom" aria-label="Zoom"></select><button class="tb icon" data-a="zoomin" title="Zoom in (Ctrl +)">${icon('zoomIn', 'sm')}</button><button class="tb icon" data-a="fit" title="Fit width (Ctrl 0)">${icon('fit', 'sm')}</button></div>` : ''}
         ${A.sideTitle ? `<button class="tb icon" data-a="side" title="${esc(A.sideTitle)} panel" aria-pressed="true">${icon('grid')}</button>` : ''}
+        ${helpButton()}
         <button class="btn" data-a="saveas">Save as…</button>
         <button class="btn primary" data-a="save">${icon('save', 'sm')}Save</button>
       </div>
@@ -384,22 +383,26 @@ export function openEditor(view, { file, mode }, ctx) {
     if (a === 'save') save(false);
     if (a === 'saveas') save(true);
     if (a === 'replace') A.replace?.();
+    if (a === 'help') keys.help();
     if (a === 'side') { const on = bodyEl.classList.toggle('no-thumbs'); e.target.closest('button').setAttribute('aria-pressed', !on); }
     A.stage.command?.(a);
   });
   $('.find', root)?.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && st.sess) A.find && A.onFind?.(e.target.value.trim(), e.shiftKey); });
   $('.zoom', root)?.addEventListener('change', (e) => A.stage.command?.('zoomto', e.target.value));
+  // The keys every editor shares (and ?), with the app's own tool letters and the keys it handles itself.
+  const cmd = (c, v) => () => A.stage.command?.(c, v);
+  const keys = shortcuts([
+    ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true }),
+      ...(A.find ? [key('Mod+F', 'Find', () => $('.find', root).focus())] : []), ...(A.replace ? [key('Mod+H', 'Find and replace', () => A.replace())] : [])]],
+    ['Edit', [key('Mod+Z', 'Undo', undo), key(['Mod+Shift+Z', 'Mod+Y'], 'Redo', redo), ...(A.help || [])]],
+    ['View', [...(A.zoom ? [key(['Mod+Plus', 'Plus'], 'Zoom in', cmd('zoomin')), key(['Mod+Minus', 'Minus'], 'Zoom out', cmd('zoomout')), key(['Mod+0', '0'], 'Fit width', cmd('fit')), key('Mod+1', 'Actual size', cmd('zoomto', '1')), key('Space', 'Hold and drag to move around')] : []), key('?', 'Keyboard shortcuts')]],
+    ['Tools', [...toolKeys(A.shortcuts || {}, selectTool), key('Escape', 'Deselect')]],
+  ]);
   const onKey = (e) => {
     if (document.querySelector('.scrim') || !st.sess) return;
-    const c = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-    if (c && k === 's') { e.preventDefault(); save(e.shiftKey); return; }
+    const c = e.ctrlKey || e.metaKey;
     if (e.target.matches?.('input, textarea, select, [contenteditable]')) return;
-    if (c && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
-    else if (c && (k === 'y' || (e.shiftKey && k === 'z'))) { e.preventDefault(); redo(); }
-    else if (c && k === 'f' && A.find) { e.preventDefault(); $('.find', root).focus(); }
-    else if (c && k === 'h' && A.replace) { e.preventDefault(); A.replace(); }
-    else if (A.keys?.(e, c)) e.preventDefault();
-    else if (!c && !e.altKey && A.shortcuts?.[k]) selectTool(A.shortcuts[k]);
+    if (A.keys?.(e, c)) e.preventDefault();
   };
   document.addEventListener('keydown', onKey);
 
@@ -423,6 +426,7 @@ export function openEditor(view, { file, mode }, ctx) {
     if (st.disposed) return;
     st.disposed = true;
     document.removeEventListener('keydown', onKey);
+    keys.dispose();
     A.dispose?.();
     if (st.sess) call('close', st.sess.id).catch(() => {});
   };
@@ -577,15 +581,8 @@ function pageStage(E, cfg) {
     if (a === 'fit') fitWidth();
     if (a === 'zoomto') { if (v === 'width') fitWidth(); else if (v === 'page') fitPage(); else setZoom(Number(v)); }
   }
-  const keys = (e, c) => {
-    if (c && (e.key === '=' || e.key === '+')) { setZoom(ps.zoom * 1.25); return true; }
-    if (c && e.key === '-') { setZoom(ps.zoom / 1.25); return true; }
-    if (c && e.key === '0') { fitWidth(); return true; }
-    if (c && e.key === '1') { setZoom(1); return true; }
-    return false;
-  };
   const dispose = () => { ps.io?.disconnect(); document.removeEventListener('keydown', onSpace); document.removeEventListener('keyup', onSpace); ps.renders.forEach((r) => URL.revokeObjectURL(r.url)); };
-  return { el, k, refresh, decorate, command, keys, scrollTo, visiblePage, fitWidth, dispose, pages: () => ps.pages };
+  return { el, k, refresh, decorate, command, scrollTo, visiblePage, fitWidth, dispose, pages: () => ps.pages };
 }
 
 // A strip of page or artboard thumbnails with buttons above, as in the PDF editor.
@@ -899,7 +896,6 @@ function vectorApp(E) {
     if (r?.find) E.act('Replace text', 'findReplace', r);
   }
   function keys(e, c) {
-    if (stage.keys(e, c)) return true;
     const k = e.key;
     if (!v.sel.length) return false;
     if (k === 'Delete' || k === 'Backspace') { E.act('Delete', 'delete', { ids: v.sel }); return true; }
@@ -927,7 +923,8 @@ function vectorApp(E) {
       ['Document', [['type', 'textEdit', 'Type', 'Find and replace text, change fonts.'], ['artboard', 'artboard', 'Artboards', 'Resize, fit and add artboards.'], ['trace', 'trace', 'Trace', 'Turn a picture into shapes.']]],
       ['Out', [['export', 'share', 'Export', 'Save a copy, or export artboards and logo files.']]],
     ],
-    shortcuts: { v: 'select', t: 'text', m: 'shape', r: 'color' },
+    shortcuts: { v: 'select', t: 'text', r: 'shape' },
+    help: [key('Mod+D', 'Duplicate what is selected'), key('Mod+G', 'Group it (Shift: ungroup)'), key(['Delete', 'Backspace'], 'Delete it'), key(['ArrowLeft', 'ArrowRight'], 'Nudge it (Shift: 10 pt)')],
     onTool: () => stage.decorate(),
     saveOptions: {},
     dispose: () => { stage.dispose(); side.dispose(); },
@@ -1120,7 +1117,8 @@ function layoutApp(E) {
   }
   return {
     name: 'DesignCraft', icon: 'layers', find: 'Find in document', zoom: true, sideTitle: 'Pages', stage, side, panel, sync, replace, onFind: (q) => runFind(q),
-    keys: (e, c) => stage.keys(e, c) || (e.key === 'Delete' && d.item && !items().find((x) => x.id === d.item)?.story ? (E.act('Delete', 'deleteItems', { ids: [d.item] }), true) : false),
+    keys: (e) => (e.key === 'Delete' && d.item && !items().find((x) => x.id === d.item)?.story ? (E.act('Delete', 'deleteItems', { ids: [d.item] }), true) : false),
+    help: [key('Delete', 'Delete the frame selected')],
     tools: [
       ['Edit', [['select', 'cursor', 'Select', 'Click a frame to select it; a text frame opens its story.'], ['story', 'textEdit', 'Stories', 'Edit the text of any story.'], ['find', 'search', 'Find', 'Find and change text, with patterns.']]],
       ['Style', [['swatches', 'palette', 'Swatches', 'Change the document’s colours everywhere they’re used.'], ['fonts', 'textT', 'Fonts', 'See the fonts in use and replace them.']]],
@@ -1345,6 +1343,7 @@ function motionApp(E) {
       ['Out', [['export', 'share', 'Render', 'Lottie, MP4, GIF, WebM, ProRes and PNG frames.']]],
     ],
     shortcuts: { v: 'layers', t: 'text' },
+    help: [key('Space', 'Play or pause'), key(['ArrowLeft', 'ArrowRight'], 'A frame back or on (Shift: a second)'), key(['Home', 'End'], 'The start or the end'), key(['Delete', 'Backspace'], 'Delete the layer selected')],
     saveOptions: { gif: [{ key: 'transparent', def: false, kind: 'toggle', label: 'Transparent background' }], mov: [{ key: 'transparent', def: false, kind: 'toggle', label: 'Transparent background (ProRes 4444)' }], webm: [{ key: 'transparent', def: false, kind: 'toggle', label: 'Transparent background' }] },
     dispose: () => { ro.disconnect(); video.pause(); if (mo.frameUrl) URL.revokeObjectURL(mo.frameUrl); },
   };
@@ -1577,7 +1576,8 @@ function filmApp(E) {
       ['Sequence', [['sequence', 'gear', 'Sequence', 'Frame size, frame rate and markers.']]],
       ['Out', [['export', 'share', 'Export', 'Render an MP4 or hand the edit over as FCPXML, XML, OTIO, EDL or AAF.']]],
     ],
-    shortcuts: { v: 'select', c: 'razor' },
+    shortcuts: { v: 'select', b: 'razor' },
+    help: [key('S', 'Split the clip under the playhead'), key('Space', 'Play or pause'), key(['ArrowLeft', 'ArrowRight'], 'A frame back or on (Shift: a second)'), key(['Home', 'End'], 'The start or the end'), key('Delete', 'Remove the clip selected and close the gap'), key('Backspace', 'Remove it and leave a gap')],
     saveOptions: { mp4: [{ key: 'scale', def: '1', choices: [['1', 'Full size'], ['0.5', 'Half size']] }] },
     dispose: () => { ro.disconnect(); video.pause(); if (fm.frameUrl) URL.revokeObjectURL(fm.frameUrl); fm.thumbs.forEach((u) => URL.revokeObjectURL(u)); },
   };

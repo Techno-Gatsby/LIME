@@ -239,6 +239,22 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         await shot('19-editor-markup', e);
       }
     }
+    if (want('keys')) {
+      // The shortcuts list (?), in the PDF editor and the image editor.
+      for (const [name, file, mode, ready] of [['72-editor-keys', 'doc.pdf', 'edit', '!!document.querySelector(".pdfpage img.r[src]")'], ['73-imgedit-keys', 'photo.jpg', 'image', '!!document.querySelector(".imged .photo[src]")']]) {
+        openEditor(path.join(samples, file), mode);
+        let e = null;
+        for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === mode && !x.webContents.isLoading()); }
+        if (!e) continue;
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        for (let t = 0; t < 80 && !(await ejs(ready)); t++) await sleep(250);
+        await sleep(800);
+        await ejs(`document.querySelector('[data-a="help"]').click()`);
+        await sleep(500);
+        await shot(name, e);
+        e.destroy();
+      }
+    }
     // The app editors: each opened on a sample, then a few of its panels.
     const STUDIO = [
       ['studio-vector', 'logo.svg', 'vectorcraft', ['select', 'color', 'arrange', 'path', 'type', 'artboard', 'export'], async (ejs) => { await ejs(`document.querySelector('.vobj')?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); window.dispatchEvent(new PointerEvent('pointerup', {}))`); }],

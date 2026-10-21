@@ -1,6 +1,8 @@
 import { $, $$, esc, h, nameOf, dirOf, sep } from './ui.js';
 import { sidePanels, kindOf } from './editor-side.js';
 import { docTools } from './editor-doc.js';
+import { shortcuts, key, toolKeys, helpButton } from './shortcuts.js';
+import { setDocName, confirm3 } from './editor-kit.js';
 
 const PT = 96 / 72;
 const TOOLS = [
@@ -77,6 +79,7 @@ export function openEditor(view, { file, mode }, ctx) {
         <div class="seg zoombar"><button class="tb icon" data-a="zoomout" title="Zoom out (Ctrl −)">${icon('zoomOut', 'sm')}</button><select class="zoom" title="Zoom" aria-label="Zoom"></select><button class="tb icon" data-a="zoomin" title="Zoom in (Ctrl +)">${icon('zoomIn', 'sm')}</button><button class="tb icon" data-a="fit" title="Fit width (Ctrl 0)">${icon('fit', 'sm')}</button></div>
         <button class="tb icon" data-a="thumbs" title="Side panel: pages, bookmarks, comments and fields" aria-pressed="true">${icon('grid')}</button>
         <button class="tb docmenu" data-a="docmenu" title="Headers and footers, watermarks, properties, password and checks">${icon('layers', 'sm')}<span class="lbl">Document</span></button>
+        ${helpButton()}
         <button class="btn" data-a="saveas">Save as…</button>
         <div class="splitbtn"><button class="btn primary" data-a="save">${icon('save', 'sm')}Save</button><button class="btn primary more" data-a="saveopts" title="Save options: comments, form fields and password" aria-label="Save options">${icon('down', 'sm')}</button></div>
       </div>
@@ -1671,13 +1674,16 @@ export function openEditor(view, { file, mode }, ctx) {
 
   // What Save does with comments, fields and the password (the Save options menu and the security dialog set it).
   const saveOptions = () => ({ flattenComments: st.saveOpts.comments === 'flatten', flattenFields: !!st.saveOpts.flattenFields, ...(st.saveOpts.protect !== undefined ? { protect: st.saveOpts.protect } : {}) });
+  // Save writes "<name> (edited).pdf" beside the original (or where Save as… last put it); Save as… asks, suggesting
+  // the same. The original is never written over.
   async function save(as) {
     let target = st.savePath;
     if (as || !target) {
-      const suggested = `${dirOf(file)}${sep}${nameOf(file).replace(/\.pdf$/i, '')}${as ? '' : ' (edited)'}.pdf`;
-      if (as) { target = await api.invoke('dialog:save', { defaultPath: suggested, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (!target) return false; }
+      const suggested = `${dirOf(file)}${sep}${nameOf(file).replace(/\.pdf$/i, '')} (edited).pdf`;
+      if (as) { target = await api.invoke('dialog:save', { defaultPath: st.savePath || suggested, filters: [{ name: 'PDF', extensions: ['pdf'] }] }); if (!target) return false; }
       else target = suggested;
     }
+    if (target === file) { toast('Choose another name: the original stays as it is.', { type: 'error' }); return false; }
     const redactions = st.pending.filter((x) => x.type === 'redact').length;
     const ok = await busy('Saving…', async () => {
       await flush();
@@ -1686,7 +1692,7 @@ export function openEditor(view, { file, mode }, ctx) {
       layout(false);
       return true;
     });
-    if (ok && as) { document.title = nameOf(target); const b = $('.doc b', root); if (b) { b.textContent = nameOf(target); b.title = target; } }
+    if (ok && as) setDocName(root, target);
     if (ok) toast(`Saved ${nameOf(target)}${redactions ? `, with ${redactions} redaction${redactions === 1 ? '' : 's'} applied` : ''}`, { type: 'success', actions: [{ label: 'Open', fn: () => api.invoke('shell:open', target) }, { label: 'Show in folder', fn: () => api.invoke('shell:show', target) }] });
     updateChrome();
     return !!ok;
@@ -1748,15 +1754,6 @@ export function openEditor(view, { file, mode }, ctx) {
     updateChrome();
     toast(n ? `Replaced in ${n} line${n === 1 ? '' : 's'}. Save to keep it.` : `“${q}” wasn’t found.`, { type: n ? 'success' : undefined });
   }
-  function confirm3(title, text) {
-    return new Promise((resolve) => {
-      const s = h(`<div class="scrim"><div class="dialog"><div class="body"><h2>${esc(title)}</h2><p class="muted" style="margin:0">${esc(text)}</p></div><div class="foot"><button class="btn primary" data-a="save">Save</button><button class="btn" data-a="discard">Don’t save</button><button class="btn" data-a="cancel">Cancel</button></div></div></div>`);
-      document.body.append(s);
-      $('[data-a=save]', s).focus();
-      s.addEventListener('click', (e) => { const a = e.target.closest('[data-a]')?.dataset.a; if (a) { s.remove(); resolve(a); } });
-    });
-  }
-
   // The side panels and the Document menu reach the editor through this.
   const ed = {
     st, root, icon, call, toast, api, busy, flush, refresh, updateChrome, visiblePage, goTo, linesOf, marksChanged, focusField, flattenForm, docChange,
@@ -1784,19 +1781,22 @@ export function openEditor(view, { file, mode }, ctx) {
     if (a === 'saveas') save(true);
     if (a === 'saveopts') doc.saveMenu(e.target.closest('button'));
     if (a === 'docmenu') doc.menu(e.target.closest('button'));
+    if (a === 'help') keys.help();
     if (a === 'thumbs') { const on = body.classList.toggle('no-thumbs'); e.target.closest('button').setAttribute('aria-pressed', !on); }
   });
+  // The keys every editor shares (and ?); the ones below are this editor's own.
+  const keys = shortcuts([
+    ['Document', [key('Mod+S', 'Save', () => save(false), { always: true }), key('Mod+Shift+S', 'Save as…', () => save(true), { always: true }), key('Mod+W', 'Close', close, { always: true }), key('Mod+F', 'Find', () => find.focus()), key('Mod+H', 'Find and replace', replaceDialog)]],
+    ['Edit', [key('Mod+Z', 'Undo', undo), key(['Mod+Shift+Z', 'Mod+Y'], 'Redo', redo), key('Mod+D', 'Duplicate what is selected'), key(['Mod+C', 'Mod+V'], 'Copy and paste it'), key(['Delete', 'Backspace'], 'Delete it'), key(['ArrowLeft', 'ArrowRight'], 'Nudge it (Shift: 10 pt)')]],
+    ['View', [key(['Mod+Plus', 'Plus'], 'Zoom in', () => setZoom(st.zoom * 1.2)), key(['Mod+Minus', 'Minus'], 'Zoom out', () => setZoom(st.zoom / 1.2)), key(['Mod+0', '0'], 'Fit width', fitWidth), key('Mod+9', 'Fit page', fitPage), key('Mod+1', 'Actual size', () => setZoom(1)), key('Space', 'Hold and drag to move around'), key('?', 'Keyboard shortcuts')]],
+    ['Tools', [...toolKeys({ v: 'select', e: 'edittext', t: 'addtext', x: 'whiteout', n: 'note', h: 'highlight', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line', m: 'measure', c: 'crop' }, selectTool), key('Escape', 'Deselect, or back to Select'), key('Enter', 'Finish a measurement')]],
+  ], { typing: () => !!editing });
   const onKey = (e) => {
     if (document.querySelector('.scrim, .popmenu')) return;
     if (editing) return;
     if (e.target.matches?.('input, textarea, select')) return;
     const c = e.ctrlKey || e.metaKey;
-    if (c && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
-    else if (c && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redo(); }
-    else if (c && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
-    else if (c && e.key.toLowerCase() === 'f') { e.preventDefault(); find.focus(); }
-    else if (c && e.key.toLowerCase() === 'h') { e.preventDefault(); replaceDialog(); }
-    else if (c && e.key.toLowerCase() === 'd' && st.sel) { e.preventDefault(); duplicate(st.sel, 12); }
+    if (c && e.key.toLowerCase() === 'd' && st.sel) { e.preventDefault(); duplicate(st.sel, 12); }
     else if (c && e.key.toLowerCase() === 'c' && st.sel) { e.preventDefault(); clip = JSON.parse(JSON.stringify(serializeObj(st.sel))); }
     else if (c && e.key.toLowerCase() === 'v' && clip) { e.preventDefault(); const page = [...st.selPages][0] ?? clip.page; const o = addObj({ ...JSON.parse(JSON.stringify(clip)), page }); shiftObj(o, 12, 12); select(o); }
     else if (e.key === 'Enter' && st.draft) { e.preventDefault(); finishDraft(); }
@@ -1807,11 +1807,6 @@ export function openEditor(view, { file, mode }, ctx) {
       shiftObj(st.sel, dx, dy);
       if (st.sel.type === 'replace') st.sel.styled = true;
     }
-    else if (c && (e.key === '=' || e.key === '+')) { e.preventDefault(); setZoom(st.zoom * 1.2); }
-    else if (c && e.key === '-') { e.preventDefault(); setZoom(st.zoom / 1.2); }
-    else if (c && e.key === '0') { e.preventDefault(); fitWidth(); }
-    else if (c && e.key === '1') { e.preventDefault(); setZoom(1); }
-    else if (c && e.key === '9') { e.preventDefault(); fitPage(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && st.sel) { e.preventDefault(); removeObj(st.sel); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && st.pick) { e.preventDefault(); erasePicked(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && st.annSel) { e.preventDefault(); deleteAnnot(st.annSel); }
@@ -1822,10 +1817,6 @@ export function openEditor(view, { file, mode }, ctx) {
       else if (st.linkDraft || st.crop) { st.linkDraft = null; st.crop = null; marksChanged(); renderProps(); }
       else if (st.sel || st.pick || st.annSel || st.linkSel || st.fieldSel) { st.annSel = null; st.linkSel = null; st.fieldSel = null; select(null); marksChanged(); side.draw(); }
       else selectTool('select');
-    }
-    else if (!c && !e.altKey) {
-      const map = { v: 'select', e: 'edittext', t: 'addtext', x: 'whiteout', n: 'note', h: 'highlight', p: 'draw', r: 'rect', o: 'ellipse', a: 'arrow', l: 'line', m: 'measure' };
-      if (map[e.key.toLowerCase()]) selectTool(map[e.key.toLowerCase()]);
     }
   };
   document.addEventListener('keydown', onKey);
@@ -1865,6 +1856,7 @@ export function openEditor(view, { file, mode }, ctx) {
     document.removeEventListener('keydown', onKey);
     document.removeEventListener('keydown', onSpace);
     document.removeEventListener('keyup', onSpace);
+    keys.dispose();
     io?.disconnect(); tio?.disconnect(); ro.disconnect();
     st.renders.forEach((r) => URL.revokeObjectURL(r.url));
     document.querySelector('.popmenu')?.remove();
