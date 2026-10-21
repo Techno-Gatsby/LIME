@@ -9,7 +9,7 @@ const M = require('./mesh');
 
 const NAMES = { mm: 'MM', cm: 'CM', m: 'M', in: 'INCH', ft: 'FT' };
 const IGES_UNIT = { in: 1, mm: 2, ft: 4, m: 6, cm: 10 };
-const MAX_FACES = 300000;
+const MAX_FACES = 100000;
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const crs = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -51,7 +51,7 @@ function topology(m0, { refine = true } = {}) {
     if (loops) faces.push({ n: rg.n, loops, part: rg.part });
     else for (const t of rg.tris) faces.push({ n: N[t], loops: [T[t].slice()], part: tp[t] });
   }
-  if (faces.length > MAX_FACES) throw new Error(`This model makes ${faces.length.toLocaleString('en-US')} faces, too many for a usable STEP or IGES file. Simplify it first.`);
+  if (faces.length > MAX_FACES) throw new Error(`This model makes ${faces.length.toLocaleString('en-US')} faces, too many for a usable STEP, IGES or BREP file. Keep fewer triangles (More options, or Simplify model) and try again.`);
   dropCollinear(faces, V, tol);
   // Edges, numbered as first met; each use remembers whether it runs along the edge.
   const edges = [], ekey = new Map();

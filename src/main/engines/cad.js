@@ -878,7 +878,7 @@ async function readOcct(buf, e) {
   let face = 0;
   for (const m of r.meshes) {
     const start = pos.length / 3, nt = m.index.array.length / 3, base = idx.length;
-    pos.push(...m.attributes.position.array);
+    for (const v of m.attributes.position.array) pos.push(v);
     for (const i of m.index.array) idx.push(start + i);
     // Each B-rep face keeps an id (drawings use them to tell real edges from tessellation) and its own colour.
     const bf = m.brep_faces?.length ? m.brep_faces : [{ first: 0, last: nt - 1 }];
