@@ -93,7 +93,7 @@ async function readOs(png, lang) {
     if (!r || !Array.isArray(r.lines)) throw new Error('no result');
     const back = (b) => (k < 1 ? b.map((v) => v / k) : b);
     const out = r.lines.map((l) => ({ text: String(l.text || ''), box: l.box ? back(l.box) : null, words: (l.words || []).filter((w) => w.text).map((w) => ({ text: String(w.text), box: back(w.box) })) }));
-    for (const l of out) if (!l.box && l.words.length) l.box = union(l.words.map((w) => w.box));
+    for (const l of out) { l.words = joinMarks(l.words); if (l.words.length) l.text = l.words.map((w) => w.text).join(' '); if (!l.box && l.words.length) l.box = union(l.words.map((w) => w.box)); }
     const lines = out.filter((l) => l.box && l.text.trim());
     if (!lines.some((l) => l.words.length)) throw new Error('it read nothing');
     return { engine: os.name, width: m.width, height: m.height, lines };
@@ -101,6 +101,20 @@ async function readOs(png, lang) {
     engines.note(`${os.name} failed (${e.message}); using tesseract`);
     return null;
   } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+const MARK = /^[\p{P}\p{S}]+$/u, OPEN = /^[([{«“‘"'¿¡]+$/u;
+function joinMarks(words) {
+  const out = [];
+  let open = '';
+  for (let w of words) {
+    if (OPEN.test(w.text)) { open += w.text; continue; }
+    if (open) { w = { text: open + w.text, box: w.box }; open = ''; }
+    const prev = out.at(-1);
+    if (prev && MARK.test(w.text) && !MARK.test(prev.text)) { prev.text += w.text; prev.box = union([prev.box, w.box]); prev.glue = /[,.]$/.test(w.text); continue; }
+    if (prev?.glue && /^\d/.test(w.text) && /\d[,.]$/.test(prev.text)) { prev.text += w.text; prev.box = union([prev.box, w.box]); prev.glue = false; continue; }
+    out.push({ ...w, glue: false });
+  }
+  return out.map(({ glue, ...w }) => w);
 }
 const union = (boxes) => { const x0 = Math.min(...boxes.map((b) => b[0])), y0 = Math.min(...boxes.map((b) => b[1])); return [x0, y0, Math.max(...boxes.map((b) => b[0] + b[2])) - x0, Math.max(...boxes.map((b) => b[1] + b[3])) - y0]; };
 function asText(r) {

@@ -1565,7 +1565,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   };
   const SWEEP_REFUSE = { 'replace-text matchCase=true': /found no “lime”/, 'convert-document to=docx': /already DOCX/, 'model-drawing scale=5': /don’t fit on A3/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
-    ...(process.platform !== 'darwin' && !E('office').libreOfficePath() ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
+    ...(process.platform !== 'darwin' && !E('office').libreOfficePath() && !E('office').status().bundled.soffice ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html' };
   const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])] || SWEEP_EXT[(t.extAccept || []).find((e) => SWEEP_EXT[e])]];
   const defaults = (t) => ({ ...Object.fromEntries((t.options || []).map((o) => [o.key, Array.isArray(o.default) ? [...o.default] : o.default])), ...SWEEP[t.id]?.[1] });
