@@ -932,6 +932,43 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
   console.log(`${sel.status} ${sel.name.padEnd(44)}        ${sel.detail}`);
   results.push(sel);
 
+  // At single spacing the lines' glyph boxes overlap, so taking out one line must not nibble at its neighbours.
+  const tight = { name: 'edit pdf · a line taken out at single spacing keeps its neighbours', status: 'PASS', detail: '' };
+  try {
+    const { PDFDocument, StandardFonts } = require('pdf-lib');
+    const doc = await PDFDocument.create(), page = doc.addPage([300, 200]), f = await doc.embedFont(StandardFonts.Helvetica);
+    page.drawText('Top line, gjpqy. fully - done_', { x: 20, y: 150, size: 12, font: f });
+    page.drawText('bdfhkl Second line stays', { x: 20, y: 138, size: 12, font: f });
+    page.drawText('Third line here', { x: 20, y: 126, size: 12, font: f });
+    const src = path.join(OUT, 'tight.pdf');
+    fs.writeFileSync(src, await doc.save());
+    const E = require('../src/main/pdfedit');
+    const got = async (label, edits) => {
+      const s = await E.open(src), lines = await E.text(s.id, 0);
+      await E.apply(s.id, edits(lines[0], lines[1]));
+      const out = path.join(OUT, `tight-${label}.pdf`);
+      await E.save(s.id, out);
+      const s2 = await E.open(out);
+      return (await E.text(s2.id, 0)).map((l) => l.text).join(' | ');
+    };
+    const box = (t) => [t.bbox[0], t.bbox[1], t.bbox[2] - t.bbox[0], t.bbox[3] - t.bbox[1]];
+    const cases = {
+      deleted: await got('deleted', (t) => [{ type: 'deleteText', page: 0, bbox: t.bbox }]),
+      whiteout: await got('whiteout', (t) => [{ type: 'whiteout', page: 0, rect: box(t), color: '#ffffff' }]),
+      redacted: await got('redacted', (t) => [{ type: 'redact', page: 0, rect: [64, t.bbox[1], 34, t.bbox[3] - t.bbox[1]], boxes: true }]),
+      replaced: await got('replaced', (t, u) => [{ type: 'replace', page: 0, bbox: [t.bbox[0], t.bbox[1], Math.max(t.bbox[2], u.bbox[2]), u.bbox[3]], x: t.origin[0], y: t.origin[1], text: 'New words here', size: 12, font: 'sans' }]),
+    };
+    for (const [k, v] of Object.entries(cases)) {
+      if (!/bdfhkl Second line stays/.test(v) && k !== 'replaced') throw new Error(`${k}: the second line lost letters: ${v}`);
+      if (!/Third line here/.test(v)) throw new Error(`${k}: the third line lost letters: ${v}`);
+      if (/gjpqy/.test(v)) throw new Error(`${k}: the word under it is still there: ${v}`);
+    }
+    if (!/New words here/.test(cases.replaced) || /Second/.test(cases.replaced)) throw new Error(`replace: ${cases.replaced}`);
+    tight.detail = `deleted, whited out, redacted and replaced: the lines beside kept every letter`;
+  } catch (e) { tight.status = 'FAIL'; tight.detail = e.message; }
+  console.log(`${tight.status} ${tight.name.padEnd(44)}        ${tight.detail}`);
+  results.push(tight);
+
   const sty = { name: 'edit pdf · zoom at the pointer, fonts and text styles', status: 'PASS', detail: '' };
   try {
     const src = path.join(OUT, 'styles.pdf');

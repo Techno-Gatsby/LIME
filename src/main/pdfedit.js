@@ -57,10 +57,30 @@ async function render(id, index, scale) {
 // With mode 'erase' it shows what removing everything in the box leaves, as saving does it: drawings wholly inside
 // go, and text and pictures lose what is inside the box.
 const boundPath = (m, path, stroke, ctm) => { try { return path.getBounds(stroke || null, ctm); } catch (_) { return path.getBounds(new m.StrokeState(), ctm); } };
+// MuPDF's redaction takes out every glyph whose box (the font's bounding box, set at the glyph's baseline) touches
+// a rectangle, and those boxes reach well into the lines above and below. So text is taken out with a band across
+// the middle of each line instead, which every glyph of the line crosses and none of its neighbours' does, even at
+// single spacing. With `whole`, only lines whose middle is in the box count (an edited line or paragraph); otherwise
+// any line whose ink the box touches does, within the box's width (a white-out or a redaction).
+function textBands(lines, box, whole) {
+  const out = [];
+  for (const l of lines) {
+    if (l.bbox[0] >= box[2] || l.bbox[2] <= box[0]) continue;
+    const top = l.origin[1] - 0.75 * l.size, bottom = l.origin[1] + 0.25 * l.size;
+    if (!l.editable) { if (l.bbox[1] < box[3] && l.bbox[3] > box[1]) out.push([Math.max(l.bbox[0], box[0]) - 0.3, Math.max(l.bbox[1], box[1]) - 0.3, Math.min(l.bbox[2], box[2]) + 0.3, Math.min(l.bbox[3], box[3]) + 0.3]); continue; }
+    if (whole ? (top + bottom) / 2 >= box[1] && (top + bottom) / 2 <= box[3] : Math.min(bottom, box[3]) - Math.max(top, box[1]) >= 0.25 * l.size) out.push([Math.max(l.bbox[0], box[0]) - 0.3, l.origin[1] - 0.55 * l.size, Math.min(l.bbox[2], box[2]) + 0.3, l.origin[1] - 0.08 * l.size]);
+  }
+  return out.length ? out : [[box[0] - 0.3, box[1] - 0.3, box[2] + 0.3, box[3] + 0.3]];
+}
+// Whether a glyph drawn with its origin at (x, y) belongs to one of the bands' lines.
+const inBands = (bands, x, y) => bands.some((r) => { const h = (r[3] - r[1]) * 0.4; return x >= r[0] && x <= r[2] && y >= r[1] - h && y <= r[3] + h; });
 async function patch(id, index, bbox, scale, mode = 'text') {
   const s = get(id);
   const m = await P.mupdf();
   const page = s.doc.loadPage(index), area = page.getBounds(), erase = mode === 'erase';
+  const bands = erase ? null : textBands(await text(id, index), bbox, true);
+  // The text drawn in the patch, less the glyphs of the line being edited.
+  const without = (t, ctm) => { const keep = new m.Text(); t.walk({ showGlyph: (font, trm, gid, uni, wmode) => { if (!inBands(bands, trm[4] * ctm[0] + trm[5] * ctm[2] + ctm[4], trm[4] * ctm[1] + trm[5] * ctm[3] + ctm[5])) keep.showGlyph(font, trm, gid, uni, wmode); } }); return keep; };
   const [x0, y0, x1, y1] = [bbox[0] - 1, bbox[1] - 1, bbox[2] + 1, bbox[3] + 1];
   const pix = new m.Pixmap(m.ColorSpace.DeviceRGB, [0, 0, Math.max(1, Math.ceil((x1 - x0) * scale)), Math.max(1, Math.ceil((y1 - y0) * scale))], false);
   pix.clear(255);
@@ -74,7 +94,8 @@ async function patch(id, index, bbox, scale, mode = 'text') {
     fillPath: (p, eo, t, ...a) => { if (!(erase && covered(boundPath(m, p, null, t)))) dev.fillPath(p, eo, t, ...a); },
     strokePath: (p, st, t, ...a) => { if (!(erase && covered(boundPath(m, p, st, t)))) dev.strokePath(p, st, t, ...a); },
     clipPath: (...a) => dev.clipPath(...a), clipStrokePath: (...a) => dev.clipStrokePath(...a),
-    fillText: (...a) => { if (erase) outside(() => dev.fillText(...a)); }, strokeText: (...a) => { if (erase) outside(() => dev.strokeText(...a)); },
+    fillText: (t, ctm, ...a) => { if (erase) outside(() => dev.fillText(t, ctm, ...a)); else dev.fillText(without(t, ctm), ctm, ...a); },
+    strokeText: (t, st, ctm, ...a) => { if (erase) outside(() => dev.strokeText(t, st, ctm, ...a)); else dev.strokeText(without(t, ctm), st, ctm, ...a); },
     clipText: (...a) => dev.clipText(...a), clipStrokeText: (...a) => dev.clipStrokeText(...a), ignoreText: (...a) => dev.ignoreText(...a),
     fillShade: (...a) => dev.fillShade(...a), clipImageMask: (...a) => dev.clipImageMask(...a), popClip: () => dev.popClip(),
     fillImage: (...a) => (erase ? outside(() => dev.fillImage(...a)) : dev.fillImage(...a)), fillImageMask: (...a) => (erase ? outside(() => dev.fillImageMask(...a)) : dev.fillImageMask(...a)),
@@ -359,14 +380,13 @@ async function apply(id, edits) {
       for (const e of erase) { const a = page.createAnnotation('Redact'); a.setRect([e.rect[0] - 1, e.rect[1] - 1, e.rect[0] + e.rect[2] + 1, e.rect[1] + e.rect[3] + 1]); }
       page.applyRedactions(false, 2, 1, 0);
     }
-    const rects = [];
+    const lines = await text(id, pi), rects = [];
     for (const e of list) {
-      if (e.type === 'replace' || e.type === 'deleteText') rects.push(e.bbox);
-      if (e.type === 'whiteout') rects.push([e.rect[0], e.rect[1], e.rect[0] + e.rect[2], e.rect[1] + e.rect[3]]);
+      if (e.type === 'replace' || e.type === 'deleteText') rects.push(...textBands(lines, e.bbox, true));
+      if (e.type === 'whiteout' || e.type === 'redact') rects.push(...textBands(lines, [e.rect[0], e.rect[1], e.rect[0] + e.rect[2], e.rect[1] + e.rect[3]], false));
     }
     if (rects.length) {
-      for (const r of rects) { const a = page.createAnnotation('Redact'); a.setRect([r[0] - 0.3, r[1] - 0.3, r[2] + 0.3, r[3] + 0.3]); }
-
+      for (const r of rects) { const a = page.createAnnotation('Redact'); a.setRect(r); }
       page.applyRedactions(false, 0, 0, 0);
     }
     // Redaction marks: everything under them (text, pictures, drawings) goes for good, with a black box in its place
@@ -374,7 +394,7 @@ async function apply(id, edits) {
     const marks = list.filter((e) => e.type === 'redact');
     if (marks.length) {
       for (const e of marks) { const a = page.createAnnotation('Redact'); a.setRect([e.rect[0], e.rect[1], e.rect[0] + e.rect[2], e.rect[1] + e.rect[3]]); }
-      page.applyRedactions(marks[0].boxes !== false, 2, 2, 0);
+      page.applyRedactions(marks[0].boxes !== false, 2, 2, 1);
     }
     // Markup, shapes, drawings and measurements become comments (annotations) as Acrobat makes them, so they stay
     // editable in any viewer; Save can flatten them into the page instead.

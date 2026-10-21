@@ -37,6 +37,7 @@ Lime waits as a small lime tucked into the right edge of the screen. The wheel i
 | Drag the middle after a job | Drags the results into any app or folder. **Edit in …** opens the result in the app that suits it. |
 | **Control + Option + L** (Windows: **Ctrl + Alt + L**) | Shows or hides the wheel. On a Mac with files selected in Finder, opens them in the wheel. |
 | Menu bar / tray icon | Show the wheel, choose files, open any of the seven apps, recent results, settings. **Float Above Windows** keeps the wheel above other apps, other always-on-top windows included. |
+| Sounds | A tick as you pass each slice, a thud when files land, a chime when a job is done. **Sounds** in Settings switches them off. |
 
 On a Mac, Lime reads the dragged files straight from the drag, so the right choices appear for files from any app; no permission is needed. On Windows they appear for files dragged from File Explorer or the desktop; from other apps, drop first and pick a slice. Trackpads with Force Touch give a light tick as the highlight moves.
 

@@ -23,6 +23,8 @@ const asset = (n) => path.join(ROOT, 'build', n);
 app.setName('Lime');
 if (isWin) app.setAppUserModelId('app.lime.converter');
 if (process.env.LIME_NO_GPU) app.disableHardwareAcceleration();
+// The wheel's ticks and thuds play before anything has been clicked.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
   { scheme: 'media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true, corsEnabled: true } },
