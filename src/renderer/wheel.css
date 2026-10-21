@@ -3,6 +3,7 @@
   --bezel-in: rgba(255, 255, 255, .14); --bezel: rgba(255, 255, 255, .32); --bezel-out: rgba(255, 255, 255, .58);
   --edge-hi: rgba(255, 255, 255, 1); --edge-lo: rgba(255, 255, 255, .28); --sheen: .55;
   --rim-hi: .95; --rim-lo: rgba(16, 28, 8, .2); --rim-glow: rgba(255, 255, 255, .3);
+  --fringe: .42; --dome-hi: .9; --dome-shade: rgba(10, 20, 4, .16);
   --hot-hi: #96d455; --hot-lo: #3f8c1c;
   --wedge-line: rgba(24, 34, 16, .12); --hole: rgba(255, 255, 255, .1); --well: rgba(10, 20, 4, .22); --lip: rgba(255, 255, 255, .8);
   --drop: rgba(18, 28, 10, .28); --bezel-line: rgba(20, 28, 14, .12);
@@ -11,11 +12,13 @@
   --chip-shadow: inset 0 1px 0 var(--chip-line), inset 0 -.5px 0 rgba(0, 0, 0, .05), 0 0 0 .5px rgba(0, 0, 0, .09), 0 2px 5px -1px rgba(0, 0, 0, .12), 0 8px 18px -8px rgba(0, 0, 0, .28);
   --spring-soft: cubic-bezier(.34, 1.5, .64, 1);
 }
+
 :root[data-theme="dark"] {
   --glass-hi: rgba(92, 96, 104, .84); --glass-lo: rgba(42, 45, 50, .82);
   --bezel-in: rgba(24, 26, 29, .26); --bezel: rgba(28, 30, 34, .5); --bezel-out: rgba(64, 68, 75, .66);
   --edge-hi: rgba(255, 255, 255, .5); --edge-lo: rgba(255, 255, 255, .07); --sheen: .18;
-  --rim-hi: .35; --rim-lo: rgba(0, 0, 0, .5); --rim-glow: rgba(255, 255, 255, .08);
+  --rim-hi: .9; --rim-lo: rgba(0, 0, 0, .5); --rim-glow: rgba(255, 255, 255, .08);
+  --fringe: .3; --dome-hi: .8; --dome-shade: rgba(0, 0, 0, .4);
   --hot-hi: #7cc446; --hot-lo: #2a7116;
   --wedge-line: rgba(0, 0, 0, .34); --hole: rgba(0, 0, 0, .16); --well: rgba(0, 0, 0, .55); --lip: rgba(255, 255, 255, .16);
   --drop: rgba(0, 0, 0, .55); --bezel-line: rgba(0, 0, 0, .4);
@@ -32,11 +35,15 @@ html, body { background: transparent !important; overflow: hidden; }
 .f-hi { flood-color: #fff; flood-opacity: var(--rim-hi); } .f-lo { flood-color: var(--rim-lo); } .f-glow { flood-color: var(--rim-glow); }
 .f-well { flood-color: var(--well); } .f-lip { flood-color: var(--lip); }
 
+.f-red { flood-color: #ff5a46; flood-opacity: var(--fringe); } .f-blue { flood-color: #4a7bff; flood-opacity: var(--fringe); }
+.f-dome-hi { flood-color: #fff; flood-opacity: var(--dome-hi); } .f-dome-shade { flood-color: var(--dome-shade); }
 #stage { position: absolute; left: 0; top: 0; width: 330px; height: 416px; transform-origin: 0 0; will-change: transform; }
 .wheel { position: absolute; left: calc(var(--cx) - 150px); top: calc(var(--cy) - 150px); width: 300px; height: 300px; transform: scale(var(--ws, 1)); transition: transform .42s var(--spring); will-change: transform; }
 .wheel::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; background: rgba(128, 128, 128, .012); }
 .wheel::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 6px 12px -4px var(--drop), 0 20px 40px -12px var(--drop); pointer-events: none; }
-.dial { position: relative; z-index: 1; width: 300px; height: 300px; overflow: visible; display: block; }
+.dial { position: relative; z-index: 1; width: 300px; height: 300px; overflow: visible; display: block; transform: perspective(900px) rotateX(var(--tx, 0deg)) rotateY(var(--ty, 0deg)); }
+.glaze { position: absolute; z-index: 3; left: 0; top: 0; width: 300px; height: 300px; overflow: visible; pointer-events: none; }
+.dome { fill: #000; filter: url(#fDome); }
 .bezel { fill: url(#gBezel); }
 .rim { fill: #000; filter: url(#fRim); pointer-events: none; }
 .bezel-edge { fill: none; stroke: url(#gEdge); stroke-width: 1; }
@@ -46,12 +53,11 @@ html, body { background: transparent !important; overflow: hidden; }
 .halo { fill: none; stroke: var(--lime-500); stroke-width: 0; opacity: 0; transition: opacity .25s, stroke-width .3s var(--spring); }
 .btn { fill: transparent; cursor: pointer; }
 .prog { fill: none; stroke: url(#gProg); stroke-width: 5; stroke-linecap: round; transition: opacity .3s; filter: drop-shadow(0 0 3px rgba(134, 200, 70, .55)); }
-/* A spark runs round the track while a job works. */
 .sweep { fill: none; stroke: var(--hot-hi); stroke-width: 5; stroke-linecap: round; stroke-dasharray: 36 860; opacity: 0; transform: rotate(-90deg); transition: opacity .3s; }
 .busy .sweep { opacity: .4; animation: sweep 1.6s linear infinite; }
 @keyframes sweep { to { stroke-dashoffset: -896; } }
 
-.petal { cursor: pointer; transform-origin: 0 0; transition: transform .34s var(--spring-soft), opacity .25s, filter .25s; }
+.petal { cursor: pointer; transform-origin: 0 0; translate: var(--nx, 0px) var(--ny, 0px); transition: transform .34s var(--spring-soft), opacity .25s, filter .25s; }
 .petal path { transition: opacity .16s ease; }
 .petal .glass { fill: url(#gGlass); stroke: var(--wedge-line); stroke-width: 1.4; }
 .petal .tint { fill: url(#gHot); opacity: 0; }
@@ -69,7 +75,6 @@ html, body { background: transparent !important; overflow: hidden; }
 .petal.press { transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .4)) scale(.975); transition-duration: .12s; }
 .petal.picked { animation: picked .36s var(--spring-soft); }
 @keyframes picked { from { transform: translate(calc(var(--dx) * .4), calc(var(--dy) * .4)) scale(.975); } 45% { transform: translate(calc(var(--dx) * 1.7), calc(var(--dy) * 1.7)) scale(1.075); } to { transform: translate(var(--dx), var(--dy)) scale(1.035); } }
-/* Files held over a slice lift it clear of the ring, with a glow. */
 .over .petal.hot { transform: translate(calc(var(--dx) * 1.8), calc(var(--dy) * 1.8)) scale(1.06); filter: drop-shadow(0 0 6px rgba(140, 205, 72, .8)); }
 .petal.danger .l { fill: var(--danger); }
 .petal.off .l, .petal.off .h { opacity: .42; }
@@ -86,19 +91,16 @@ html, body { background: transparent !important; overflow: hidden; }
 .over:not(.live):not(.home) .petal .tint { animation: chase 1.2s ease-in-out infinite; animation-delay: calc(var(--i) * .15s); }
 @keyframes chase { 0%, 60%, 100% { opacity: 0; } 15% { opacity: .55; } }
 .ready.over:not(.live) .wheel { --ws: 1.03 !important; }
-/* Files landing on the wheel give it a shiver. */
 .wheel.dropped { animation: wobble .46s var(--spring); }
 @keyframes wobble { 25% { transform: scale(calc(var(--ws, 1) * .955)) rotate(-2.2deg); } 55% { transform: scale(calc(var(--ws, 1) * 1.025)) rotate(1.4deg); } 80% { transform: scale(calc(var(--ws, 1) * .992)) rotate(-.5deg); } }
 
 .tab { position: absolute; left: 10px; top: 0; width: 76px; height: 76px; display: none; background: rgba(128, 128, 128, .012); cursor: grab; }
-/* While the wheel is carried: a grabbing hand, and nothing re-animates under it. */
 .moving, .moving * { cursor: grabbing !important; }
 .moving .petal { transition: none; }
 .idle .tab { display: block; }
 .tab-lime { position: absolute; left: 14px; top: 12px; width: 52px; height: 52px; transform: translateX(30px) rotate(0deg); transition: transform .5s var(--spring); filter: drop-shadow(0 6px 10px rgba(30, 60, 10, .32)) drop-shadow(0 1px 2px rgba(15, 23, 42, .3)); }
 .tab-lime > svg:not(.tab-ring), .tab-lime > img { display: block; }
 .tab:hover .tab-lime { transform: translateX(6px) rotate(-30deg); }
-/* Files coming near: the lime peeks out and nods. */
 .idle.over .tab-lime { transform: translateX(0) scale(1.1) rotate(-60deg); animation: nod .6s .1s var(--spring); animation-composition: add; }
 @keyframes nod { 30% { transform: rotate(-12deg) translateX(-3px); } 65% { transform: rotate(6deg); } }
 .tab-ring { position: absolute; inset: -6px; width: 64px; height: 64px; overflow: visible; transform: rotate(-90deg); pointer-events: none; }
@@ -128,14 +130,15 @@ html, body { background: transparent !important; overflow: hidden; }
 .center [hidden] { display: none !important; }
 .center.finished { animation: beat .55s var(--spring); }
 @keyframes beat { 35% { transform: scale(1.12); } }
-.center .vis { display: grid; place-items: center; }
+.center .vis { display: grid; place-items: center; width: 108px; height: 108px; filter: url(#fLens); }
+.center .vis > * { scale: 1.03; }
 .center .vis > .thumb { animation: fade .18s ease both; }
 .center .glyph.app { width: 72px; height: 72px; border-radius: 20px; color: var(--app); }
 .center .glyph.app svg { width: 36px; height: 36px; }
 .center .logo { width: 96px; height: 96px; filter: drop-shadow(0 4px 8px rgba(20, 36, 8, .28)); transition: transform .5s var(--spring); }
 .over .center .logo { transform: scale(1.1) rotate(36deg); }
-.center .thumb { width: 66px; height: 66px; border-radius: 14px; object-fit: cover; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .14), 0 8px 18px -4px rgba(10, 20, 4, .4); transition: opacity .25s, transform .4s var(--spring); }
-.center .glyph { width: 60px; height: 60px; border-radius: 15px; display: grid; place-items: center; color: var(--green); background: linear-gradient(180deg, rgba(255, 255, 255, .94), rgba(240, 246, 232, .84)); box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(20, 40, 8, .06), 0 0 0 .5px rgba(0, 0, 0, .1), 0 8px 18px -6px rgba(10, 20, 4, .35); transition: opacity .25s, transform .4s var(--spring); }
+.center .thumb { width: 74px; height: 74px; border-radius: 16px; object-fit: cover; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .14), 0 8px 18px -4px rgba(10, 20, 4, .4); transition: opacity .25s, transform .4s var(--spring); }
+.center .glyph { width: 68px; height: 68px; border-radius: 17px; display: grid; place-items: center; color: var(--green); background: linear-gradient(180deg, rgba(255, 255, 255, .94), rgba(240, 246, 232, .84)); box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgba(20, 40, 8, .06), 0 0 0 .5px rgba(0, 0, 0, .1), 0 8px 18px -6px rgba(10, 20, 4, .35); transition: opacity .25s, transform .4s var(--spring); }
 :root[data-theme="dark"] .center .glyph { color: var(--accent-strong); background: linear-gradient(180deg, rgba(90, 95, 102, .9), rgba(52, 56, 61, .86)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 8px 18px -6px rgba(0, 0, 0, .5); }
 .center .glyph.bad { color: var(--danger); }
 .busy .center .thumb, .busy .center .glyph { opacity: .5; transform: scale(.92); }
@@ -185,10 +188,11 @@ html, body { background: transparent !important; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .wheel, .petal, .cap, .center, .center .thumb, .center .glyph, .tab-lime { transition: opacity .15s !important; animation: none !important; }
   .petal.hot, .petal.press, .over .petal.hot { transform: none; filter: none; }
+  .petal { translate: none !important; }
+  .dial { transform: none !important; }
   .sweep { display: none; }
   .blooming .wheel, .popping .wheel, .folding .wheel { animation: fade .16s ease both !important; }
 }
-
 .card { position: absolute; left: 12px; right: 12px; top: calc(var(--cy) + 164px); max-height: 380px; overflow: auto; padding: 14px; border-radius: 16px; background: color-mix(in srgb, var(--surface) 93%, transparent); backdrop-filter: blur(30px) saturate(1.8); box-shadow: inset 0 1px 0 var(--chip-line), var(--shadow-lg); animation: rise .34s var(--spring) both; -webkit-user-select: none; }
 .card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 .card h3 { font-size: 14px; font-weight: 660; flex: 1; }

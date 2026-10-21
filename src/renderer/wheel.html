@@ -21,26 +21,81 @@
         <linearGradient id="gEdge" gradientUnits="userSpaceOnUse" x1="0" y1="-150" x2="0" y2="150"><stop offset="0" class="s-edge-hi"/><stop offset=".55" class="s-edge-lo"/><stop offset="1" class="s-edge-hi" stop-opacity=".6"/></linearGradient>
         <radialGradient id="gBezel" r=".5"><stop offset=".36" class="s-bezel-in"/><stop offset=".9" class="s-bezel"/><stop offset="1" class="s-bezel-out"/></radialGradient>
         <linearGradient id="gProg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a6dc5e"/><stop offset="1" stop-color="#3f8a1c"/></linearGradient>
-        <!-- The glass edge of a shape: light caught along its top inside, a shadow along its bottom inside and a faint
-             glow all round, drawn from the shape's outline alone (the shape itself is left out). -->
-        <filter id="fRim" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
-          <feComponentTransfer in="SourceAlpha" result="out"><feFuncA type="table" tableValues="1 0"/></feComponentTransfer>
-          <feGaussianBlur in="out" stdDeviation="1.6" result="soft"/>
-          <feOffset in="soft" dy="1.8" result="down"/>
-          <feComposite in="down" in2="soft" operator="arithmetic" k2="1" k3="-1" result="top"/>
+        <filter id="fRim" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="bump"/>
+          <feSpecularLighting in="bump" surfaceScale="9" specularConstant="2.2" specularExponent="14" lighting-color="#fff" result="spec"><fePointLight class="light" x="-80" y="-150" z="30"/></feSpecularLighting>
+          <feComponentTransfer in="bump" result="band"><feFuncA type="table" tableValues="1 1 1 1 .7 .4 .15"/></feComponentTransfer>
+          <feImage class="pool" x="-230" y="-300" width="300" height="300" result="pool"/>
+          <feComposite in="pool" in2="band" operator="in" result="reach"/>
+          <feComposite in="spec" in2="reach" operator="in" result="glint"/>
           <feFlood class="f-hi" result="hiC"/>
-          <feComposite in="hiC" in2="top" operator="in" result="hi"/>
-          <feOffset in="soft" dy="-2.2" result="up"/>
+          <feComposite in="hiC" in2="glint" operator="in" result="hi"/>
+          <feFlood class="f-red" result="rC"/>
+          <feComposite in="rC" in2="glint" operator="in" result="r0"/>
+          <feOffset in="r0" dx="-.5" dy="-.35" result="r"/>
+          <feFlood class="f-blue" result="bC"/>
+          <feComposite in="bC" in2="glint" operator="in" result="b0"/>
+          <feOffset in="b0" dx=".5" dy=".35" result="b"/>
+          <feBlend in="r" in2="b" mode="screen" result="rb"/>
+          <feBlend in="hi" in2="rb" mode="screen" result="lit"/>
+          <feComponentTransfer in="bump" result="soft"><feFuncA type="table" tableValues="1 0"/></feComponentTransfer>
+          <feOffset class="away" in="soft" dy="-2.2" result="up"/>
           <feComposite in="up" in2="soft" operator="arithmetic" k2="1" k3="-1" result="bottom"/>
           <feFlood class="f-lo" result="loC"/>
           <feComposite in="loC" in2="bottom" operator="in" result="lo"/>
-          <feGaussianBlur in="out" stdDeviation="5" result="wide"/>
           <feFlood class="f-glow" result="glowC"/>
-          <feComposite in="glowC" in2="wide" operator="in" result="glow"/>
-          <feMerge result="bands"><feMergeNode in="glow"/><feMergeNode in="lo"/><feMergeNode in="hi"/></feMerge>
+          <feComposite in="glowC" in2="soft" operator="in" result="glow"/>
+          <feMerge result="bands"><feMergeNode in="glow"/><feMergeNode in="lo"/><feMergeNode in="lit"/></feMerge>
           <feComposite in="bands" in2="SourceAlpha" operator="in"/>
         </filter>
-        <!-- The middle is a well: shaded from the top inside, with a thin lip of light at the bottom. -->
+        <filter id="fDome" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="bump"/>
+          <feSpecularLighting in="bump" surfaceScale="9" specularConstant="2.2" specularExponent="14" lighting-color="#fff" result="spec"><fePointLight class="light" x="-80" y="-150" z="30"/></feSpecularLighting>
+          <feComponentTransfer in="bump" result="band"><feFuncA type="table" tableValues="1 1 1 1 .7 .4 .15"/></feComponentTransfer>
+          <feImage class="pool" x="-230" y="-300" width="300" height="300" result="pool"/>
+          <feComposite in="pool" in2="band" operator="in" result="reach"/>
+          <feComposite in="spec" in2="reach" operator="in" result="glint"/>
+          <feFlood class="f-dome-hi" result="hiC"/>
+          <feComposite in="hiC" in2="glint" operator="in" result="hi"/>
+          <feFlood class="f-red" result="rC"/>
+          <feComposite in="rC" in2="glint" operator="in" result="r0"/>
+          <feOffset in="r0" dx="-.6" dy="-.4" result="r"/>
+          <feFlood class="f-blue" result="bC"/>
+          <feComposite in="bC" in2="glint" operator="in" result="b0"/>
+          <feOffset in="b0" dx=".6" dy=".4" result="b"/>
+          <feBlend in="r" in2="b" mode="screen" result="rb"/>
+          <feBlend in="hi" in2="rb" mode="screen" result="lit"/>
+          <feComponentTransfer in="bump" result="soft"><feFuncA type="table" tableValues="1 0"/></feComponentTransfer>
+          <feOffset class="toward" in="soft" dy="2.6" result="down"/>
+          <feComposite in="down" in2="soft" operator="arithmetic" k2="1" k3="-1" result="top"/>
+          <feFlood class="f-dome-shade" result="shC"/>
+          <feComposite in="shC" in2="top" operator="in" result="shade"/>
+          <feOffset class="away" in="soft" dy="-1.6" result="up"/>
+          <feComposite in="up" in2="soft" operator="arithmetic" k2="1" k3="-1" result="bottom"/>
+          <feFlood class="f-lip" result="lipC"/>
+          <feComposite in="lipC" in2="bottom" operator="in" result="lip"/>
+          <feMerge result="bands"><feMergeNode in="shade"/><feMergeNode in="lip"/><feMergeNode in="lit"/></feMerge>
+          <feComposite in="bands" in2="SourceAlpha" operator="in"/>
+        </filter>
+        <filter id="fLens" x="-12%" y="-12%" width="124%" height="124%" color-interpolation-filters="sRGB">
+          <feImage class="lens" x="0" y="0" width="108" height="108" preserveAspectRatio="none" result="map"/>
+          <feColorMatrix in="map" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 1 0 0" result="band"/>
+          <feGaussianBlur in="SourceGraphic" stdDeviation=".6" result="frost"/>
+          <feDisplacementMap class="lens-r" in="frost" in2="map" scale="0" xChannelSelector="R" yChannelSelector="G" result="r0"/>
+          <feColorMatrix in="r0" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r"/>
+          <feDisplacementMap class="lens-g" in="frost" in2="map" scale="0" xChannelSelector="R" yChannelSelector="G" result="g0"/>
+          <feColorMatrix in="g0" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g"/>
+          <feDisplacementMap class="lens-b" in="frost" in2="map" scale="0" xChannelSelector="R" yChannelSelector="G" result="b0"/>
+          <feColorMatrix in="b0" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b"/>
+          <feBlend in="r" in2="b" mode="screen" result="rb"/>
+          <feBlend in="g" in2="rb" mode="screen" result="split"/>
+          <feComposite in="split" in2="g0" operator="in" result="s1"/>
+          <feComposite in="s1" in2="r0" operator="in" result="s2"/>
+          <feComposite in="s2" in2="b0" operator="in" result="solid"/>
+          <feComposite in="solid" in2="g0" operator="over" result="bent"/>
+          <feComposite in="bent" in2="band" operator="in" result="rim"/>
+          <feComposite in="rim" in2="SourceGraphic" operator="over"/>
+        </filter>
         <filter id="fWell" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
           <feComponentTransfer in="SourceAlpha" result="out"><feFuncA type="table" tableValues="1 0"/></feComponentTransfer>
           <feGaussianBlur in="out" stdDeviation="3" result="soft"/>
@@ -69,6 +124,7 @@
       <circle class="btn" r="54"/>
     </svg>
     <div class="center" draggable="false"></div>
+    <svg class="glaze" viewBox="-150 -150 300 300" aria-hidden="true"><circle class="dome" r="53"/></svg>
   </div>
   <div class="caption"><b class="name"></b><span class="meta"></span></div>
   <div class="card" hidden></div>
