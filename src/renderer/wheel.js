@@ -230,7 +230,7 @@ function drawRing(list, { dim = false } = {}) {
 // the longest are shortened in the middle instead, so one long name can't shrink the whole ring to a whisper.
 function fitLabels(n) {
   const max = Math.max(36, Math.min(R_OUT - R_IN - 12, 2 * R_LABEL * Math.sin(Math.PI / Math.max(n, 2)) - 16));
-  const mid = (s, k) => { const keep = s.length - k, head = Math.ceil(keep / 2); return `${s.slice(0, head)}…${s.slice(s.length - (keep - head))}`; };
+  const mid = (s, k) => { const keep = s.length - k, head = Math.ceil(keep / 2); return `${s.slice(0, head).trimEnd()}…${s.slice(s.length - (keep - head)).trimStart()}`; };
   for (const [cls, floor] of [['l', 7], ['h', 5]]) {
     const ts = $$(`.petal text.${cls}`, petalsG);
     if (!ts.length) continue;
@@ -633,12 +633,14 @@ function flick(el, cls, ms) {
 }
 // Sounds are made on the spot from oscillators and filtered noise, around −18 dBFS, so none ships as a file.
 const sounds = { played: { tick: 0, drop: 0, open: 0, fold: 0, done: 0 } };
-let audio = null, tickAt = 0;
+let audio = null, tickAt = 0, dropAt = 0;
 function sfx(kind) {
   if (settings.sounds === false) return;
-  // A fast sweep round the ring ticks every 40 ms at most, so it clicks rather than crackles.
+  // A fast sweep round the ring ticks every 40 ms at most, so it clicks rather than crackles; a thud stands alone.
   const now = performance.now();
   if (kind === 'tick') { if (now - tickAt < 40) return; tickAt = now; }
+  if (kind === 'drop') dropAt = now;
+  if (kind === 'open' && now - dropAt < 400) return;
   sounds.played[kind]++;
   try {
     audio ||= new AudioContext({ latencyHint: 'interactive' });
@@ -658,8 +660,8 @@ sounds.play = (kind, c, t = c.currentTime + 0.01) => {
   };
   if (kind === 'tick') { hiss(3600, 2200, 1.4, 0.32, 0.002, 0.028); tone('triangle', 2400, 1500, 0.07, 0.002, 0.022); }
   else if (kind === 'drop') { hiss(800, 180, 0.7, 0.28, 0.012, 0.09); tone('sine', 150, 55, 0.13, 0.008, 0.085); }
-  else if (kind === 'open') hiss(500, 2800, 0.9, 0.1, 0.04, 0.08);
-  else if (kind === 'fold') hiss(2600, 320, 0.9, 0.1, 0.03, 0.09);
+  else if (kind === 'open') hiss(500, 2800, 0.9, 0.2, 0.04, 0.08);
+  else if (kind === 'fold') hiss(2600, 320, 0.9, 0.16, 0.03, 0.09);
   else if (kind === 'done') for (const [f, dt] of [[659.3, 0], [880, 0.17]]) { tone('sine', f, f, 0.11, 0.015, 0.24, t + dt); tone('sine', f * 2, f * 2, 0.025, 0.015, 0.14, t + dt); }
 };
 let flashT = null;
