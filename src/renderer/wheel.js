@@ -163,6 +163,7 @@ function tabProgress(p) {
   t.style.setProperty('--p', p == null ? 0 : Math.max(0.03, p));
 }
 function setState(state) {
+  if ((state === 'idle') !== (S.state === 'idle')) sfx(state === 'idle' ? 'fold' : 'open');
   S.state = state;
   stage.className = state;
   if (S.over) stage.classList.add('over');
@@ -209,7 +210,7 @@ function drawRing(list, { dim = false } = {}) {
   petalsG.classList.toggle('settled', !!S.settle);
   petalsG.innerHTML = Array.from({ length: count }, (_, i) => {
     const it = S.ring[i], d = wedge(i, count, R_IN, R_OUT), a = (i * Math.PI * 2) / count, lift = count === 1 ? 0 : LIFT;
-    const body = `<path class="glass" d="${d}"/><path class="tint" d="${d}"/><path class="sheen" d="${d}"/>`;
+    const body = `<path class="glass" d="${d}"/><path class="tint" d="${d}"/><path class="rim" d="${d}"/><path class="sheen" d="${d}"/>`;
     const style = `--i:${i};--dx:${(Math.sin(a) * lift).toFixed(2)}px;--dy:${(-Math.cos(a) * lift).toFixed(2)}px`;
     if (!it) return `<g class="petal" style="${style}">${body}</g>`;
     const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : R_LABEL);
@@ -219,16 +220,26 @@ function drawRing(list, { dim = false } = {}) {
   fitLabels(count);
   setHot(S.hot >= n ? -1 : S.hot, true);
 }
+// Every label in a ring shares one size, the largest at which the longest fits; the same for the hints. Below a floor
+// the longest are shortened in the middle instead, so one long name can't shrink the whole ring to a whisper.
 function fitLabels(n) {
   const max = Math.max(36, Math.min(R_OUT - R_IN - 12, 2 * R_LABEL * Math.sin(Math.PI / Math.max(n, 2)) - 16));
-  $$('.petal text', petalsG).forEach((t) => {
-    const len = t.getComputedTextLength?.() || 0;
-    if (len > max) t.style.fontSize = `${(parseFloat(getComputedStyle(t).fontSize) * max) / len}px`;
-  });
+  const mid = (s, k) => { const keep = s.length - k, head = Math.ceil(keep / 2); return `${s.slice(0, head)}…${s.slice(s.length - (keep - head))}`; };
+  for (const [cls, floor] of [['l', 7], ['h', 5]]) {
+    const ts = $$(`.petal text.${cls}`, petalsG);
+    if (!ts.length) continue;
+    const base = parseFloat(getComputedStyle(ts[0]).fontSize);
+    const size = Math.max(floor, Math.min(base, ...ts.map((t) => (base * max * 0.99) / (t.getComputedTextLength() || 1))));
+    for (const t of ts) {
+      if (size < base) t.style.fontSize = `${Math.floor(size * 100) / 100}px`;
+      const s = t.textContent;
+      for (let k = 1; k < s.length - 1 && t.getComputedTextLength() > max; k++) t.textContent = mid(s, k);
+    }
+  }
 }
 function setHot(i, force) {
   if (i === S.hot && !force) return;
-  if (i >= 0 && i !== S.hot && S.state === 'ready') api.invoke('wheel:haptic').catch(() => {});
+  if (i >= 0 && i !== S.hot) { sfx('tick'); if (S.state === 'ready') api.invoke('wheel:haptic').catch(() => {}); }
   S.hot = i;
   $$('.petal', petalsG).forEach((g) => g.classList.toggle('hot', Number(g.dataset.i) === i));
   drawCenter();
@@ -441,6 +452,7 @@ async function collapse() {
 
 async function pick(it, { options = false } = {}) {
   if (!it) return;
+  if (S.ring.indexOf(it) === S.hot) flick($('.petal.hot', petalsG), 'picked', 400);
   if (S.state === 'done' || S.state === 'failed') return doneAction(it);
   if (it.drill) { S.app = it.drill; S.hot = -1; redraw(); return; }
   if (it.recent) return showRecent();
@@ -567,6 +579,8 @@ function showDone() {
   stage.classList.add('open');
   drawCenter();
   drawCaption();
+  flick(center, 'finished', 600);
+  sfx('done');
   layout();
   armCollapse(14000);
   if (r.text && r.outs.length === 0) showText();
@@ -603,6 +617,45 @@ function armCollapse(ms) {
   clearTimeout(collapseT);
   collapseT = setTimeout(() => { if (!S.asking && !stage.matches(':hover') && card.hidden && ['done', 'open', 'ready'].includes(S.state)) collapse(); }, ms);
 }
+// Plays a one-off animation class, restarting it if it's still running.
+function flick(el, cls, ms) {
+  if (!el) return;
+  el.classList.remove(cls);
+  el.getBoundingClientRect();
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+// Sounds are made on the spot from oscillators and filtered noise, around −18 dBFS, so none ships as a file.
+const sounds = { played: { tick: 0, drop: 0, open: 0, fold: 0, done: 0 } };
+let audio = null, tickAt = 0;
+function sfx(kind) {
+  if (settings.sounds === false) return;
+  // A fast sweep round the ring ticks every 40 ms at most, so it clicks rather than crackles.
+  const now = performance.now();
+  if (kind === 'tick') { if (now - tickAt < 40) return; tickAt = now; }
+  sounds.played[kind]++;
+  try {
+    audio ||= new AudioContext({ latencyHint: 'interactive' });
+    if (audio.state === 'suspended') audio.resume().catch(() => {});
+    sounds.play(kind, audio);
+  } catch (_) {}
+}
+sounds.play = (kind, c, t = c.currentTime + 0.01) => {
+  const env = (peak, a, d, t0) => { const g = c.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(peak, t0 + a); g.gain.exponentialRampToValueAtTime(0.0001, t0 + a + d); g.connect(c.destination); return g; };
+  const tone = (type, f0, f1, peak, a, d, t0 = t) => { const o = c.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(f1, t0 + a + d); o.connect(env(peak, a, d, t0)); o.start(t0); o.stop(t0 + a + d + 0.02); };
+  const hiss = (f0, f1, q, peak, a, d, t0 = t) => {
+    const n = Math.ceil(c.sampleRate * (a + d + 0.02)), b = c.createBuffer(1, n, c.sampleRate), s = b.getChannelData(0);
+    for (let i = 0; i < n; i++) s[i] = Math.random() * 2 - 1;
+    const src = c.createBufferSource(), f = c.createBiquadFilter();
+    src.buffer = b; f.type = 'bandpass'; f.Q.value = q; f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(f1, t0 + a + d);
+    src.connect(f).connect(env(peak, a, d, t0)); src.start(t0); src.stop(t0 + a + d + 0.02);
+  };
+  if (kind === 'tick') { hiss(3600, 2200, 1.4, 0.32, 0.002, 0.028); tone('triangle', 2400, 1500, 0.07, 0.002, 0.022); }
+  else if (kind === 'drop') { hiss(800, 180, 0.7, 0.28, 0.012, 0.09); tone('sine', 150, 55, 0.13, 0.008, 0.085); }
+  else if (kind === 'open') hiss(500, 2800, 0.9, 0.1, 0.04, 0.08);
+  else if (kind === 'fold') hiss(2600, 320, 0.9, 0.1, 0.03, 0.09);
+  else if (kind === 'done') for (const [f, dt] of [[659.3, 0], [880, 0.17]]) { tone('sine', f, f, 0.11, 0.015, 0.24, t + dt); tone('sine', f * 2, f * 2, 0.025, 0.015, 0.14, t + dt); }
+};
 let flashT = null;
 function flash(msg) {
   const keep = capMeta.textContent;
@@ -982,6 +1035,8 @@ window.addEventListener('drop', async (e) => {
   const real = [...(e.dataTransfer?.files || [])].map((f) => api.pathFor(f)).filter(Boolean);
   const files = real.length ? real : S.peek || [];
   if (!files.length) return;
+  flick(wheelEl, 'dropped', 500);
+  sfx('drop');
   const it = S.state === 'ready' && (S.peek || atHome()) ? S.ring[ringIndexAt(e.clientX, e.clientY)] : null;
   S.dropping = true;
   if (!it || it.recent) { openWith(files).finally(() => { S.dropping = false; }); return; }
@@ -1022,4 +1077,4 @@ setState('idle');
 drawRing([]);
 drawCenter();
 layout();
-window.__lime = { S, drawCenter, folding: () => !!folding, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo, atHome, homeRing, currentApp, back, redraw, loadHome, ringFor };
+window.__lime = { S, drawCenter, folding: () => !!folding, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo, atHome, homeRing, currentApp, back, redraw, loadHome, ringFor, sounds };

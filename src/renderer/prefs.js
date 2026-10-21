@@ -12,7 +12,7 @@ const set = async (patch) => { s = await api.invoke('settings:set', patch); rend
 function seg(key, choices) {
   return `<div class="seg" data-k="${key}">${choices.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(s[key]) === v}">${l}</button>`).join('')}</div>`;
 }
-const sw = (key, invert) => `<label class="switch"><input type="checkbox" data-k="${key}" ${(invert ? !s[key] : s[key]) ? 'checked' : ''}></label>`;
+const sw = (key, on = s[key]) => `<label class="switch"><input type="checkbox" data-k="${key}" ${on ? 'checked' : ''}></label>`;
 const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf' };
 const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').replace('class="ic', 'class="ic lead') : ''}<div class="t"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</div>${ctl || ''}</div>`;
 
@@ -32,6 +32,7 @@ async function render() {
     ${row('circle', 'Size', '', seg('size', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']]))}
     ${row('layers', 'Float above windows', 'Off keeps it on the desktop, behind your apps', sw('float'))}
     ${row('sparkle', 'Appearance', '', seg('theme', [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']]))}
+    ${row('music', 'Sounds', 'A tick for each choice, a soft thud when files land', sw('sounds', s.sounds !== false))}
     ${isMac ? row('grid', 'Show in Dock', 'Lime always lives in the menu bar', sw('dock')) : ''}
     ${row('again', 'Open at login', '', sw('login'))}
     ${row('cursor', 'Show or hide the wheel', isMac ? 'With files selected in Finder, opens them in the wheel' : '', '<kbd>⌃</kbd><kbd>⌥</kbd><kbd>L</kbd>')}
