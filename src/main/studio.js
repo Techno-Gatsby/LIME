@@ -521,11 +521,11 @@ const cur = (s) => s.versions[s.at];
 function state(s, extra = {}) {
   return { id: s.id, app: s.app, file: s.file, ext: s.ext, saveExt: s.saveExt, model: s.model, version: s.at, step: s.n, canUndo: s.at > 0, canRedo: s.at < s.versions.length - 1, dirty: s.at !== s.savedAt, rev: path.basename(cur(s) || ''), labels: s.labels.slice(0, s.versions.length), ...extra };
 }
-async function open(file, app) {
+async function open(file, app, origin) {
   const A = APPS[app];
   if (!A) throw new Error(`No editor for ${app}`);
   const dir = await U.tmpDir('studio');
-  const s = { id: ++seq, app, file, ext: U.ext(file), dir, versions: [], labels: [], at: 0, n: 0, savedAt: 0, cache: new Map(), models: new Map() };
+  const s = { id: ++seq, app, file: origin || file, ext: U.ext(origin || file), dir, versions: [], labels: [], at: 0, n: 0, savedAt: 0, cache: new Map(), models: new Map() };
   const v0 = path.join(dir, `v0.${A.native}`);
   try {
     await A.open(file, v0);
@@ -614,6 +614,11 @@ async function save(id, target, opts = {}) {
   if (!target || U.ext(out) === s.saveExt) s.savedAt = s.at;
   return { path: wrote, ...state(s) };
 }
+async function snapshot(id, out) {
+  const s = get(id), A = APPS[s.app];
+  await fsp.mkdir(path.dirname(out), { recursive: true });
+  return queue(s, () => A.save(s, cur(s), out, {}));
+}
 
 const probeFile = (s) => (s.saveExt === s.ext ? s.file : path.join(s.dir, `probe.${s.saveExt}`));
 function toolList(id) {
@@ -644,4 +649,4 @@ async function close(id) {
   return true;
 }
 
-module.exports = { open, apply, undo, redo, goto, render, preview, thumbs, query, save, toolList, runTool, close };
+module.exports = { open, apply, undo, redo, goto, render, preview, thumbs, query, save, snapshot, toolList, runTool, close };

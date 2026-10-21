@@ -60,6 +60,7 @@ async function render() {
     ${row('text', 'Pandoc', eng.pandoc ? esc(eng.pandoc) : 'LaTeX, reStructuredText and Org files', helper('pandoc', eng.pandoc, 'Pandoc'))}
   </div></section>
   <section><h2>About</h2><div class="group">
+    ${row('eye', 'How Lime works', 'The four steps shown the first time Lime ran', '<button class="btn" data-a="welcome">Show again</button>')}
     ${row('info', 'Open-source licences', 'Lime is AGPL-3.0. ArtCraft engines are MIT or Apache-2.0', '<button class="btn" data-a="licenses">View</button>')}
   </div></section>`;
 }
@@ -99,6 +100,7 @@ app.addEventListener('click', async (e) => {
     if (f) { const p = isMac && /\.app$/i.test(f) ? `${f}/Contents/MacOS/soffice` : f; set({ [el.dataset.k]: p }); }
   }
   if (a === 'licenses') { const p = await api.invoke('app:paths'); api.invoke('shell:open', `${p.licenses}/THIRD-PARTY-NOTICES.txt`); }
+  if (a === 'welcome') api.invoke('welcome:open');
 });
 app.addEventListener('change', (e) => { const i = e.target.closest('input[type=checkbox][data-k]'); if (i) set({ [i.dataset.k]: i.checked }); });
 api.on('settings', (n) => { s = n; render(); });

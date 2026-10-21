@@ -37,7 +37,7 @@ function pandocPath() {
   return (pandocFound = c.find(isFile) || onPath([U.isWin ? 'pandoc.exe' : 'pandoc']));
 }
 const iworkPath = (app) => (isMac && ['/Applications', '/System/Applications'].map((d) => path.join(d, `${app}.app`)).find((p) => fs.existsSync(p))) || null;
-const missing = (why) => Object.assign(new Error(why), { code: 'ENGINE_MISSING' });
+const missing = (why) => Object.assign(new Error(`${why} Download LibreOffice in Settings › Optional helpers.`), { code: 'ENGINE_MISSING' });
 
 let loQueue = Promise.resolve();
 function soffice(input, toSpec, outDir, opts = {}) {
@@ -535,7 +535,7 @@ async function convertSheet(input, to, ctx, opts = {}) {
     const r = await viaIWork('Numbers', input, to, out).catch(() => null);
     if (r) return r;
     if (libreOfficePath()) return viaLibreOffice(input, to, ctx, { out });
-    throw missing('Numbers files need the Numbers app on this Mac.');
+    throw missing('Numbers files need the Numbers app on this Mac, or LibreOffice.');
   }
   if (CSV_IN.includes(from) && ['json', 'jsonl', 'yaml', 'toml', 'xml', 'vcf'].includes(to)) return data().convert(input, { to }, ctx);
   if (to === 'pdf') return require('./sheetprint').toPdf(input, opts, ctx.out.file(input, `${U.base(input)}.pdf`), ctx);
@@ -686,7 +686,7 @@ async function convertDocument(input, opts, ctx) {
     if (r) return r;
     const pv = await pagesPreview(input);
     if (pv && to === 'pdf') { await fsp.writeFile(out, pv); return { path: out, note: 'Saved the document’s built-in preview. Open it in Pages for an exact copy.' }; }
-    throw missing('Pages documents need the Pages app on this Mac.');
+    throw missing('Pages documents need the Pages app on this Mac, or LibreOffice.');
   }
   if (isMac && TEXTUTIL.has(from) && TEXTUTIL.has(to) && !['html', 'txt'].includes(from)) { ctx.progress?.(0.3, 'Converting'); return viaTextutil(input, to, out); }
   ctx.progress?.(0.2, 'Reading');

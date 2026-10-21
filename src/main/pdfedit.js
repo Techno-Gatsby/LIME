@@ -598,6 +598,7 @@ async function save(id, outPath, opts = {}) {
   if (outPath) s.path = outPath;
   return info(s);
 }
+function snapshot(id) { const s = get(id); return { bytes: s.bytes, dirty: s.dirty }; }
 async function exportPages(id, pages, outPath) {
   const s = get(id);
   const src = await PDFDocument.load(s.bytes);
@@ -958,5 +959,5 @@ async function findRedact(id, { terms = [], patterns = [] } = {}) {
 }
 function close(id) { sessions.delete(id); return true; }
 
-module.exports = { open, render, patch, objects, fonts, text, search, apply, pageOp, undo, redo, save, exportPages, close,
+module.exports = { open, render, patch, objects, fonts, text, search, apply, pageOp, undo, redo, save, snapshot, exportPages, close,
   annots, annotOp, links, linkOp, outline, setOutline, paragraphs, fields, fill, fieldOp, props, setProps, docOp, preview, check, findRedact, recognise };

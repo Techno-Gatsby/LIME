@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, peek, screen, dir }) => {
+module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, openWelcome, welcome, peek, screen, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -943,9 +943,12 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (asked.length) {
       const t4 = Date.now();
       let found = null;
-      while (!found && Date.now() - t4 < 20000) { found = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editme.pdf')).find((p) => fs.existsSync(p)); await sleep(200); }
+      while (!found && Date.now() - t4 < 20000) { found = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editme (edited).pdf')).find((p) => fs.existsSync(p)); await sleep(200); }
       if (!found) throw new Error('Save As wrote nothing');
-      ed.detail = `${path.relative(OUT, want)}, ${path.relative(OUT, found)}`;
+      await sleep(400);
+      const shown = await js('[document.title, document.querySelector(".topbar .doc b").textContent]', win.webContents);
+      if (shown[0] !== 'editme (edited).pdf' || shown[1] !== 'editme (edited).pdf') throw new Error(`after Save as the title shows ${shown.join(' / ')}`);
+      ed.detail = `${path.relative(OUT, want)}, ${path.relative(OUT, found)}; title follows Save as`;
     } else ed.detail = path.relative(OUT, want);
     win.destroy();
   } catch (e) { ed.status = 'FAIL'; ed.detail = e.message; }
@@ -1214,6 +1217,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     try {
       const src = path.join(OUT, srcName);
       if (typeof make === 'function') fs.writeFileSync(src, await make()); else fs.copyFileSync(fx(make), src);
+      await js('window.lime.invoke("settings:set", { editors: {} })');
       openEditor(src, 'edit');
       win = [...editors].pop();
       const wc = win.webContents, ejs = (code) => js(code, wc);
@@ -1621,6 +1625,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code)) return true; await sleep(150); } return false; };
     const idle = () => wait('(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()');
     if (!(await idle())) throw new Error('the editor did not show the image');
+    await ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
     const slide = (key, v) => ejs(`(() => { const r = document.querySelector('.props [data-k="${key}"] input'); r.value = ${v}; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     const press = (fx_, fy, to) => ejs(`(() => { const m = document.querySelector('.imged .marks'), b = m.getBoundingClientRect(), p = (x, y) => ({ bubbles: true, button: 0, clientX: b.left + b.width * x, clientY: b.top + b.height * y }); m.dispatchEvent(new PointerEvent('pointerdown', p(${fx_}, ${fy}))); ${to ? `window.dispatchEvent(new PointerEvent('pointermove', p(${to[0]}, ${to[1]})));` : ''} window.dispatchEvent(new PointerEvent('pointerup', p(${(to || [fx_])[0]}, ${(to || [0, fy])[1]}))); })()`);
     const saved = async (p, ms = 30000) => { const t = Date.now(); while (!fs.existsSync(p) && Date.now() - t < ms) await sleep(200); if (!fs.existsSync(p)) throw new Error(`Save wrote nothing at ${path.basename(p)}`); await sleep(500); return p; };
@@ -1672,7 +1677,7 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     await ejs('document.querySelector(".scrim [data-f=png]").click(); document.querySelector(".scrim [data-a=ok]").click()');
     const t = Date.now();
     let png = null;
-    while (!png && Date.now() - t < 30000) { png = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editimg.png')).find((p) => fs.existsSync(p)); await sleep(200); }
+    while (!png && Date.now() - t < 30000) { png = fs.readdirSync(OUT).map((d) => path.join(OUT, d, 'editimg (edited).png')).find((p) => fs.existsSync(p)); await sleep(200); }
     if (!png) throw new Error('Save as PNG wrote nothing');
     await sleep(500);
     const pm = await sharp(png).metadata();
@@ -1936,6 +1941,247 @@ module.exports = async ({ wheel, sensor, watcher, summon, shiftSummon, setCursor
     if (!(start < now - 10)) throw new Error(`no fade in: ${start} dB at the start, ${now} dB later`);
     ed.win.destroy();
     return `${path.basename(out)}: ${info.duration.toFixed(2)} s, ${(now - was).toFixed(1)} dB louder, fades in from ${start.toFixed(0)} dB`;
+  });
+
+  await check('editors · one set of shortcuts, ? lists them', async () => {
+    const out = [];
+    const keyDown = (wc, key, mods = []) => { wc.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers: mods }); wc.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers: mods }); };
+    const opened = async (file, mode, ready) => {
+      openEditor(file, mode);
+      const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+      if (!(await wait(ready))) throw new Error(`${mode} editor did not load`);
+      await sleep(400);
+      return { win, wc, ejs, wait };
+    };
+    const src = path.join(OUT, 'keys.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    let ed = await opened(src, 'edit', '!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")');
+    keyDown(ed.wc, '?', ['shift']);
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys .krow")', 3000))) throw new Error('? did not show the shortcuts');
+    const rows = await ed.ejs('[...document.querySelectorAll(".scrim.keys .krow > span:first-child")].map((x) => x.textContent)');
+    for (const want of ['Save', 'Save as…', 'Close', 'Undo', 'Redo', 'Zoom in', 'Crop', 'Select']) if (!rows.includes(want)) throw new Error(`the PDF list lacks ${want}: ${rows.join(', ')}`);
+    keyDown(ed.wc, 'Escape');
+    if (!(await ed.wait('!document.querySelector(".scrim.keys")', 3000))) throw new Error('Escape did not close the list');
+    await ed.ejs('document.querySelector(\'[data-a="help"]\').click()');
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys")', 3000))) throw new Error('the Help button did not show the list');
+    await ed.ejs('document.querySelector(".scrim.keys [data-a=ok]").click()');
+    keyDown(ed.wc, 'C');
+    if (!(await ed.wait('document.querySelector(\'[data-tool="crop"]\').getAttribute("aria-pressed") === "true"', 3000))) throw new Error('C did not pick Crop');
+    keyDown(ed.wc, 'Escape');
+    if (!(await ed.wait('document.querySelector(\'[data-tool="select"]\').getAttribute("aria-pressed") === "true"', 3000))) throw new Error('Escape did not go back to Select');
+    keyDown(ed.wc, 'S', ['control']);
+    const saved = path.join(OUT, 'keys (edited).pdf');
+    const t = Date.now();
+    while (!fs.existsSync(saved) && Date.now() - t < 20000) await sleep(200);
+    if (!fs.existsSync(saved)) throw new Error('Ctrl+S did not save');
+    out.push(`PDF: ? and Help list ${rows.length} keys, C = Crop, Esc = Select, Ctrl+S saved ${path.basename(saved)}`);
+    ed.win.destroy();
+    const img = path.join(OUT, 'keys.jpg');
+    fs.copyFileSync(fx('photo.jpg'), img);
+    ed = await opened(img, 'image', '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()');
+    for (const [k, tool] of [['C', 'crop'], ['Y', 'redeye'], ['K', 'mask'], ['T', 'text']]) {
+      keyDown(ed.wc, k);
+      if (!(await ed.wait(`document.querySelector('[data-tool="${tool}"]').getAttribute("aria-pressed") === "true"`, 3000))) throw new Error(`${k} did not pick ${tool} in the image editor`);
+    }
+    keyDown(ed.wc, '?', ['shift']);
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys .krow")', 3000))) throw new Error('? did not show the image editor’s shortcuts');
+    const irows = await ed.ejs('[...document.querySelectorAll(".scrim.keys .krow > span:first-child")].map((x) => x.textContent)');
+    for (const want of ['Save', 'Close', 'Heal', 'Mask', 'Red eye', 'Hold to see the original']) if (!irows.includes(want)) throw new Error(`the image list lacks ${want}: ${irows.join(', ')}`);
+    out.push(`image: C, Y, K, T pick their tools, ? lists ${irows.length} keys`);
+    ed.win.destroy();
+    const clip = path.join(OUT, 'keys.mp4');
+    fs.copyFileSync(fx('clip.mp4'), clip);
+    ed = await opened(clip, 'media', '!!window.__media?.st.ready');
+    await ed.ejs('window.__media.seek(1.5); window.__media.act("split"); window.__media.st.sel = 1; window.__media.selectTool("trim")');
+    keyDown(ed.wc, 'Escape');
+    if (!(await ed.wait('window.__media.st.sel === -1', 3000))) throw new Error('Escape did not let go of the part');
+    keyDown(ed.wc, '?', ['shift']);
+    if (!(await ed.wait('!!document.querySelector(".scrim.keys .krow")', 3000))) throw new Error('? did not show the video editor’s shortcuts');
+    const mrows = await ed.ejs('[...document.querySelectorAll(".scrim.keys .krow > span:first-child")].map((x) => x.textContent)');
+    for (const want of ['Save', 'Play or pause', 'Split at the playhead', 'Zoom in on the timeline']) if (!mrows.includes(want)) throw new Error(`the video list lacks ${want}: ${mrows.join(', ')}`);
+    out.push(`video: Esc deselects, ? lists ${mrows.length} keys`);
+    ed.win.destroy();
+    return out.join('; ');
+  });
+
+  await check('editors · unsaved edits come back after the window dies', async () => {
+    const out = [], rdir = path.join(app.getPath('userData'), 'recovery');
+    const kept = () => (fs.existsSync(rdir) ? fs.readdirSync(rdir) : []);
+    const opened = async (file, mode, ready) => {
+      openEditor(file, mode);
+      const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+      if (!(await wait(ready))) throw new Error(`${mode} editor did not get to: ${ready.slice(0, 60)}`);
+      await sleep(400);
+      return { win, wc, ejs, wait };
+    };
+    const offer = '!!document.querySelector(".scrim [data-a=restore]")';
+    const restore = (ed) => ed.ejs('document.querySelector(".scrim [data-a=restore]").click()');
+    const src = path.join(OUT, 'recover.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    let ed = await opened(src, 'edit', '!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")');
+    await ed.ejs('document.querySelector(\'[data-p="rotr"]\').click()');
+    if (!(await ed.wait('document.querySelector(".ed-status").hidden && !!document.querySelector(".pdfpage img.r[src]") && document.querySelector(".pdfpage").offsetWidth > document.querySelector(".pdfpage").offsetHeight', 20000))) throw new Error('the page did not turn');
+    await ed.ejs('document.querySelector(\'[data-tool="addtext"]\').click()');
+    await ed.ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(); l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: b.left + 60, clientY: b.top + b.height * 0.5 })); })()`);
+    if (!(await ed.wait('!!document.querySelector(".obj.text[contenteditable]")', 3000))) throw new Error('no text box');
+    await ed.ejs(`(() => { const el = document.querySelector('.obj.text[contenteditable]'); el.textContent = 'Back from the dead'; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+    ed.wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await sleep(300);
+    if (!(await ed.ejs('window.__recovery.now()'))) throw new Error('the autosave wrote nothing');
+    let files = kept();
+    if (!files.some((f) => f.endsWith('.json')) || !files.some((f) => f.endsWith('.pdf'))) throw new Error(`the recovery folder holds ${files.join(', ') || 'nothing'}`);
+    ed.win.destroy();
+    ed = await opened(src, 'edit', offer);
+    await restore(ed);
+    if (!(await ed.wait('!!document.querySelector(".pdfpage img.r[src]") && [...document.querySelectorAll(".obj.text")].some((x) => x.textContent === "Back from the dead") && !document.querySelector(".dirty").hidden', 20000))) throw new Error('the typed text did not come back');
+    if (!(await ed.ejs('document.querySelector(".pdfpage").offsetWidth > document.querySelector(".pdfpage").offsetHeight'))) throw new Error('the turned page did not come back');
+    await ed.ejs('document.querySelector(\'[data-a="save"]\').click()');
+    const saved = path.join(OUT, 'recover (edited).pdf');
+    const t = Date.now();
+    while (!fs.existsSync(saved) && Date.now() - t < 30000) await sleep(200);
+    if (!fs.existsSync(saved)) throw new Error('Save wrote nothing');
+    await sleep(800);
+    const s = await E.open(saved), text = (await E.text(s.id, 0)).map((l) => l.text).join(' ');
+    if (!text.includes('Back from the dead') || !(s.pages[0].w > s.pages[0].h)) throw new Error(`saved ${s.pages[0].w}×${s.pages[0].h}: ${text.slice(0, 80)}`);
+    files = kept();
+    if (files.some((f) => f.endsWith('.pdf'))) throw new Error(`the kept copy was not dropped after saving: ${files.join(', ')}`);
+    ed.win.destroy();
+    out.push('PDF: a turned page and typed text came back and saved');
+    const clip = path.join(OUT, 'recover.mp4');
+    fs.copyFileSync(fx('clip.mp4'), clip);
+    ed = await opened(clip, 'media', '!!window.__media?.st.ready');
+    await ed.ejs('window.__media.seek(0.5); window.__media.act("in")');
+    if (!(await ed.ejs('window.__recovery.now()'))) throw new Error('the video autosave wrote nothing');
+    ed.win.destroy();
+    ed = await opened(clip, 'media', offer);
+    await restore(ed);
+    if (!(await ed.wait('window.__media.E().inT === 0.5 && !document.querySelector(".dirty").hidden', 10000))) throw new Error(`the trim did not come back: start ${await ed.ejs('window.__media.E().inT')}`);
+    ed.win.destroy();
+    out.push('video: the trimmed start came back');
+    const img = path.join(OUT, 'recover.jpg');
+    fs.copyFileSync(fx('photo.jpg'), img);
+    const idle = '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()';
+    ed = await opened(img, 'image', idle);
+    await ed.ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
+    await ed.ejs(`(() => { const r = document.querySelector('.props [data-k="light.exposure"] input'); r.value = 1; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    if (!(await ed.wait(idle))) throw new Error('the image editor did not settle');
+    if (!(await ed.ejs('window.__recovery.now()'))) throw new Error('the image autosave wrote nothing');
+    ed.win.destroy();
+    ed = await opened(img, 'image', offer);
+    await restore(ed);
+    if (!(await ed.wait('document.querySelector(".imged")?.__imged.st.dev.light.exposure === 1 && !document.querySelector(".dirty").hidden', 15000))) throw new Error('the exposure did not come back');
+    ed.win.destroy();
+    out.push('image: the exposure came back');
+    return out.join('; ');
+  });
+
+  await check('welcome · four steps, Got it marks it seen', async () => {
+    openWelcome();
+    let w = null;
+    for (let t = 0; t < 50 && !(w = welcome()); t++) await sleep(100);
+    if (!w) throw new Error('the welcome window did not open');
+    while (w.webContents.isLoading()) await sleep(100);
+    await sleep(800);
+    const wjs = (code) => js(code, w.webContents);
+    const steps = await wjs('[...document.querySelectorAll(".steps li .t b")].map((b) => b.textContent.replace(/^\\d/, ""))');
+    if (steps.length !== 4) throw new Error(`${steps.length} steps: ${steps.join(' | ')}`);
+    if (!(await wjs('document.scrollingElement.scrollHeight <= innerHeight + 1 && document.querySelectorAll(".steps svg, .steps img.lime").length >= 6'))) throw new Error('the welcome scrolls or has no drawings');
+    await wjs('document.querySelector("[data-a=ok]").click()');
+    for (let t = 0; t < 50 && welcome(); t++) await sleep(100);
+    if (welcome()) throw new Error('Got it did not close it');
+    await sleep(600);
+    const s = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
+    if (!s.welcomed) throw new Error('settings.welcomed is not set');
+    return `${steps.join(' · ')}; closed with Got it, marked as seen`;
+  });
+
+  await editorTest('edit pdf · the history lists each step and goes back to any', 'history.pdf', 'doc.pdf', async (ed) => {
+    const landscape = 'document.querySelector(".pdfpage").offsetWidth > document.querySelector(".pdfpage").offsetHeight';
+    const rows = () => ed.ejs('[...document.querySelectorAll(".bm.hs")].map((r) => r.querySelector(".t").textContent)');
+    const dim = () => ed.ejs('[...document.querySelectorAll(".bm.hs")].map((r) => r.classList.contains("ahead") ? "a" : r.classList.contains("sel") ? "s" : "-").join("")');
+    await ed.tool('stamp');
+    if (!(await ed.wait('document.querySelectorAll(".props .stampbtn").length >= 8', 3000))) throw new Error('no stamp choices');
+    await ed.press('.props [data-st="APPROVED"]');
+    await ed.click(0.1, 0.12);
+    await ed.press('[data-p="rotr"]');
+    if (!(await ed.wait(`document.querySelector(".ed-status").hidden && ${landscape}`, 20000))) throw new Error('the page did not turn');
+    await ed.tool('note');
+    await ed.click(0.62, 0.1);
+    if (!(await ed.wait('!!document.querySelector(".cm.sel textarea")', 8000))) throw new Error('the note did not open');
+    await ed.press('[data-side="history"]');
+    const want = ['Opened', 'Stamp APPROVED on page 1', 'Turned page 1', 'Added a note on page 1'];
+    let got = await rows();
+    if (got.join('|') !== want.join('|')) throw new Error(`history: ${got.join(' | ')}`);
+    if ((await dim()) !== '---s') throw new Error(`marks ${await dim()}`);
+    await ed.press('.bm.hs[data-i="1"]');
+    await ed.idle();
+    if (!(await ed.wait(`!(${landscape})`, 10000))) throw new Error('going back did not turn the page upright');
+    if ((await dim()) !== '-saa') throw new Error(`marks after going back: ${await dim()}`);
+    if (!(await ed.ejs('document.querySelector(\'[data-a="undo"]\').title.includes("Stamp APPROVED")'))) throw new Error(`undo says ${await ed.ejs('document.querySelector(\'[data-a="undo"]\').title')}`);
+    await ed.press('.bm.hs[data-i="3"]');
+    await ed.idle();
+    if (!(await ed.wait(landscape, 10000))) throw new Error('going forward did not turn the page again');
+    got = await rows();
+    if (got.join('|') !== want.join('|') || (await dim()) !== '---s') throw new Error(`after going forward: ${got.join(' | ')} ${await dim()}`);
+    const out = await ed.save();
+    const { s, list } = await annotsOf(out);
+    const text = (await E.text(s.id, 0)).map((l) => l.text).join(' ');
+    if (!text.includes('APPROVED') || !(s.pages[0].w > s.pages[0].h) || !list.some((a) => a.type === 'Text')) throw new Error(`saved ${s.pages[0].w}×${s.pages[0].h}, note ${list.length}: ${text.slice(0, 60)}`);
+    return `${want.length - 1} steps named, went back to step 1 (page upright, later steps dimmed) and forward to the last; stamp, turn and note saved`;
+  });
+
+  await check('editors · remember the last tool, and a file dropped on the window opens in it', async () => {
+    const opened = async (file, mode, ready) => {
+      openEditor(file, mode);
+      const win = [...editors].pop(), wc = win.webContents, ejs = (code) => js(code, wc);
+      while (wc.isLoading()) await sleep(200);
+      const wait = async (code, ms = 30000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ejs(code).catch(() => false)) return true; await sleep(150); } return false; };
+      if (!(await wait(ready))) throw new Error(`${mode} editor did not get to: ${ready.slice(0, 60)}`);
+      await sleep(600);
+      return { win, wc, ejs, wait };
+    };
+    const pressed = (ed) => ed.ejs('document.querySelector(\'[data-tool][aria-pressed="true"]\')?.dataset.tool');
+    const pdfReady = '!!document.querySelector(".pdfpage img.r[src]") && !!document.querySelector(".props h3")';
+    const src = path.join(OUT, 'memory.pdf');
+    fs.copyFileSync(fx('doc.pdf'), src);
+    let ed = await opened(src, 'edit', pdfReady);
+    await ed.ejs('document.querySelector(\'[data-tool="note"]\').click()');
+    await ed.ejs('document.querySelector(\'[data-a="zoomin"]\').click()');
+    await ed.ejs('document.querySelector(\'[data-side="bookmarks"]\').click()');
+    const zoom = await ed.ejs('document.querySelector(".zoom").value');
+    await sleep(800);
+    ed.win.destroy();
+    ed = await opened(src, 'edit', pdfReady);
+    const back = { tool: await pressed(ed), zoom: await ed.ejs('document.querySelector(".zoom").value'), side: await ed.ejs('document.querySelector(\'[data-side][aria-pressed="true"]\')?.dataset.side') };
+    if (back.tool !== 'note' || back.zoom !== zoom || back.side !== 'bookmarks') throw new Error(`the PDF editor came back with ${JSON.stringify(back)}, zoom was ${zoom}`);
+    const form = path.join(OUT, 'memory-form.pdf');
+    fs.copyFileSync(fx('fillable.pdf'), form);
+    ed.win.destroy();
+    ed = await opened(form, 'edit', pdfReady);
+    if (!(await ed.wait('document.querySelector(".ed-status").textContent.includes("form")', 8000)) || (await pressed(ed)) !== 'select') throw new Error(`a form opened in ${await pressed(ed)}`);
+    await ed.ejs('document.querySelector(\'[data-tool="edittext"]\').click()');
+    await ed.ejs('document.querySelector(\'[data-side="pages"]\').click()');
+    await sleep(800);
+    const photo = path.join(OUT, 'memory.jpg');
+    fs.copyFileSync(fx('photo.jpg'), photo);
+    const idle = '(() => { const x = document.querySelector(".imged")?.__imged; return !!x && x.idle() && !!document.querySelector(".imged .photo[src]"); })()';
+    if (!(await ed.ejs(`window.__page.openFile(${JSON.stringify(photo)})`))) throw new Error('the dropped photo did not open');
+    if (!(await ed.wait(idle))) throw new Error('the photo did not show in the same window');
+    if (ed.win.editorData.mode !== 'image' || ed.win.editorData.file !== photo || !ed.win.getTitle().startsWith('memory.jpg')) throw new Error(`after the drop: ${JSON.stringify(ed.win.editorData)} titled ${ed.win.getTitle()}`);
+    await ed.ejs('document.querySelector(\'[data-tool="text"]\').click()');
+    await sleep(800);
+    ed.win.destroy();
+    ed = await opened(photo, 'image', idle);
+    const imgTool = await pressed(ed);
+    await ed.ejs('document.querySelector(\'[data-tool="adjust"]\').click()');
+    await sleep(800);
+    ed.win.destroy();
+    if (imgTool !== 'text') throw new Error(`the image editor came back in ${imgTool}`);
+    return `PDF came back in Note at ${back.zoom} with Bookmarks open, a form still opens in Select; a photo dropped on the PDF window opened there and came back in Text`;
   });
 
   const again = { name: 'open Lime again while running', status: 'PASS', detail: '' };

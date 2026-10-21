@@ -23,7 +23,7 @@ The installer isn't code-signed yet, so SmartScreen shows a warning: click **Mor
 
 ## Using the wheel
 
-Lime waits as a small lime tucked into the right edge of the screen. The wheel is frosted glass: each slice is one thing your files can become.
+Lime waits as a small lime tucked into the right edge of the screen. The wheel is frosted glass: each slice is one thing your files can become. The first time it runs, a short welcome shows the four things worth knowing; **How Lime works** in the menu (and in Settings › About) brings it back.
 
 | Do this | What happens |
 |---|---|
@@ -78,6 +78,27 @@ Click the lime and pick an app, or drop files and open **Apps**. **Open** starts
 - **EffectCraft** — poster frame, transparent GIF or ProRes 4444 MOV, PNG frames, animation info, render to video. **Edit** opens Lottie and EffectCraft projects with a frame monitor and a layer timeline: text, colours, speed, trim, frame size, effects, transparency, then Lottie, MP4, GIF, WebM, ProRes or PNG frames.
 - **FilmCraft** — split into scenes, clean up voices, film-look colour grades, edit-ready ProRes/DNxHR copies, media info, timeline conversion. **Edit** opens OTIO, FCPXML, XML, EDL and AAF timelines on a track view: trim, split, reorder, remove, speed, transitions, effects, looks, titles, markers and sequence settings, then MP4 or any of those formats.
 - **PdfCraft** — optimise, remove hidden data, PDF/A, fillable forms, check redactions, Bates numbers, word count, print check, link web addresses, split at bookmarks, accessibility check, comment summary, compare, header and footer, page background, properties, page labels, export form data and fill a form from data. Lime adds crop marks and bleed, and bookmarks from headings.
+
+## The editors
+
+The PDF, image, video and audio editors and the four app editors work the same way:
+
+- **Save** writes `<name> (edited).<ext>` beside the original (or where Save as… last put it). **Save as…** asks where, suggesting the same name; the original file is never written over. After Save as…, the window shows the new name.
+- The PDF editor's **History** tab (in the side panel) names every step applied, such as "Replaced text on page 2", "Stamp APPROVED on page 1" or "Redacted 3 areas", and takes you back to any of them; the steps after it stay until you make a new change.
+- Unsaved edits are kept in Lime's own folder every two minutes. If the window goes before you save (a crash, a power cut), opening the same file again offers them back.
+- Each editor remembers the tool and zoom you last used for that kind of file, and the PDF editor its side panel. A fillable PDF still opens in Select so its fields can be filled in.
+- Dropping a file onto an editor window opens it there, in the editor for its kind; unsaved edits are asked about first.
+- **?** (or the Help button in the top bar) lists the keys of the editor you are in. The same keys mean the same everywhere:
+
+| Keys | What |
+|---|---|
+| Ctrl/⌘ S · Ctrl/⌘ Shift S | Save · Save as… |
+| Ctrl/⌘ Z · Ctrl/⌘ Y | Undo · Redo |
+| Ctrl/⌘ W | Close (asks about unsaved edits) |
+| + · − · 0 (with or without Ctrl/⌘) | Zoom in · out · fit |
+| Esc | Deselect, or back to the first tool |
+| V E T X N H P R O A L M C · K J Y D | Select, Edit text, Text, Erase, Note, Mark up, Draw, Box, Oval, Arrow, Line, Measure, Crop · Mask, Heal, Red eye, Adjust (the image editor) |
+| Space · J K L · I O S | Play or pause · back, pause, faster · trim start, trim end, split (video and audio) |
 
 ## Engines
 

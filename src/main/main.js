@@ -25,7 +25,6 @@ const asset = (n) => path.join(ROOT, 'build', n);
 app.setName('Lime');
 if (isWin) app.setAppUserModelId('app.lime.converter');
 if (process.env.LIME_NO_GPU) app.disableHardwareAcceleration();
-// The wheel's ticks and thuds play before anything has been clicked.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
@@ -49,7 +48,7 @@ const log = (err) => { try { fs.appendFileSync(path.join(app.getPath('userData')
 process.on('uncaughtException', log);
 
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, recent: [], signatures: [] };
+const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, welcomed: false, recent: [], signatures: [] };
 let settings = { ...DEFAULTS };
 let saveT = null;
 const loadSettings = () => {
@@ -195,8 +194,6 @@ function emitJobs() {
   if (emitT) return;
   emitT = setTimeout(() => {
     emitT = null;
-    // Only the wheel follows jobs, and only the ones running or just finished: copying the whole history to every
-    // window on each progress tick cost the wheel frames.
     const now = Date.now(), all = [...jobs.values()];
     const live = all.filter((j) => j.status === 'running' || j.status === 'queued');
     wheel?.webContents.send('jobs', [...live, ...all.filter((j) => j.finishedAt && now - j.finishedAt < 15000)]);
@@ -211,7 +208,7 @@ function notify(j, outs) {
   n.show();
 }
 
-let wheel = null, prefsWin = null, tray = null, sensor = null, watcher = null;
+let wheel = null, prefsWin = null, welcomeWin = null, tray = null, sensor = null, watcher = null;
 const editors = new Set(), pickers = new Set();
 const webPrefs = { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false };
 const workArea = (pt) => screen.getDisplayNearestPoint(pt).workArea;
@@ -220,25 +217,19 @@ function defaultAnchor() {
   const wa = screen.getPrimaryDisplay().workArea;
   return { x: wa.x + wa.width - 150, y: wa.y + Math.round(wa.height * 0.6) };
 }
-// The wheel lives in one see-through window the size of the work area, which never resizes: the page puts the lime
-// and the wheel where they belong inside it, so opening, folding and following are plain animations (a resized
-// transparent window shows stale frames on Windows). The window takes the mouse only over the lime or the wheel.
 let mode = 'tab', bloomAt = null, placed = null, openH = 416, catching = false, moving = false;
 const clamp = (v, a, b) => Math.min(Math.max(v, a), Math.max(a, b));
 const sizeK = () => SIZE_K[settings.size] || 1;
 const TAB = { w: 86, h: 96, ax: 48, ay: 38 }, OPEN = { w: 330, h: 416, ax: 165, ay: 194 };
-// The lime's centre, at the right edge of the screen the anchor is on.
 function tabPoint() {
   const a = settings.anchor || defaultAnchor();
   const wa = workArea(a), k = sizeK();
   return { x: wa.x + wa.width - (TAB.w - TAB.ax) * k, y: clamp(a.y, wa.y + TAB.ay * k, wa.y + wa.height - (TAB.h - TAB.ay) * k) };
 }
-// Where the wheel's centre can go so the whole wheel stays on the screen.
 function reachable(c) {
   const wa = workArea(c), k = sizeK();
   return { x: clamp(c.x, wa.x + OPEN.ax * k, wa.x + wa.width - (OPEN.w - OPEN.ax) * k), y: clamp(c.y, wa.y + OPEN.ay * k, wa.y + wa.height - (OPEN.h - OPEN.ay) * k) };
 }
-// The window covers the work area of the wheel's screen when open, the lime's when tucked.
 function placeWindow() {
   if (!wheel) return null;
   const tab = tabPoint(), wa = workArea(mode === 'open' && bloomAt ? bloomAt : tab);
@@ -247,14 +238,11 @@ function placeWindow() {
   if (mode === 'tab' && settings.hidden) { if (wheel.isVisible()) wheel.hide(); } else if (!wheel.isVisible() && !wheel.webContents.isLoading()) wheel.showInactive();
   return { wa: b, tab, at: bloomAt, k: sizeK() };
 }
-// What is on screen: the lime, or the wheel with its card.
 function visibleRect() {
   const k = sizeK();
   if (mode !== 'open' || !bloomAt) { const t = tabPoint(); return { x: Math.round(t.x - TAB.ax * k), y: Math.round(t.y - TAB.ay * k), width: Math.round(TAB.w * k), height: Math.round(TAB.h * k) }; }
   return { x: Math.round(bloomAt.x - OPEN.ax * k), y: Math.round(bloomAt.y - OPEN.ay * k), width: Math.round(OPEN.w * k), height: Math.round(openH * k) };
 }
-// Elsewhere than over the lime or the wheel, clicks go to whatever is underneath. The page says when the pointer is
-// over them; while files are dragged the system says instead, since a window passing the mouse through sees no drag.
 function setCatch(on) {
   if (!wheel || wheel.isDestroyed() || on === catching) return;
   catching = on;
@@ -263,15 +251,11 @@ function setCatch(on) {
 const near = (p, r, m) => p.x >= r.x - m && p.x <= r.x + r.width + m && p.y >= r.y - m && p.y <= r.y + r.height + m;
 let dragging = false, catchT = null;
 const catchForDrag = () => { if (wheel && !wheel.isDestroyed()) setCatch(moving || near(screen.getCursorScreenPoint(), visibleRect(), 24)); };
-// A pointer that left without the page noticing (a lost event, a window that appeared in between) lets go too.
 function guardCatch() {
   clearInterval(catchT);
   catchT = setInterval(() => { if (catching && !moving && !dragging && !near(cursorAt(), visibleRect(), 48)) setCatch(false); }, 250);
 }
 function sendGeo() { const g = placeWindow(); if (g) wheel?.webContents.send('wheel:geo', g); }
-// Shift during a drag opens the wheel beside the pointer, toward the middle of the screen, so it never covers the
-// file or what is under it. Then it follows the drag on a leash: it trails the pointer when the pointer moves away
-// and holds still when the pointer comes toward it, so reaching a slice is a short move in from the side.
 const leash = () => (138 + 34) * sizeK();
 let cursorAt = () => screen.getCursorScreenPoint(), followT = null;
 const reducedMotion = () => { try { return !!require('electron').systemPreferences.getAnimationSettings?.().prefersReducedMotion; } catch (_) { return false; } };
@@ -295,8 +279,6 @@ function follow(on) {
     const p = cursorAt(), L = leash();
     const dx = p.x - bloomAt.x, dy = p.y - bloomAt.y, d = Math.hypot(dx, dy);
     if (d <= L + 0.5) return;
-    // Eased by elapsed time, not by tick (after FilmCraft's timeline.rs), so it glides the same however late the timer
-    // runs, and settles exactly on the leash. With reduced motion it simply keeps up.
     const pull = d > L * 3 || reducedMotion() ? 1 : 1 - Math.exp(-dt / 27);
     const to = reachable({ x: bloomAt.x + dx * (1 - L / d) * pull, y: bloomAt.y + dy * (1 - L / d) * pull });
     if (Math.abs(to.x - bloomAt.x) < 0.5 && Math.abs(to.y - bloomAt.y) < 0.5) return;
@@ -357,8 +339,6 @@ function shiftSummon(p) {
   summon('shift', besidePointer(p));
   follow(true);
 }
-// Only ever one wheel. If its page crashes, hangs, or the graphics process dies (which can leave a frozen copy of the
-// lime on screen that no longer responds), the window is replaced with a fresh one at the edge.
 let rebuiltAt = 0, pingT = null;
 function rebuildWheel(why) {
   if (Date.now() - rebuiltAt < 3000) return;
@@ -411,9 +391,6 @@ function createWheel() {
   if (process.env.LIME_SHOTS) wheel.webContents.on('console-message', (e) => console.log('[wheel]', e.message ?? e));
 }
 let pendingShow = false;
-// 'floating' is too low on both systems: on Windows Electron files it just behind the taskbar, where other always-on-top
-// windows land above it, and on a Mac other apps' floating panels share its level. The status level stays above app
-// windows and panels but under menus; on Windows the screen-saver level is the plain topmost band.
 const TOP_LEVEL = isMac ? 'status' : 'screen-saver';
 function applyFloat() {
   if (!wheel) return;
@@ -421,11 +398,7 @@ function applyFloat() {
   if (isMac) wheel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: !!settings.float, skipTransformProcessType: true });
   keepOnTop();
 }
-// Other apps' always-on-top windows, full-screen apps and the system can still push the wheel down, so while it floats
-// it takes the top back when it is shown or loses focus, and every couple of seconds while it is on screen.
 let topT = null;
-// An open wheel is always on top, whatever the setting: files dragged to it must be able to reach it. The setting decides
-// only for the lime waiting at the edge.
 function raise() {
   if (!wheel || wheel.isDestroyed() || !wheel.isVisible() || (!settings.float && mode === 'tab')) return;
   wheel.setAlwaysOnTop(true, TOP_LEVEL);
@@ -463,6 +436,17 @@ function openPrefs(tab) {
   prefsWin.once('ready-to-show', () => prefsWin.show());
   prefsWin.on('closed', () => { prefsWin = null; });
 }
+function openWelcome() {
+  if (welcomeWin) { welcomeWin.show(); welcomeWin.focus(); return; }
+  welcomeWin = new BrowserWindow({
+    width: 700, height: 600, useContentSize: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, show: false, title: 'Welcome to Lime',
+    ...(isMac ? { titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' } : { autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2' }),
+    icon: asset('icon.png'), webPreferences: webPrefs,
+  });
+  welcomeWin.loadURL('app://local/welcome.html');
+  welcomeWin.once('ready-to-show', () => { welcomeWin?.show(); welcomeWin?.focus(); });
+  welcomeWin.on('closed', () => { welcomeWin = null; if (!settings.welcomed) setSettings({ welcomed: true }); });
+}
 function openEditor(file, mode) {
   const area = screen.getPrimaryDisplay().workAreaSize;
   const win = new BrowserWindow({
@@ -475,7 +459,6 @@ function openEditor(file, mode) {
   win.once('ready-to-show', () => win.show());
   editors.add(win);
   win.on('closed', () => editors.delete(win));
-  // Closing from the title bar, or quitting, asks the editor first so unsaved edits get their prompt.
   win.on('close', (e) => {
     if (win.closing || win.webContents.isCrashed()) return;
     e.preventDefault();
@@ -486,7 +469,6 @@ function openEditor(file, mode) {
   return true;
 }
 
-// A window showing the workbook, for choosing the cells to print. Resolves with the range text, or null.
 function pickCells(file, value) {
   return new Promise((resolve) => {
     const area = screen.getPrimaryDisplay().workAreaSize;
@@ -527,6 +509,7 @@ function buildTray() {
     { type: 'separator' },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
     { label: 'Settings…', accelerator: isMac ? 'Command+,' : undefined, click: () => openPrefs() },
+    { label: 'How Lime Works', click: () => openWelcome() },
     { type: 'separator' },
     { label: 'Quit Lime', accelerator: isMac ? 'Command+Q' : undefined, click: () => { app.isQuitting = true; app.quit(); } },
   ]));
@@ -571,7 +554,6 @@ async function doAction(item, files) {
     case 'hash': { const h = await require('./engines/util').hashFile(files[0], 'sha256'); clipboard.writeText(h); return `SHA-256 copied · ${h.slice(0, 12)}…`; }
     case 'craft': {
       if (!crafts.hasApp(item.app)) return `${crafts.APPS[item.app]?.name || 'That app'} isn’t in this build of Lime`;
-      // The first launch unpacks the app, which takes a few seconds; the wheel says so meanwhile.
       crafts.openApp(item.app, files).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
       return `Opening ${crafts.APPS[item.app].name}…`;
     }
@@ -582,22 +564,17 @@ async function doAction(item, files) {
   }
 }
 
-// Each app's ring: open the full app, then every Lime tool its engine powers. With no files (the wheel opened by a
-// click) every tool is listed, and choosing one asks for files of the kinds it takes.
 const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'] };
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
   const full = { action: 'craft', app: id, label: 'Full app', hint: 'Own window', desc: ok ? `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${a.name}, with every tool` : `${a.name} isn’t in this build of Lime`, ...(ok ? {} : { off: true }) };
-  // Open is the app inside Lime: its editor in a Lime window, for the files given or a file to choose. The app's own
-  // program is the next slice.
   const edit = (EDIT_IN[id] || []).map((t) => tools.get(t)).find((t) => t && (!files.length || tools.accepts(t, files)));
   const ring = edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
   }
-  // A ring stays readable up to ten slices; the rest of the app's actions are one slice away, in a list.
   const MAX = 10;
   const more = ring.length > MAX ? ring.splice(MAX - 1) : [];
   if (more.length) ring.push({ appAll: id, label: 'More', hint: `${more.length} actions`, desc: `Every ${a.name} action for ${files.length ? 'these files' : 'your files'}` });
@@ -605,7 +582,6 @@ function appRing(id, files) {
 }
 function itemsFor(files) {
   const w = tools.wheelsFor(files), apps = crafts.appsFor(files).map((id) => appRing(id, files));
-  // The likeliest app is also a slice of Tools, so a dropped PDF or photo offers PdfCraft or PhotoCraft right there.
   const first = apps[0];
   if (first && crafts.hasApp(first.id)) w.tools = [...w.tools.slice(0, 9), { action: 'craft', app: first.id, label: first.name, hint: 'Open in', desc: `Edit in ${first.name} · ${first.role}` }];
   return { ...w, apps, more: actionsFor(files), all: tools.toolsFor(files) };
@@ -651,6 +627,7 @@ function registerIpc() {
     { label: 'Choose Files…', click: pickFiles },
     appsMenu(),
     { label: 'Settings…', click: () => openPrefs() },
+    { label: 'How Lime Works', click: () => openWelcome() },
     { type: 'separator' },
     { label: 'Size', submenu: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([v, l]) => ({ label: l, type: 'radio', checked: settings.size === v, click: () => setSettings({ size: v }) })) },
     { label: 'Float Above Windows', type: 'checkbox', checked: !!settings.float, click: (i) => setSettings({ float: i.checked }) },
@@ -660,8 +637,6 @@ function registerIpc() {
     { label: 'Quit Lime', click: () => { app.isQuitting = true; app.quit(); } },
   ]).popup({ window: wheel }));
   ipcMain.on('wheel:catch', (e, on) => { if (e.sender === wheel?.webContents) setCatch(!!on); });
-  // The page carries the wheel while it is dragged by hand; the button is watched here too, in case the page misses
-  // the release (with swapped buttons the probe reads the other one, so only once it has been seen down).
   let moveT = null;
   h('wheel:dragStart', () => {
     follow(false);
@@ -685,6 +660,29 @@ function registerIpc() {
     return `data:image/png;base64,${buf.toString('base64')}`;
   });
   h('app:paths', () => ({ licenses: app.isPackaged ? path.join(RES, 'LICENSES') : path.join(ROOT, 'LICENSES'), userData: app.getPath('userData') }));
+  const RECOVER = () => path.join(app.getPath('userData'), 'recovery');
+  const recoverKey = (file) => crypto.createHash('sha1').update(path.resolve(file)).digest('hex').slice(0, 16);
+  h('recover:save', async (file, meta, data, ext) => {
+    const dir = RECOVER(), key = recoverKey(file);
+    await fsp.mkdir(dir, { recursive: true });
+    const kind = data || ext ? String(ext || 'bin').replace(/[^a-z0-9]/gi, '') || 'bin' : null;
+    if (data) await fsp.writeFile(path.join(dir, `${key}.${kind}`), Buffer.from(data));
+    await fsp.writeFile(path.join(dir, `${key}.json`), JSON.stringify({ file, at: Date.now(), ext: kind, meta }));
+    return { dir, key, data: kind ? path.join(dir, `${key}.${kind}`) : null };
+  });
+  h('recover:load', async (file) => {
+    const dir = RECOVER(), key = recoverKey(file);
+    try {
+      const j = JSON.parse(await fsp.readFile(path.join(dir, `${key}.json`), 'utf8'));
+      const data = j.ext ? path.join(dir, `${key}.${j.ext}`) : null;
+      return data && !fs.existsSync(data) ? null : { ...j, data, dir, key };
+    } catch (_) { return null; }
+  });
+  h('recover:drop', async (file) => {
+    const dir = RECOVER(), key = recoverKey(file);
+    for (const f of await fsp.readdir(dir).catch(() => [])) if (f.startsWith(key)) await fsp.rm(path.join(dir, f), { force: true }).catch(() => {});
+    return true;
+  });
   h('files:describe', (p) => call('describe', p).catch(() => null));
   h('files:exists', (paths) => paths.filter((p) => fs.existsSync(p)));
   h('jobs:submit', (job) => submit(job));
@@ -705,13 +703,14 @@ function registerIpc() {
   h('jobs:list', () => [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt));
   h('editor:open', (file, mode) => openEditor(file, mode));
   hE('editor:data', (e) => BrowserWindow.fromWebContents(e.sender)?.editorData || null);
+  h('editor:modeFor', (file) => tools.TOOLS.find((t) => t.editor && tools.accepts(t, [file]))?.editor || null);
+  hE('editor:switched', (e, file, mode) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.editorData = { file, mode }; return true; });
   hE('editor:closeNow', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (!w || w.isDestroyed()) return false; w.closing = true; w.close(); if (w.quitAfter) { app.isQuitting = true; app.quit(); } return true; });
   hE('editor:closeCancel', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w?.quitAfter && !wheel) createWheel(); if (w) w.quitAfter = false; return true; });
   h('cells:pick', (file, value) => (file ? pickCells(file, value || '') : null));
   hE('picker:data', async (e) => { const d = BrowserWindow.fromWebContents(e.sender)?.pickerData; return d ? { ...d, ...(await call('sheetPreview', d.file)) } : null; });
   hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });
   h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
-  // The other editors: ns is image, media or studio (see worker.js).
   h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
   hE('dialog:open', async (e, o = {}) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });
@@ -736,8 +735,9 @@ function registerIpc() {
     return setSettings({ icon: `data:image/png;base64,${png.toString('base64')}` });
   });
   h('prefs:open', (tab) => openPrefs(tab));
+  h('welcome:open', () => { openWelcome(); return true; });
+  h('welcome:done', () => { setSettings({ welcomed: true }); welcomeWin?.close(); return true; });
   h('engines:status', () => call('enginesStatus'));
-  // Settings can fetch LibreOffice and Pandoc from their makers into Lime's own folder; progress goes back to the page.
   hE('helpers:get', async (e, id) => {
     const helpers = require('./helpers'), tell = (p) => { if (!e.sender.isDestroyed()) e.sender.send('helpers:progress', p); };
     const exe = crafts.APPS[id] ? await crafts.getApp(id, tell) : helpers.bundled(id, HELPERS) ? await helpers.ensure(id, HELPERS, helperRoot(), tell) : await helpers.get(id, helperRoot(), tell);
@@ -762,8 +762,6 @@ function registerProtocols() {
     return fileResponse(p, req.headers.get('range'));
   });
 }
-// Byte ranges, so audio and video can seek, and readable across origins, so the editors can draw and process the
-// pictures and sound (WebGL, Web Audio).
 const MIME = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', ogv: 'video/ogg', mkv: 'video/x-matroska', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', weba: 'audio/webm', ttf: 'font/ttf', otf: 'font/otf', woff2: 'font/woff2', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
 function fileResponse(p, range) {
   const size = fs.statSync(p).size, headers = { 'Content-Type': MIME[path.extname(p).slice(1).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*' };
@@ -782,6 +780,7 @@ function appMenu() {
     { label: 'File', submenu: [{ label: 'Choose Files…', accelerator: 'Command+O', click: pickFiles }, { label: 'Show Wheel', accelerator: 'Control+Alt+L', click: () => showWheel() }, { type: 'separator' }, { role: 'close' }] },
     { role: 'editMenu' },
     { role: 'windowMenu' },
+    { role: 'help', submenu: [{ label: 'How Lime Works', click: () => openWelcome() }] },
   ]));
 }
 
@@ -805,6 +804,8 @@ app.whenReady().then(async () => {
   const files = argFiles(process.argv);
   if (files.length) takeFiles(files);
   if (incoming.size) clearTimeout(incomingT), takeFiles([]);
+  const harnessed = ['LIME_TEST', 'LIME_UI', 'LIME_SHOTS'].some((k) => process.env[k]);
+  if (!settings.welcomed && !harnessed) setTimeout(openWelcome, 700);
   nativeTheme.on('updated', () => broadcast('theme', { dark: nativeTheme.shouldUseDarkColors }));
   app.on('child-process-gone', (e, d) => { if (d.type === 'GPU' && wheel) setTimeout(() => rebuildWheel(`graphics ${d.reason}`), 400); });
   screen.on('display-removed', () => { placed = null; sendGeo(); placeSensor(); });
@@ -812,8 +813,8 @@ app.whenReady().then(async () => {
   screen.on('display-added', placeSensor);
   const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
   harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
-  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, peek: sendPeek, screen });
-  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
+  harness('LIME_UI', 'ui.test', { wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen });
+  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, openWelcome, welcome: () => welcomeWin, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
 });
 app.on('activate', () => showWheel());
 app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });

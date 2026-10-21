@@ -189,7 +189,7 @@ export function docTools(ed) {
       d.close();
       if (!Object.keys(changed).length) return;
       const r = await ed.busy('Saving properties…', async () => { await ed.flush(); return call('setProps', st.sess.id, changed); });
-      if (r) { st.sess = r; ed.refresh(); toast('Properties updated. Save to keep them.', { type: 'success' }); }
+      if (r) { st.sess = r; ed.record('Changed the properties'); ed.refresh(); toast('Properties updated. Save to keep them.', { type: 'success' }); }
     });
   }
 
@@ -227,7 +227,7 @@ export function docTools(ed) {
   async function flattenComments() {
     if (!st.marks.annots.length && !st.pending.length) { toast('There are no comments to flatten.'); return; }
     const r = await ed.busy('Flattening comments…', async () => { await ed.flush(); return call('fieldOp', st.sess.id, { type: 'flatten', comments: true, fields: false }); });
-    if (r) { st.sess = r; st.annSel = null; ed.refresh(); toast('Comments are now part of the pages.', { type: 'success' }); }
+    if (r) { st.sess = r; st.annSel = null; ed.record('Flattened the comments'); ed.refresh(); toast('Comments are now part of the pages.', { type: 'success' }); }
   }
 
   function recognise() {
@@ -243,6 +243,7 @@ export function docTools(ed) {
       const r = await ed.busy('Recognising text…', async () => { await ed.flush(); return call('recognise', st.sess.id, { lang, all }); });
       if (!r) return;
       st.sess = r;
+      if (r.recognised) ed.record(`Recognised text on ${r.recognised} page${r.recognised === 1 ? '' : 's'}`);
       ed.refresh();
       toast(r.recognised ? `Recognised ${r.words} word${r.words === 1 ? '' : 's'} on ${r.recognised} page${r.recognised === 1 ? '' : 's'}. Save to keep it.` : 'Every page already has text; nothing to recognise.', { type: r.recognised ? 'success' : undefined });
     });

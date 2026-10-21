@@ -340,6 +340,21 @@ async function encode(s, buf, to, out, { quality, alpha, deep }) {
   return img().writeAs(pipe, to, out, { quality });
 }
 
+async function exportBase(id, i, out) {
+  const s = get(id), b = s.bases[i];
+  if (!b || b.raw) throw new Error('No picture to keep for that step.');
+  let pipe = sharp()(b.path, { failOn: 'none' }).keepIccProfile();
+  if (b.mask) pipe = pipe.joinChannel(await sharp()(b.mask).resize(b.w, b.h, { fit: 'fill' }).extractChannel(0).toBuffer());
+  await fsp.mkdir(path.dirname(out), { recursive: true });
+  await pipe.png().toFile(out);
+  return out;
+}
+async function importBase(id, file) {
+  const s = get(id), copy = path.join(s.dir, `kept-${++s.n}.png`);
+  await fsp.copyFile(file, copy);
+  return addBase(s, copy);
+}
+
 function close(id) {
   const s = sessions.get(id);
   if (!s) return true;
@@ -348,4 +363,4 @@ function close(id) {
   return true;
 }
 
-module.exports = { open, preview, looks, profiles, lookThumb, develop, step, save, close };
+module.exports = { open, preview, looks, profiles, lookThumb, develop, step, save, exportBase, importBase, close };

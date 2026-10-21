@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:">
+<title>Welcome to Lime</title>
+<link rel="stylesheet" href="lime.css">
+<style>
+  body { background: transparent; overflow: hidden; }
+  html:not(.os-darwin) body, :root[data-theme] body.solid { background: var(--bg); }
+  .drag { height: 38px; -webkit-app-region: drag; flex: none; }
+  html:not(.os-darwin) .drag { height: 14px; }
+  body { display: flex; flex-direction: column; }
+  main { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 0 26px 20px; min-height: 0; }
+  header { display: flex; align-items: center; gap: 16px; padding: 0 4px; animation: rise .4s var(--spring) both; }
+  header h1 { font-size: 24px; font-weight: 700; }
+  header p { margin: 2px 0 0; color: var(--ink-2); font-size: 13px; }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex: 1; min-height: 0; }
+  .steps li { position: relative; display: grid; grid-template-rows: auto 1fr; gap: 10px; padding: 12px 14px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 86%, transparent); box-shadow: var(--shadow-sm); animation: rise .5s var(--spring) both; min-width: 0; }
+  .steps li:nth-child(1) { animation-delay: .08s; }
+  .steps li:nth-child(2) { animation-delay: .16s; }
+  .steps li:nth-child(3) { animation-delay: .24s; }
+  .steps li:nth-child(4) { animation-delay: .32s; }
+  .pic { position: relative; height: 104px; border-radius: 9px; background: var(--surface-2); overflow: hidden; color: var(--ink-2); }
+  .pic svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .pic .lime { position: absolute; }
+  .pic .accent { color: var(--accent); }
+  .pic .faint { color: var(--ink-3); }
+  .pic .green { color: var(--green-2); }
+  .pic text { font: 600 10px var(--font); fill: currentColor; }
+  .t b { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 650; }
+  .n { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 700; }
+  .t p { margin: 5px 0 0; color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
+  footer { display: flex; align-items: center; gap: 10px; padding: 0 2px; animation: rise .5s var(--spring) .4s both; }
+  footer .faint { font-size: 12px; }
+  kbd { font: 600 11px/1 var(--font); padding: 3px 6px; border-radius: 5px; background: var(--surface-3); color: var(--ink-2); box-shadow: inset 0 -1px 0 var(--line-2); }
+</style>
+</head>
+<body>
+<div class="drag"></div>
+<main id="app"></main>
+<script type="module" src="welcome.js"></script>
+</body>
+</html>

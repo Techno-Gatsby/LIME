@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow, app, summon, peek, screen, debug, dir }) => {
+module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, welcome, BrowserWindow, app, summon, peek, screen, debug, dir }) => {
   fs.mkdirSync(dir, { recursive: true });
   const samples = process.env.LIME_SAMPLES || path.join(dir, 'samples');
   const steps = (process.env.LIME_STEPS || 'all').split(',');
@@ -224,6 +224,22 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       if (p) await shot('14-prefs', p);
       if (p) { await p.webContents.executeJavaScript('document.scrollingElement.scrollTo(0, document.scrollingElement.scrollHeight)'); await sleep(400); await shot('15-prefs-helpers', p); }
     }
+    if (want('welcome')) {
+      openWelcome();
+      let ww = null;
+      for (let t = 0; t < 40 && !(ww = welcome()); t++) await sleep(100);
+      while (ww && ww.webContents.isLoading()) await sleep(100);
+      if (ww) {
+        await sleep(1200);
+        await shot('70-welcome', ww);
+        await ww.webContents.executeJavaScript('window.lime.invoke("settings:set", { theme: "dark" })');
+        await sleep(700);
+        await shot('71-welcome-dark', ww);
+        await ww.webContents.executeJavaScript('window.lime.invoke("settings:set", { theme: "system" })');
+        await sleep(300);
+        ww.close();
+      }
+    }
     if (want('print')) {
       const book = path.join(samples, 'print.xlsx');
       await js(`window.__lime.openWith(${JSON.stringify([book])})`);
@@ -264,6 +280,47 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
         await shot('18b-editor-stamp-selected', e);
         await ejs(`document.querySelector('[data-tool="highlight"]').click(); document.querySelector('.props [data-m="underline"]').click()`);
         await shot('19-editor-markup', e);
+      }
+    }
+    if (want('keys')) {
+      for (const [name, file, mode, ready] of [['72-editor-keys', 'doc.pdf', 'edit', '!!document.querySelector(".pdfpage img.r[src]")'], ['73-imgedit-keys', 'photo.jpg', 'image', '!!document.querySelector(".imged .photo[src]")']]) {
+        openEditor(path.join(samples, file), mode);
+        let e = null;
+        for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === mode && !x.webContents.isLoading()); }
+        if (!e) continue;
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        for (let t = 0; t < 80 && !(await ejs(ready)); t++) await sleep(250);
+        await sleep(800);
+        await ejs(`document.querySelector('[data-a="help"]').click()`);
+        await sleep(500);
+        await shot(name, e);
+        e.destroy();
+      }
+    }
+    if (want('history')) {
+      openEditor(path.join(samples, 'doc.pdf'), 'edit');
+      let e = null;
+      for (let t = 0; t < 60 && !e; t++) { await sleep(250); e = BrowserWindow.getAllWindows().find((x) => x.editorData?.mode === 'edit' && !x.webContents.isLoading()); }
+      if (e) {
+        const ejs = (code) => e.webContents.executeJavaScript(code, true);
+        const settled = async () => { await sleep(300); for (let t = 0; t < 80 && !(await ejs('document.querySelector(".ed-status").hidden && !!document.querySelector(".pdfpage img.r[src]")')); t++) await sleep(250); };
+        await settled();
+        const click = (u, v) => ejs(`(() => { const l = document.querySelector('.pdfpage .layer'), b = l.getBoundingClientRect(), x = b.left + b.width * ${u}, y = b.top + b.height * ${v}; l.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: x, clientY: y })); window.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y })); })()`);
+        await ejs('document.querySelector(\'[data-tool="stamp"]\').click()');
+        await sleep(300);
+        await ejs('document.querySelector(\'.props [data-st="APPROVED"]\').click()');
+        await click(0.1, 0.12);
+        await ejs('document.querySelector(\'[data-p="rotr"]\').click()');
+        await settled();
+        await ejs('document.querySelector(\'[data-tool="note"]\').click()');
+        await click(0.62, 0.1);
+        await settled();
+        await ejs('document.querySelector(\'[data-side="history"]\').click()');
+        await ejs('document.querySelector(\'.bm.hs[data-i="1"]\').click()');
+        await settled();
+        await sleep(500);
+        await shot('74-editor-history', e);
+        e.destroy();
       }
     }
     const STUDIO = [
@@ -363,6 +420,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, BrowserWindow
       const tool = (t) => ejs(`document.querySelector('[data-tool="${t}"]').click()`);
       if (e) {
         await settle();
+        await tool('adjust');
         await shot('40-imgedit-open', e);
         await slide('light.exposure', 0.35); await slide('light.shadows', 40); await slide('light.highlights', -30); await slide('color.vibrance', 25); await slide('effects.clarity', 20);
         await settle();
