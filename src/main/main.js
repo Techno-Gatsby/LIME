@@ -17,7 +17,7 @@ const RES = app.isPackaged ? process.resourcesPath : path.join(ROOT, 'vendor');
 const BIN = app.isPackaged ? path.join(RES, 'bin') : path.join(ROOT, 'vendor', 'bin', `${process.platform}-${process.arch}`);
 const DATA = path.join(RES, 'data');
 const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : process.env.LIME_CRAFTS || path.join(ROOT, 'vendor', 'crafts', `${process.platform}-${process.arch}`);
-const APPS = app.isPackaged ? path.join(RES, 'apps') : path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
+const APPS = app.isPackaged ? path.join(RES, 'apps') : process.env.LIME_APPS || path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
 const WEB = app.isPackaged ? path.join(RES, 'web') : process.env.LIME_WEB || path.join(ROOT, 'vendor', 'web');
 const HELPERS = app.isPackaged ? path.join(RES, 'helpers') : path.join(ROOT, 'vendor', 'helpers', `${process.platform}-${process.arch}`);
 const helperRoot = () => path.join(app.getPath('userData'), 'helpers');

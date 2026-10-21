@@ -487,7 +487,8 @@ async function removeBackground(p, opts, ctx) {
         if (code === 0) resolve();
         else reject(new Error(said || `The cut-out engine stopped${signal ? ` (${signal})` : ''}${err.trim() ? `: ${err.trim().split('\n').slice(-3).join(' ')}` : ''}`));
       });
-      child.send({ input: src, out: made, model: opts.quality === 'fast' ? 'small' : 'medium' });
+      // The quantised (int8, 44 MB) model is the one that ships; the fp16 one is twice the size for a little more edge detail.
+      child.send({ input: src, out: made, model: 'small' });
     });
     let out = await fsp.readFile(made);
     if (opts.background && opts.background !== 'transparent') out = await sharp()(out).flatten({ background: opts.background }).png().toBuffer();

@@ -94,7 +94,7 @@ async function ensure(id, vendor, root, progress = () => {}) {
       tar.stderr.on('data', (d) => { err += d; });
       tar.on('error', no);
       tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch(no);
+      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress({ params: { [require('zlib').constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch(no);
     });
     if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id].name} was not in its archive`);
     if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }

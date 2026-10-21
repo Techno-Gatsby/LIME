@@ -28,6 +28,8 @@ async function cli(id) {
   const raw = path.join(U.cfg.crafts, exe(id));
   if (fs.existsSync(raw)) return raw;
   const br = `${raw}.br`;
+  // On Mac and Windows the engine ships inside its app's archive.
+  if (!fs.existsSync(br) && bundledApps()[id]?.cli && fs.existsSync(appSource(id))) { await bundledApp(id); return path.join(appDir(id), bundledApps()[id].cli); }
   if (!fs.existsSync(br)) throw Object.assign(new Error(`The ${APPS[id].name} engine isn’t in this build of Lime.`), { code: 'ENGINE_MISSING' });
   const dest = path.join(U.cfg.user, 'crafts', `${id}-${fs.statSync(br).size}`, exe(id));
   if (fs.existsSync(dest)) return dest;
@@ -862,7 +864,8 @@ const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft'
   audio: 'soundcraft', doc: 'wordcraft', sheet: 'gridcraft', slides: 'deckcraft' };
 let bundled = null;
 const bundledApps = () => { if (!bundled) { try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
-const appSource = (id) => path.join(U.cfg.apps, `${id}.app.tar.br`);
+const appSource = (id) => path.join(U.cfg.apps, `${id}.tar.br`);
+const appDir = (id) => path.join(U.cfg.user, 'apps', `${id}-${bundledApps()[id].version}`);
 // Whether the full app can be opened: installed on this computer, or shipped inside Lime.
 const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || (!!bundledApps()[id] && fs.existsSync(appSource(id))));
 const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)));
@@ -892,13 +895,13 @@ async function untar(src, dest) {
     tar.stderr.on('data', (d) => { err += d; });
     tar.on('error', (e) => no(e.code === 'ENOENT' ? new Error('tar.exe is missing: Windows 10 (1803) or later is needed') : e));
     tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress(), tar.stdin).catch(no);
+    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress({ params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch(no);
   });
 }
 async function bundledApp(id) {
   const m = bundledApps()[id];
   if (!m || !fs.existsSync(appSource(id))) return null;
-  const root = path.join(U.cfg.user, 'apps'), dir = path.join(root, `${id}-${m.version}`), target = path.join(dir, m.file);
+  const root = path.join(U.cfg.user, 'apps'), dir = appDir(id), target = path.join(dir, m.file);
   if (fs.existsSync(target)) return target;
   if (!unpackingApps.has(id)) {
     unpackingApps.set(id, (async () => {
@@ -959,7 +962,7 @@ async function webApp(id) {
 const versions = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg.crafts, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 function status() {
   const manifest = versions(), apps = bundledApps();
-  return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)), web: hasWeb(id), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
+  return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)) || (!!apps[id]?.cli && fs.existsSync(appSource(id))), web: hasWeb(id), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
 module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
