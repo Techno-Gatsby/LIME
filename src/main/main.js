@@ -45,7 +45,7 @@ const log = (err) => { try { fs.appendFileSync(path.join(app.getPath('userData')
 process.on('uncaughtException', log);
 
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, recent: [], signatures: [] };
+const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, recent: [], signatures: [] };
 let settings = { ...DEFAULTS };
 let saveT = null;
 const loadSettings = () => {
