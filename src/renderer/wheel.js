@@ -2,7 +2,7 @@ import { icon, GROUP_ICON } from './icons.js';
 import { wedge, labelAt, arc, limeSvg, hitIndex, setIcon } from './petal.js';
 import { api, $, $$, h, esc, nameOf, dirOf, extOf, fmtBytes, clean, applyTheme, defaultsFor, missingRequired, visible, form } from './ui.js';
 
-const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 450;
+const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_MID = (2 / 3) * (R_OUT ** 3 - R_IN ** 3) / (R_OUT ** 2 - R_IN ** 2), R_PROG = 142.5, LIFT = 5, DWELL = 450;
 const TAB = 76, PAD_L = 10, PAD_B = 20, OPEN = { w: 330, h: 416, cx: 165, cy: 194 };
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
@@ -221,10 +221,10 @@ function drawRing(list, { dim = false } = {}) {
     const body = `<path class="glass" d="${d}"/><path class="tint" d="${d}"/><path class="rim" d="${d}"/><path class="sheen" d="${d}"/>`;
     const style = `--i:${i};--dx:${(Math.sin(a) * lift).toFixed(2)}px;--dy:${(-Math.cos(a) * lift).toFixed(2)}px`;
     if (!it) return `<g class="petal" style="${style}">${body}</g>`;
-    // Busy rings set their labels further out, where the slices are wider.
-    const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : count > 8 ? R_LABEL + 8 : R_LABEL);
-    const hint = it.hint ? `<text class="h" x="${x.toFixed(1)}" y="${(y + 9).toFixed(1)}">${esc(String(it.hint).toUpperCase())}</text>` : '';
-    return `<g class="petal${it.danger ? ' danger' : ''}${it.off ? ' off' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 6 : 0)).toFixed(1)}" data-cy="${(y + 1.5).toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
+    // The label and its hint are centred together on the slice's centre of area (a little outside the middle radius).
+    const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : R_MID);
+    const hint = it.hint ? `<text class="h" x="${x.toFixed(1)}" y="${(y + 7).toFixed(1)}">${esc(String(it.hint).toUpperCase())}</text>` : '';
+    return `<g class="petal${it.danger ? ' danger' : ''}${it.off ? ' off' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 5.5 : 0)).toFixed(1)}" data-cy="${y.toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
   }).join('');
   fitLabels(count);
   setHot(S.hot >= n ? -1 : S.hot, true);
@@ -232,7 +232,7 @@ function drawRing(list, { dim = false } = {}) {
 // One readable size per ring: labels never go below 10.5px and hints below 7px. A hint that still doesn't fit is left
 // out (the caption under the wheel says it in full), and a two-word label that doesn't fit goes onto two lines.
 function fitLabels(n) {
-  const rl = n > 8 ? R_LABEL + 8 : R_LABEL, max = Math.max(36, Math.min(R_OUT - R_IN - 8, 2 * rl * Math.sin(Math.PI / Math.max(n, 2)) - 6));
+  const rl = R_MID, max = Math.max(36, Math.min(R_OUT - R_IN - 8, 2 * rl * Math.sin(Math.PI / Math.max(n, 2)) - 6));
   const glassOf = (t) => t.parentNode.querySelector('path.glass');
   const fits = (t) => t.getComputedTextLength() <= max && inside(t, glassOf(t));
   for (const [cls, floor] of [['l', 10.5], ['h', 7]]) {
