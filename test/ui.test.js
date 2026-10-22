@@ -638,6 +638,8 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
             const end = await settle();
             const r = await lime('return { state: L.S.state, outs: L.S.result?.outs || [], note: L.S.result?.note || "", error: L.S.result?.error || "", text: !!L.S.result?.text };');
             if (end !== 'done' && /engine isn’t in this build/.test(r.error)) throw Object.assign(new Error(r.error), { skip: true });
+            // The samples' sound is a tone, so the speech tools must say they heard no speech rather than save an empty file.
+            if (end !== 'done' && /^No speech heard in /.test(r.error)) throw Object.assign(new Error(`refused as it should: ${r.error}`), { pass: true });
             if (end !== 'done') throw new Error(`${end}${r.error ? `: ${r.error}` : ''}`);
             if (r.outs.length) {
               if (!asked.length) throw new Error('saved without asking where');
@@ -652,7 +654,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
             } else if (r.note || r.text) detail = (r.note || 'text result').split('\n')[0];
             else throw new Error('finished without a result');
           }
-        } catch (e) { status = e.skip ? 'SKIP' : 'FAIL'; detail = e.message; }
+        } catch (e) { status = e.pass ? 'PASS' : e.skip ? 'SKIP' : 'FAIL'; detail = e.message; }
         console.log(`${status} ${name.padEnd(44)} ${String(Date.now() - t0).padStart(6)}ms  ${detail}`.slice(0, 240));
         results.push({ name, status, detail });
         await lime(`if (L.S.state !== 'idle') await L.collapse();`).catch(() => {});

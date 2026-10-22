@@ -25,10 +25,12 @@ async function encode(src, raw, { rate, channels }, info, ctx, name, label, ext)
   return out;
 }
 
+// A file with no speech in it (music, a tone, silence) gives no segments: say so rather than save an empty file.
+const heard = (r, f) => { if (!r.segments?.some((x) => String(x.text || '').trim())) throw new Error(`No speech heard in ${path.basename(f)}.`); return r; };
 async function transcribe(f, o, ctx) {
   const to = o.to || 'srt';
   await sound(f);
-  const r = await whisper.transcribeFile(f, o, ctx);
+  const r = heard(await whisper.transcribeFile(f, o, ctx), f);
   const out = ctx.out.file(f, `${U.base(f)}.${to}`);
   await fsp.writeFile(out, to === 'srt' ? whisper.toSrt(r.segments) : to === 'vtt' ? whisper.toVtt(r.segments) : whisper.toText(r.segments));
   return out;
@@ -38,7 +40,7 @@ async function subtitleVideo(f, o, ctx) {
   if (!info.video) throw new Error(`${path.basename(f)} has no picture: choose Subtitles from speech instead.`);
   const tmp = await U.tmpDir('subs');
   try {
-    const r = await whisper.transcribeFile(f, o, part(ctx, 0, 0.85));
+    const r = heard(await whisper.transcribeFile(f, o, part(ctx, 0, 0.85)), f);
     const srt = path.join(tmp, 'subtitles.srt');
     await fsp.writeFile(srt, whisper.toSrt(r.segments));
     const rest = part(ctx, 0.85, 1);
