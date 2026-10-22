@@ -40,6 +40,9 @@ const APPS = {
   maps: { name: 'Maps', role: 'GIS maps', short: 'Maps', opens: ['gis'], builtin: true, external: ['qgis'], bucket: 'engineering' },
   hydro: { name: 'Hydrology', role: 'Stormwater and rivers', short: 'Hydro', opens: ['hydro'], builtin: true, external: ['hecras', 'hechms', 'swmm', 'dssvue'], bucket: 'engineering' },
   projectlibre: { name: 'ProjectLibre', role: 'Project schedules', short: 'Projects', opens: ['project'], bucket: 'engineering' },
+  // Third-party apps (`optional`): a build without them, or a platform they don't ship for, simply doesn't show them.
+  solidcraft: { name: 'SolidCraft', role: 'Parametric 3D CAD', short: '3D CAD', bucket: 'engineering', opens: ['solidcraft', 'solvecraft', 'step', 'stp', 'iges', 'igs', 'fcstd', '3dm'], optional: true },
+  blender: { name: 'Blender', role: '3D modelling & animation', short: '3D', bucket: 'design', opens: ['blend', 'glb', 'gltf', 'fbx', 'obj', 'stl', 'ply', 'usd', 'usda', 'usdc', 'usdz', 'abc'], optional: true },
 };
 // Files an app also opens that share their extension with other things (a CSV of coordinates, a GeoTIFF, MS Project XML).
 const SNIFF = {
@@ -916,11 +919,178 @@ async function deckGraphics(p, opts, ctx) {
   return { path: dir, note: plural(n, 'slide') };
 }
 
+// ——— SolidCraft (bherbruck/solidcraft): its CLI rebuilds a design's timeline, so Lime reads and writes .solidcraft through it.
+const SOLID_IN = ['solidcraft', 'solvecraft'];
+const SOLID_OUT = ['step', 'stl', '3mf', 'obj'];
+async function solidRun(args, ctx, label) {
+  return run('solidcraft', args, ctx, label, { timeout: 600000 });
+}
+// The design rebuilt and written straight from SolidCraft: exact STEP, or its own meshes.
+async function solidExport(p, to, out, ctx) {
+  if (!SOLID_OUT.includes(to)) throw new Error(`SolidCraft saves STEP, STL, 3MF or OBJ, not ${to.toUpperCase()}.`);
+  await solidRun(['run', '--in', p, '--out', out, '--quiet'], ctx, 'Rebuilding with SolidCraft');
+  if (!fs.existsSync(out)) throw new Error('SolidCraft finished without writing a file.');
+  return out;
+}
+// A STEP copy of the design, so the rest of Lime's 3D tools can read it.
+async function solidStep(p, ctx) {
+  const out = path.join(await U.tmpDir('solid'), `${U.base(p)}.step`);
+  return solidExport(p, 'step', out, ctx);
+}
+const solidJson = async (p, script, ctx, label) => {
+  const dir = await U.tmpDir('solid'), sc = path.join(dir, 'script.json'), res = path.join(dir, 'results.json');
+  await fsp.writeFile(sc, JSON.stringify({ commands: script }));
+  await solidRun(['run', sc, '--in', p, '--results', '--json-out', res, '--quiet'], ctx, label);
+  try { return JSON.parse(await fsp.readFile(res, 'utf8')); } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+};
+async function solidParamList(p, ctx) {
+  const r = await solidJson(p, [{ command: 'parameters.list', params: { filter: 'user' } }], ctx, 'Reading parameters');
+  return (Array.isArray(r) ? r : r?.results || []).flatMap((x) => x?.parameters || []);
+}
+async function solidParams(p, opts, ctx) {
+  const list = await solidParamList(p, ctx);
+  if (!list.length) return { note: 'This design has no parameters', text: 'This design has no user parameters. Add them in SolidCraft (Modify ▸ Parameters).' };
+  const text = list.map((q) => `${q.name} = ${q.expression}${q.unit && !/[a-z°]\s*$/i.test(q.expression) ? ` ${q.unit}` : ''}${q.comment ? `   (${q.comment})` : ''}${q.error ? `   ⚠ ${q.error}` : ''}`).join('\n');
+  if (opts.save) {
+    const out = ctx.out.file(p, `${U.base(p)} - parameters.csv`);
+    const cell = (v) => (/[",\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
+    await fsp.writeFile(out, ['name,expression,unit,value,comment', ...list.map((q) => [q.name, q.expression, q.unit, q.value, q.comment].map(cell).join(','))].join('\n'));
+    return { path: out, note: plural(list.length, 'parameter'), text };
+  }
+  return { note: plural(list.length, 'parameter'), text };
+}
+// "width = 90 mm, thickness = 8" (one per line, or separated by commas or semicolons).
+function parseParams(spec) {
+  const out = [];
+  for (const part of String(spec || '').split(/[\n;,]+/).map((x) => x.trim()).filter(Boolean)) {
+    const m = /^([A-Za-z_][\w]*)\s*[=:]\s*(.+)$/.exec(part);
+    if (!m) throw new Error(`“${part}” isn’t a parameter change. Write it as name = value, like width = 90 mm.`);
+    out.push({ name: m[1], expression: m[2].trim() });
+  }
+  if (!out.length) throw new Error('Type at least one change, like width = 90 mm.');
+  return out;
+}
+async function solidSetParams(p, opts, ctx) {
+  const changes = parseParams(opts.params);
+  const have = new Set((await solidParamList(p, ctx)).map((q) => q.name));
+  const missing = changes.filter((c) => !have.has(c.name)).map((c) => c.name);
+  if (missing.length) throw new Error(`This design has no parameter called ${missing.join(', ')}${have.size ? `. It has ${[...have].join(', ')}` : ''}.`);
+  const to = opts.to || 'solidcraft';
+  const dir = await U.tmpDir('solid'), sc = path.join(dir, 'script.json');
+  await fsp.writeFile(sc, JSON.stringify({ commands: changes.map((c) => ({ command: 'parameters.change', params: c })) }));
+  const out = ctx.out.file(p, `${U.base(p)}-changed.${to}`);
+  try {
+    await solidRun(['run', sc, '--in', p, to === 'solidcraft' ? '--save' : '--out', out, '--quiet'], ctx, 'Rebuilding with the new values');
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+  if (!fs.existsSync(out)) throw new Error('SolidCraft finished without writing a file.');
+  return { path: out, note: changes.map((c) => `${c.name} = ${c.expression}`).join(', ') };
+}
+
+// ——— Blender, headless (blender -b): reads and writes the 3D formats Lime's own code doesn't, and renders.
+const BLEND_IN = ['blend', 'usd', 'usda', 'usdc', 'usdz', 'abc']; // Lime reads these only through Blender
+const BLEND_READS = [...BLEND_IN, 'glb', 'gltf', 'fbx', 'obj', 'stl', 'ply'];
+const BLEND_OUT = ['fbx', 'usdz', 'usd', 'usdc', 'usda', 'abc', 'blend']; // and writes these only through Blender
+const BLEND_WRITES = [...BLEND_OUT, 'glb', 'gltf', 'obj', 'stl', 'ply'];
+const installedBlender = () => {
+  const a = installedApp('blender');
+  return a && (a.endsWith('.app') ? path.join(a, 'Contents', 'MacOS', 'Blender') : a);
+};
+async function blenderExe() {
+  if (process.env.LIME_BLENDER && fs.existsSync(process.env.LIME_BLENDER)) return process.env.LIME_BLENDER;
+  const m = bundledApps().blender;
+  if (m?.cli && fs.existsSync(appSource('blender'))) { await bundledApp('blender'); return path.join(appDir('blender'), m.cli); }
+  const own = installedBlender();
+  if (own && fs.existsSync(own)) return own;
+  throw Object.assign(new Error('Blender isn’t in this build of Lime.'), { code: 'ENGINE_MISSING' });
+}
+async function blender(job, ctx, label, { timeout = 900000, frames } = {}) {
+  let limit;
+  const late = new Promise((_, rej) => { limit = setTimeout(() => rej(Object.assign(new Error('Blender couldn’t finish (it stopped responding)'), { code: 'TIMEOUT' })), timeout); });
+  const exe = await Promise.race([blenderExe(), late]).finally(() => clearTimeout(limit));
+  ctx?.progress?.(0.1, label);
+  let tick = 0.1, said = null;
+  const t = frames ? null : setInterval(() => { tick = Math.min(0.92, tick + (0.95 - tick) * 0.05); ctx?.progress?.(tick, label); }, 500);
+  const onStdout = (s) => {
+    for (const line of s.split(/\r?\n/)) {
+      if (!line.startsWith('LIME ')) continue;
+      const j = (() => { try { return JSON.parse(line.slice(5)); } catch (_) { return null; } })();
+      if (j?.error) said = j.error;
+      if (j?.frame && frames) ctx?.progress?.(0.05 + 0.85 * (j.frame / j.of), `${label} · frame ${j.frame} of ${j.of}`);
+    }
+  };
+  const args = ['-b', '--factory-startup', '--python-exit-code', '1', '--python', path.join(__dirname, 'blender.py'), '--', JSON.stringify(job)];
+  try {
+    return await U.run(exe, args, { signal: ctx?.signal, cwd: os.tmpdir(), timeout, onStdout, errorMessage: 'Blender couldn’t finish', env: { BLENDER_USER_RESOURCES: path.join(U.cfg.user || os.tmpdir(), 'blender-user') } });
+  } catch (e) {
+    if (said) e.message = `Blender couldn’t finish (${said})`;
+    throw e;
+  } finally { clearInterval(t); }
+}
+// The Blender-made OBJ brings its .mtl along.
+const withMtl = (out) => { const mtl = out.replace(/\.obj$/i, '.mtl'); return /\.obj$/i.test(out) && fs.existsSync(mtl) ? { path: out, paths: [out, mtl] } : out; };
+async function blenderConvert(p, to, out, ctx) {
+  if (!BLEND_READS.includes(U.ext(p))) throw new Error(`Blender can’t read ${U.ext(p).toUpperCase()} models.`);
+  if (!BLEND_WRITES.includes(to)) throw new Error(`Blender can’t save ${to.toUpperCase()} models.`);
+  await blender({ op: 'convert', in: p, out }, ctx, `Converting with Blender`);
+  if (!fs.existsSync(out)) throw new Error('Blender finished without writing a file.');
+  return withMtl(out);
+}
+// A GLB copy of a file only Blender reads, so the rest of Lime's 3D tools can work on it.
+async function blenderGlb(p, ctx) {
+  const out = path.join(await U.tmpDir('blend'), `${U.base(p)}.glb`);
+  await blenderConvert(p, 'glb', out, ctx);
+  return out;
+}
+// A model Blender can't read itself (STEP, 3MF, a SolidCraft design…) goes in as a GLB that Lime makes first.
+async function forBlender(p, ctx, fn) {
+  if (BLEND_READS.includes(U.ext(p))) return fn(p);
+  const tmp = path.join(await U.tmpDir('blend'), `${U.base(p)}.glb`);
+  try {
+    await require('./cad').convert(p, { to: 'glb' }, { ...ctx, progress: (f) => ctx?.progress?.(f * 0.1, 'Reading the model'), out: { ...ctx?.out, file: () => tmp } });
+    return await fn(tmp);
+  } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
+}
+const RENDER_SIZE = { small: [1024, 768], medium: [1600, 1200], large: [2560, 1920], square: [1600, 1600], wide: [1920, 1080] };
+const renderJob = (opts) => {
+  const [width, height] = RENDER_SIZE[opts.size] || RENDER_SIZE.medium;
+  const samples = { draft: 24, good: 96, best: 256 }[opts.quality] || Number(opts.samples) || 96;
+  return { width: Number(opts.width) || width, height: Number(opts.height) || height, samples, engine: opts.engine === 'eevee' ? 'eevee' : 'cycles', background: opts.background || 'studio', ownCamera: opts.ownCamera !== false, ownLights: opts.ownLights !== false };
+};
+async function studioRender(p, opts, ctx) {
+  const out = ctx.out.file(p, `${U.base(p)} - render.png`);
+  await forBlender(p, ctx, (src) => blender({ op: 'render', in: src, out, ...renderJob(opts) }, ctx, 'Rendering with Blender'));
+  if (!fs.existsSync(out)) throw new Error('Blender finished without writing a picture.');
+  return out;
+}
+async function turntable(p, opts, ctx) {
+  const to = opts.to === 'gif' ? 'gif' : 'mp4';
+  const secs = Math.max(1, Math.min(20, Number(opts.seconds) || 4)), fps = to === 'gif' ? 20 : 30, frames = Math.round(secs * fps);
+  const job = { ...renderJob({ size: 'small', quality: 'draft', ...opts }), op: 'turntable', frames };
+  if (!opts.size && !opts.width) [job.width, job.height] = to === 'gif' ? [600, 600] : [1280, 720];
+  const dir = await U.tmpDir('turntable');
+  try {
+    await forBlender(p, ctx, (src) => blender({ ...job, in: src, out: dir }, ctx, 'Rendering the turntable', { frames: true, timeout: 3600000 }));
+    const out = ctx.out.file(p, `${U.base(p)} - turntable.${to}`);
+    const input = ['-framerate', String(fps), '-i', path.join(dir, 'frame-%04d.png')];
+    const args = to === 'gif' ? [...input, '-vf', 'split[a][b];[a]palettegen[p];[b][p]paletteuse', '-loop', '0', out]
+      : [...input, '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out];
+    await require('./media').ffmpeg(args, { ...ctx, progress: (f, l) => ctx.progress?.(0.9 + 0.1 * f, l) }, secs, 'Encoding', out);
+    return out;
+  } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+
 function installedApp(id) {
   const name = APPS[id]?.name;
   if (!name || APPS[id].builtin) return null;
   if (U.cfg[id] && fs.existsSync(U.cfg[id])) return U.cfg[id];
   if (APPS[id].bundledOnly) return null;
+  if (id === 'blender') {
+    // Blender installs into a folder named after its version (Blender Foundation\Blender 5.2) on Windows.
+    const win = () => [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean).map((b) => path.join(b, 'Blender Foundation'))
+      .flatMap((d) => { try { return fs.readdirSync(d).filter((n) => /^Blender/i.test(n)).sort().reverse().map((n) => path.join(d, n, 'blender.exe')); } catch (_) { return []; } });
+    const c = process.platform === 'darwin' ? ['/Applications/Blender.app', path.join(os.homedir(), 'Applications', 'Blender.app')] : U.isWin ? win() : ['/usr/bin/blender', '/usr/local/bin/blender', '/snap/bin/blender'];
+    return c.find((x) => fs.existsSync(x)) || null;
+  }
   const cands = process.platform === 'darwin'
     ? [`/Applications/${name}.app`, path.join(os.homedir(), 'Applications', `${name}.app`)]
     : U.isWin ? [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean).map((b) => path.join(b, name, `${id}.exe`)) : [`/usr/bin/${id}`, `/usr/local/bin/${id}`];
@@ -942,6 +1112,20 @@ const appDir = (id) => path.join(U.cfg.user, 'apps', `${id}-${bundledApps()[id].
 // A Java app (ProjectLibre) also needs the shared Java runtime that ships beside it.
 const shipped = (id) => !!bundledApps()[id] && fs.existsSync(appSource(id)) && (!bundledApps()[id].java || (!!bundledApps().java && fs.existsSync(appSource('java'))));
 const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || shipped(id)) && (APPS[id].needs || []).every(hasApp);
+// Whether this build can run the app's headless tools: its CLI engine (or Blender itself) is here.
+function hasEngine(id) {
+  if (id === 'blender') return !!(process.env.LIME_BLENDER && fs.existsSync(process.env.LIME_BLENDER)) || (!!bundledApps().blender?.cli && fs.existsSync(appSource('blender'))) || !!installedBlender();
+  return fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)) || (!!bundledApps()[id]?.cli && fs.existsSync(appSource(id)));
+}
+// Checked often (every wheel), so the answers are kept for a few seconds.
+let cacheAt = 0, cache = {};
+const cached = (key, fn) => { if (Date.now() - cacheAt > 5000) { cacheAt = Date.now(); cache = {}; } return (cache[key] ??= fn()); };
+// An optional app that this build has nothing of (no engine, no app, no in-window version) is left off the wheel.
+const usable = (id) => !!APPS[id] && (!APPS[id].optional || cached(`u:${id}`, () => hasEngine(id) || hasApp(id) || hasWeb(id)));
+const engineHere = (id) => cached(`e:${id}`, () => hasEngine(id));
+// Files Lime reads only through one of the optional apps, and whether that app's engine is in this build.
+const READ_VIA = { ...Object.fromEntries(SOLID_IN.map((e) => [e, 'solidcraft'])), ...Object.fromEntries(BLEND_IN.map((e) => [e, 'blender'])) };
+const readable = (f) => { const id = READ_VIA[U.ext(f)]; return !id || engineHere(id); };
 const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)) || !!SNIFF[id]?.(f));
 // The apps that open every one of these files, the likeliest first.
 function appsFor(files) {
@@ -950,7 +1134,7 @@ function appsFor(files) {
   const pref = PREF[U.ext(files[0])], byGroup = BY_GROUP[require('../engtools').groupOf(files[0], U.ext(files[0])) || U.groupOf(files[0])];
   // A file whose contents make it something else (a Lottie .json, a video .ts) goes to that app before Code.
   const first = pref === 'code' && byGroup ? byGroup : pref || byGroup;
-  const ids = Object.keys(APPS).filter((id) => files.every((f) => opens(id, f)));
+  const ids = Object.keys(APPS).filter((id) => usable(id) && files.every((f) => opens(id, f)));
   return first && ids.includes(first) ? [first, ...ids.filter((id) => id !== first)] : ids;
 }
 function appFor(file) {
@@ -1025,6 +1209,16 @@ async function launch(app, files, name) {
   if (why && U.isWin) { try { why = (await require('electron').shell.openPath(app)) || null; } catch (_) {} }
   if (why) throw new Error(`${name} didn’t start (${why}).`);
 }
+const IMPORT = { glb: 'import_scene.gltf', gltf: 'import_scene.gltf', fbx: 'import_scene.fbx', obj: 'wm.obj_import', stl: 'wm.stl_import', ply: 'wm.ply_import', usd: 'wm.usd_import', usda: 'wm.usd_import', usdc: 'wm.usd_import', usdz: 'wm.usd_import', abc: 'wm.alembic_import' };
+function blenderArgs(files) {
+  const blend = files.find((f) => U.ext(f) === 'blend');
+  if (blend) return [blend];
+  const models = files.filter((f) => IMPORT[U.ext(f)]);
+  if (!models.length) return [];
+  // The default cube goes, then each model comes in; the paths travel as JSON so any name is safe.
+  const expr = `import bpy, json\nfor o in [o for o in bpy.data.objects if o.name in ('Cube',)]: bpy.data.objects.remove(o)\nfor op, p in json.loads(${JSON.stringify(JSON.stringify(models.map((f) => [IMPORT[U.ext(f)], f])))}):\n    m, n = op.split('.'); getattr(getattr(bpy.ops, m), n)(filepath=p)`;
+  return ['--python-expr', expr];
+}
 async function openApp(id, files = []) {
   if (!APPS[id]) throw new Error('Unknown app.');
   if (APPS[id].bundledOnly && !installedApp(id)) return require('./coding').open(id, files);
@@ -1039,10 +1233,16 @@ async function openApp(id, files = []) {
   }
   const app = own || (await bundledApp(id));
   if (!app) throw new Error(`${APPS[id].name} isn’t included in this build of Lime.`);
-  await launch(app, files, APPS[id].name);
+  if (id === 'blender') {
+    // Blender opens .blend files itself; any other model is imported into a new scene as it starts.
+    const bin = app.endsWith('.app') ? path.join(app, 'Contents', 'MacOS', 'Blender') : app;
+    const why = await start(bin, blenderArgs(files), { cwd: path.dirname(bin) });
+    if (why) throw new Error(`${APPS[id].name} didn’t start (${why}).`);
+  } else await launch(app, files, APPS[id].name);
   return app;
 }
-const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true }, deckcraft: { empty: 'blank' } };
+// SolidCraft's web build takes a file dropped on its canvas, as WordCraft's does.
+const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true }, deckcraft: { empty: 'blank' }, solidcraft: {} };
 let webs = null;
 const webManifest = () => { if (!webs) { try { webs = JSON.parse(fs.readFileSync(path.join(U.cfg.web, 'manifest.json'), 'utf8')); } catch (_) { webs = {}; } } return webs; };
 const webSource = (id) => path.join(U.cfg.web || '', `${id}.tar.br`);
@@ -1073,11 +1273,11 @@ const versions = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg
 function status() {
   const manifest = versions(), apps = bundledApps();
   return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version?.split('+')[0] || null,
-    bundled: a.bundledOnly ? shipped(id) && (a.needs || []).every(shipped) : fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)) || (!!apps[id]?.cli && fs.existsSync(appSource(id))),
+    bundled: a.bundledOnly ? shipped(id) && (a.needs || []).every(shipped) : hasEngine(id),
     web: hasWeb(id), app: hasApp(id), artcraft: !a.bundledOnly }));
 }
 
-module.exports = { APPS, BUCKETS, CODE_OPEN, bundledApps, appDir, EXTERNAL, SNIFF, findExternal, hasExternal, openExternal, bundledManifest, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
+module.exports = { hasEngine, usable, engineHere, readable, SOLID_IN, SOLID_OUT, solidExport, solidStep, solidParams, solidSetParams, parseParams, BLEND_IN, BLEND_READS, BLEND_OUT, BLEND_WRITES, blenderExe, blenderArgs, blenderConvert, blenderGlb, studioRender, turntable, APPS, BUCKETS, CODE_OPEN, bundledApps, appDir, EXTERNAL, SNIFF, findExternal, hasExternal, openExternal, bundledManifest, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
   autoTone, sharpenPhoto, denoisePhoto, liftShadows, paintPhoto, straightenScans, exportLayers, layerInfo, lookPhoto, smartBw, straightenPhoto, removeDust, hdrBatch,
   traceImage, outlineText, exportArtboards, logoPackage, vectorInfo, preflightLayout, packageLayout, layoutPdf, fixedEpub, bookletPdf, posterFrame, alphaRender, frameSequence, motionInfo,
   splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS,

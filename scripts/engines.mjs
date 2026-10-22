@@ -20,8 +20,27 @@ const AI = path.join(V, 'ai', TARGET);
 const WEBS = path.join(V, 'web'), BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), HELPERS = path.join(V, 'helpers', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
 const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0', cadcraft: '0.10.0', soundcraft: '0.10.0', wordcraft: '0.9.0', gridcraft: '0.9.0', deckcraft: '0.9.0' };
 const REPO = { gridcraft: 'sheetcraft', deckcraft: 'slidecraft' };
-const release = (id, v) => `https://github.com/storytold/${REPO[id] || id}/releases/download/v${v}`;
-const WEB = ['cadcraft', 'gridcraft', 'wordcraft', 'soundcraft', 'deckcraft'];
+// SolidCraft (MIT OR Apache-2.0) publishes the same kinds of release files as the ArtCraft apps, from its own repository.
+// It isn't ours, so every file it's built from is pinned by SHA-256 (from its release's SHA256SUMS.txt).
+CRAFT.solidcraft = '0.19.0';
+const OWNER = { solidcraft: 'bherbruck/solidcraft' };
+const PINS = {
+  'solidcraft-0.19.0-macos-universal.dmg': 'cc704fce1497e9f51731614f0cf529c41bc8cb0ba9ef3b7b1e369490afe1d195',
+  'solidcraft-cli-0.19.0-macos-universal.zip': 'e9ec50c3a838336feeffd7028dc2594fef791cdfee3ccbf5cbf235f78ba88245',
+  'solidcraft-0.19.0-windows-x64-portable.zip': 'e4eb659123be862a5642c7b7828e18f94a91ecbc4b147e6ee71319cf410a79ec',
+  'solidcraft-0.19.0-windows-arm64-portable.zip': '5280c9045673d6ac88ca3665800f749abe57b0af542ab1e34f324a3e1ed8ac31',
+  'solidcraft-0.19.0-linux-x86_64.tar.gz': '1e3650237a617667f557a16e865bbf544b20ece1dec39f7c380239d7058d632d',
+  'solidcraft-0.19.0-linux-aarch64.tar.gz': '109a495c3a6049edd790304f5bd6abbd0abd79063120adf3847ca9c305f375c6',
+  'solidcraft-web-0.19.0.zip': '79fb985db8c564b879cadb313cc224910d798974259560a9e124211d4348360a',
+};
+const release = (id, v) => `https://github.com/${OWNER[id] || `storytold/${REPO[id] || id}`}/releases/download/v${v}`;
+// A release file: pinned ones are checked, and a third-party app missing a file for this platform is left out, not fatal.
+const asset = (url) => { const sha = PINS[decodeURIComponent(path.basename(new URL(url).pathname))]; return sha ? pinned(url, sha) : get(url); };
+const optional = (id, e) => { if (!OWNER[id]) throw e; console.warn(`! ${id} is left out of this ${TARGET} build: ${e.message}`); return null; };
+// LIME_CRAFTS_ONLY=solidcraft,blender builds just those apps (for trying one out).
+const ONLY = process.env.LIME_CRAFTS_ONLY?.split(',');
+if (ONLY) for (const id of Object.keys(CRAFT)) if (!ONLY.includes(id)) delete CRAFT[id];
+const WEB = ['cadcraft', 'gridcraft', 'wordcraft', 'soundcraft', 'deckcraft', 'solidcraft'].filter((id) => CRAFT[id]);
 const FF = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1';
 const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
 const NOTO = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts';
@@ -114,10 +133,10 @@ async function binaries() {
 // The CLI engine's bytes for this target.
 async function cliBuffer(id, v) {
   const exe = `${id}-cli${WIN ? '.exe' : ''}`, rel = release(id, v);
-  if (PLAT === 'darwin') return thin(Buffer.from(unzipOne(await get(`${rel}/${id}-cli-${v}-macos-universal.zip`), new RegExp(`/${exe}$`))));
-  if (WIN) return Buffer.from(unzipOne(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`), new RegExp(`/${exe.replace('.', '\\.')}$`)));
+  if (PLAT === 'darwin') return thin(Buffer.from(unzipOne(await asset(`${rel}/${id}-cli-${v}-macos-universal.zip`), new RegExp(`/${exe}$`))));
+  if (WIN) return Buffer.from(unzipOne(await asset(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`), new RegExp(`/${exe.replace('.', '\\.')}$`)));
   const a = ARCH === 'arm64' ? 'aarch64' : 'x86_64', tmp = mk(path.join(CACHE, `${id}-linux`));
-  sh(TAR, ['-xzf', await get(`${rel}/${id === 'pdfcraft' ? 'pdfcraft-cli' : id}-${v}-linux-${a}.tar.gz`), '-C', tmp]);
+  sh(TAR, ['-xzf', await asset(`${rel}/${id === 'pdfcraft' ? 'pdfcraft-cli' : id}-${v}-linux-${a}.tar.gz`), '-C', tmp]);
   const find = (d) => fs.readdirSync(d, { withFileTypes: true }).map((e) => path.join(d, e.name)).flatMap((p) => fs.statSync(p).isDirectory() ? find(p) : path.basename(p) === exe ? [p] : []);
   return fs.readFileSync(find(tmp)[0]);
 }
@@ -125,11 +144,13 @@ async function crafts() {
   mk(CRAFTS);
   const manifest = { ...CRAFT };
   // On Mac and Windows the CLI ships inside its app's archive (see apps), so only the versions are written here.
-  if (PLAT === 'darwin' || WIN) for (const f of ls(CRAFTS)) if (f !== 'manifest.json') fs.rmSync(path.join(CRAFTS, f), { force: true });
+  // (Braced: the else used to pair with the inner if, so Linux never built its engines here.)
+  if (PLAT === 'darwin' || WIN) { for (const f of ls(CRAFTS)) if (f !== 'manifest.json') fs.rmSync(path.join(CRAFTS, f), { force: true }); }
   else await Promise.all(Object.entries(CRAFT).map(async ([id, v]) => {
     const exe = `${id}-cli`, dest = path.join(CRAFTS, `${exe}.br`);
     if (has(dest) || has(path.join(CRAFTS, exe))) return;
-    const buf = await cliBuffer(id, v);
+    const buf = await cliBuffer(id, v).catch((e) => optional(id, e));
+    if (!buf) { delete manifest[id]; return; }
     console.log('⧉', exe, `${(buf.length / 1048576).toFixed(0)} MB`);
     await brotli(buf, dest);
   }));
@@ -151,7 +172,8 @@ function appFromDmg(dmg, tmp) {
   const z = which('7zz', '7z');
   if (!z) throw new Error('Install 7-Zip to unpack the Mac apps on this machine.');
   sh(z, ['x', '-y', `-o${path.join(tmp, 'x')}`, '-xr!Applications', dmg]);
-  const plist = walk(path.join(tmp, 'x')).find((f) => /\.app[\\/]Contents[\\/]Info\.plist$/.test(f));
+  // The outermost app: Blender's bundle has others inside it.
+  const plist = walk(path.join(tmp, 'x')).filter((f) => /\.app[\\/]Contents[\\/]Info\.plist$/.test(f)).sort((a, b) => a.length - b.length)[0];
   if (!plist) throw new Error(`no app in ${path.basename(dmg)}`);
   const app = path.dirname(path.dirname(plist));
   for (const f of walk(app)) {
@@ -174,15 +196,22 @@ async function apps() {
     const tmp = path.join(CACHE, `${id}-app`);
     fs.rmSync(tmp, { recursive: true, force: true });
     let app;
-    if (WIN) {
-      const skip = new RegExp(`/(${id}-cli\\.exe|portable\\.txt)$`);
-      const zip = unzipSync(fs.readFileSync(await get(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`)), { filter: (f) => !f.name.endsWith('/') && !skip.test(f.name) });
-      app = mk(path.join(tmp, id));
-      for (const [name, data] of Object.entries(zip)) { const out = path.join(app, ...name.split('/').slice(1)); mk(path.dirname(out)); fs.writeFileSync(out, data); }
-    } else app = appFromDmg(await get(`${rel}/${id}-${v}-macos-universal.dmg`), mk(tmp));
-    fs.writeFileSync(path.join(tmp, cli), await cliBuffer(id, v), { mode: 0o755 });
+    try {
+      if (WIN) {
+        const skip = new RegExp(`/(${id}-cli\\.exe|portable\\.txt)$`);
+        const zip = unzipSync(fs.readFileSync(await asset(`${rel}/${id}-${v}-windows-${ARCH}-portable.zip`)), { filter: (f) => !f.name.endsWith('/') && !skip.test(f.name) });
+        app = mk(path.join(tmp, id));
+        for (const [name, data] of Object.entries(zip)) { const out = path.join(app, ...name.split('/').slice(1)); mk(path.dirname(out)); fs.writeFileSync(out, data); }
+      } else app = appFromDmg(await asset(`${rel}/${id}-${v}-macos-universal.dmg`), mk(tmp));
+      fs.writeFileSync(path.join(tmp, cli), await cliBuffer(id, v), { mode: 0o755 });
+    } catch (e) {
+      optional(id, e);
+      fs.rmSync(tmp, { recursive: true, force: true });
+      delete manifest[id];
+      return;
+    }
     const tar = path.join(CACHE, `${id}-app.tar`);
-    sh(TAR, ['-cf', tar, '-C', tmp, cli, path.basename(app)]);
+    sh(TAR, ['-cf', tar, '-C', tmp, cli, '-C', path.dirname(app), path.basename(app)]);
     await brotli(fs.readFileSync(tar), dest, 11, true);
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(tar, { force: true });
@@ -190,7 +219,52 @@ async function apps() {
     console.log('▣', manifest[id].file, '+', cli, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   });
-  for (const f of ls(APPS)) if (f !== 'manifest.json' && ![...Object.keys(CRAFT), ...CODING, ...JAVA_APPS].some((id) => f === `${id}.tar.br`)) fs.rmSync(path.join(APPS, f), { force: true });
+  await blender(manifest);
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  for (const f of ls(APPS)) if (f !== 'manifest.json' && ![...Object.keys(manifest), ...CODING, ...JAVA_APPS].some((id) => f === `${id}.tar.br`)) fs.rmSync(path.join(APPS, f), { force: true });
+}
+
+// Blender LTS (GPL-2.0-or-later), the official build, pinned by SHA-256 (the Homebrew and Scoop manifests carry the same sums as
+// blender.org's .sha256 files). Lime ships it as an app like the others, trimmed of what it never uses (scripts/blender-trim.mjs).
+const BLENDER = {
+  version: '5.2.2',
+  'darwin-arm64': { url: 'https://download.blender.org/release/Blender5.2/blender-5.2.2-macos-arm64.dmg', sha: 'dc4125399b8bfefe283cc1624d6cfc7809d1cac20ace51072127eb371f31f210' },
+  'win32-x64': { url: 'https://download.blender.org/release/Blender5.2/blender-5.2.2-windows-x64.zip', sha: '3849d17a682cba006075aaa3f3597ecb5c9c30ec31035b2e092c53e40679b535' },
+};
+const BLENDER_TRIM = 1; // bump when blender-trim.mjs changes, so the archive is made again
+async function blender(manifest) {
+  const B = BLENDER[TARGET], dest = path.join(APPS, 'blender.tar.br'), version = `${BLENDER.version}-t${BLENDER_TRIM}`;
+  if (!B || process.env.LIME_NO_BLENDER) { delete manifest.blender; return; }
+  if (ONLY && !ONLY.includes('blender')) return;
+  if (has(dest) && manifest.blender?.version === version) return;
+  const { trimBlender } = await import('./blender-trim.mjs');
+  const tmp = path.join(CACHE, 'blender-app');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  mk(tmp);
+  const src = await pinned(B.url, B.sha);
+  let root, file, cli;
+  if (WIN) {
+    const z = which('7zz', '7z');
+    if (z) sh(z, ['x', '-y', `-o${tmp}`, src]);
+    else if (process.platform !== 'linux') sh(TAR, ['-xf', src, '-C', tmp]);
+    else throw new Error('Install 7-Zip to unpack Blender for Windows on this machine.');
+    const top = fs.readdirSync(tmp).find((n) => /^blender-/.test(n));
+    if (!top) throw new Error('Blender for Windows: the zip has no blender folder');
+    root = path.join(tmp, 'blender');
+    fs.renameSync(path.join(tmp, top), root);
+    [file, cli] = ['blender/blender-launcher.exe', 'blender/blender.exe'];
+  } else {
+    root = appFromDmg(src, tmp);
+    [file, cli] = [path.basename(root), `${path.basename(root)}/Contents/MacOS/Blender`];
+  }
+  const freed = trimBlender(root);
+  const tar = path.join(CACHE, 'blender-app.tar');
+  sh(TAR, ['-cf', tar, '-C', path.dirname(root), path.basename(root)]);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  await brotli(fs.readFileSync(tar), dest, 11, true);
+  fs.rmSync(tar, { force: true });
+  manifest.blender = { version, file, cli };
+  console.log('▣', file, BLENDER.version, `trimmed ${(freed / 1048576).toFixed(0)} MB,`, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
 }
 
 async function webs() {
@@ -201,7 +275,9 @@ async function webs() {
     const v = CRAFT[id], dest = path.join(WEBS, `${id}.tar.br`);
     const ver = id === 'deckcraft' ? `${v}-p1` : v;
     if (has(dest) && manifest[id]?.version === ver) return;
-    const zip = unzipSync(fs.readFileSync(await get(`${release(id, v)}/${id}-web-${v}.zip`)), { filter: (f) => !f.name.endsWith('/') });
+    const web = await asset(`${release(id, v)}/${id}-web-${v}.zip`).catch((e) => optional(id, e));
+    if (!web) return;
+    const zip = unzipSync(fs.readFileSync(web), { filter: (f) => !f.name.endsWith('/') });
     const tmp = path.join(CACHE, `${id}-web`);
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const [name, buf] of Object.entries(zip)) { const out = path.join(tmp, 'site', ...name.split('/').slice(1)); mk(path.dirname(out)); fs.writeFileSync(out, buf); }

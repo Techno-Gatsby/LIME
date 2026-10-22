@@ -330,6 +330,84 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       return `started blank with ${path.basename(src)} dropped in, canvas ${size.join('×')}, no panic`;
     } finally { if (!win.isDestroyed()) win.destroy(); }
   });
+  // A SolidCraft design for the checks below, made by SolidCraft's own CLI (a block whose width is a parameter).
+  const solidBlock = async (d) => {
+    if (!Crafts.hasEngine('solidcraft')) return null;
+    const sc = path.join(d, 'block.json'), out = path.join(d, 'block.solidcraft');
+    fs.writeFileSync(sc, JSON.stringify({ commands: [{ command: 'parameters.add', params: { name: 'width', expression: '40 mm' } }, { command: 'solid.box', params: { length: 'width', width: '20 mm', height: '10 mm', body_name: 'Block' } }] }));
+    await require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).run(await Crafts.cli('solidcraft'), ['run', sc, '--save', out, '--quiet']);
+    return out;
+  };
+  await check('SolidCraft opens a design in a Lime window', async () => {
+    if (!Crafts.hasWeb('solidcraft')) throw Object.assign(new Error('no SolidCraft web app in this build'), { skip: true });
+    const d = target(), src = await solidBlock(d);
+    if (!src) throw Object.assign(new Error('no SolidCraft engine to make a design with'), { skip: true });
+    const before = fs.readFileSync(src);
+    const logs = [], win = await openCraftWeb('solidcraft', src), wjs = (code) => win.webContents.executeJavaScript(code, true);
+    win.webContents.on('console-message', (e, ...a) => logs.push(String(e.message ?? a[1])));
+    try {
+      const inner = (code) => win.webContents.mainFrame.framesInSubtree.find((f) => /\/app\/index\.html/.test(f.url))?.executeJavaScript(code);
+      let note = '', state = 'loading';
+      for (const t0 = Date.now(); Date.now() - t0 < 90000 && state === 'loading'; await sleep(250)) {
+        state = await wjs('document.body.dataset.state');
+        note = (await Promise.resolve(inner('document.getElementById("solidcraft_loading")?.innerText || ""')).catch(() => '')) || '';
+        if (/failed to start/i.test(note)) break;
+      }
+      // Without a GPU or software WebGL2 (Linux CI with the GPU off) SolidCraft can't draw; that's the machine, not the app.
+      if (/WebGPU or WebGL2 is required|failed to start/i.test(note)) throw Object.assign(new Error('no WebGPU or WebGL2 on this machine'), { skip: true });
+      if (state !== 'ready') throw new Error(`state ${state} | ${logs.slice(-4).join(' | ').slice(0, 400)}`);
+      // The design came in by drop: SolidCraft's own browser API reports its body.
+      let doc = null;
+      for (const t0 = Date.now(); Date.now() - t0 < 30000; await sleep(500)) {
+        doc = await inner('window.solidcraft ? window.solidcraft.inspect({ measure: true }).then((r) => JSON.stringify(r)).catch((e) => "ERR " + e.message) : ""');
+        if (doc && /Block|volume/.test(doc)) break;
+      }
+      if (!doc || !/Block|volume/.test(doc)) throw new Error(`the design did not open: ${String(doc).slice(0, 200)}`);
+      const panic = logs.find((l) => /panicked|RuntimeError/i.test(l));
+      if (panic) throw new Error(`SolidCraft crashed: ${panic.slice(0, 200)}`);
+      if (!fs.readFileSync(src).equals(before)) throw new Error('the original changed');
+      return `block.solidcraft opened; SolidCraft reports ${(/"volume_mm3":\s*([\d.]+)/.exec(doc) || [])[1] || 'the Block body'}`;
+    } finally { if (!win.isDestroyed()) win.destroy(); }
+  });
+  await check('3D files offer SolidCraft and Blender beside Lime’s own tools', async () => {
+    const d = target(), block = await solidBlock(d).catch(() => null), out = [];
+    const ring = async (f) => {
+      await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+      await sleep(250);
+      await lime(`await L.openWith(${JSON.stringify([f])});`);
+      await sleep(600);
+      return lime('return { apps: (L.S.items?.apps || []).map((a) => ({ id: a.id, ring: a.ring.map((x) => x.label) })), convert: (L.S.items?.convert || []).map((x) => x.label), tools: (L.S.items?.tools || []).map((x) => x.label) };');
+    };
+    if (fs.existsSync(fx('part.stp'))) {
+      const r = await ring(fx('part.stp'));
+      if (!r.convert.includes('STL') || !r.convert.includes('GLB')) throw new Error(`STEP lost Lime's own conversions: ${r.convert}`);
+      if (Crafts.usable('solidcraft')) {
+        if (!r.apps.some((a) => a.id === 'solidcraft')) throw new Error(`no SolidCraft for a STEP file: ${r.apps.map((a) => a.id)}`);
+        out.push(`STEP: ${r.convert.length} conversions + SolidCraft (${r.tools.includes('SolidCraft') ? 'Open in' : 'app ring'})`);
+      }
+    }
+    if (block) {
+      const r = await ring(block), sc = r.apps.find((a) => a.id === 'solidcraft');
+      if (!sc) throw new Error(`a .solidcraft file has no SolidCraft ring: ${r.apps.map((a) => a.id)}`);
+      if (!sc.ring.includes('Parameters') || !sc.ring.includes('Change')) throw new Error(`SolidCraft ring ${sc.ring}`);
+      if (!r.convert.includes('STEP') || !r.convert.includes('STL')) throw new Error(`a design converts to ${r.convert}`);
+      out.push(`.solidcraft: ${sc.ring.join(', ')} | ${r.convert.slice(0, 5).join(', ')}…`);
+    }
+    if (Crafts.hasEngine('blender') && fs.existsSync(fx('box.glb'))) {
+      const r = await ring(fx('box.glb')), b = r.apps.find((a) => a.id === 'blender');
+      if (!b) throw new Error(`a GLB has no Blender ring: ${r.apps.map((a) => a.id)}`);
+      if (!b.ring.includes('Render') || !b.ring.includes('Turntable')) throw new Error(`Blender ring ${b.ring}`);
+      if (!r.convert.includes('FBX') || !r.convert.includes('USDZ')) throw new Error(`no FBX or USDZ with Blender here: ${r.convert}`);
+      out.push(`GLB: Blender ${b.ring.join(', ')}`);
+    } else if (fs.existsSync(fx('box.glb'))) {
+      const r = await ring(fx('box.glb'));
+      if (r.convert.includes('FBX') || r.apps.some((a) => a.id === 'blender')) throw new Error('Blender slices show in a build without Blender');
+      out.push('GLB: no Blender slices without Blender');
+    }
+    await lime(`if (L.S.state !== 'idle') await L.collapse();`);
+    if (!out.length) throw Object.assign(new Error('neither SolidCraft nor Blender is in this build'), { skip: true });
+    return out.join(' · ');
+  });
   if (fs.existsSync(fx('photo.jpg'))) await check('hovering and progress update the middle in place', async () => {
     await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
     if (!(await until('return !!document.querySelector(".center img.thumb")', 6000))) throw new Error('no thumbnail');

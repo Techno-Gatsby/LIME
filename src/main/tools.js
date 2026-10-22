@@ -57,10 +57,13 @@ const IMAGE_OUT = [['jpg', 'JPG'], ['png', 'PNG'], ['webp', 'WebP'], ['heic', 'H
 const LANGS = [['eng', 'English'], ['spa', 'Spanish'], ['fra', 'French'], ['deu', 'German'], ['ita', 'Italian'], ['por', 'Portuguese'], ['nld', 'Dutch'], ['rus', 'Russian'], ['ara', 'Arabic'], ['hin', 'Hindi'], ['jpn', 'Japanese'], ['chi_sim', 'Chinese'], ['kor', 'Korean']];
 const CAD2D_OUT = [['pdf', 'PDF'], ['svg', 'SVG'], ['png', 'PNG'], ['jpg', 'JPG'], ['dxf', 'DXF'], ['ai', 'Illustrator (AI)'], ['eps', 'EPS'], ['emf', 'EMF']];
 const CAD3D_OUT = [['stl', 'STL'], ['step', 'STEP'], ['iges', 'IGES'], ['obj', 'OBJ'], ['glb', 'GLB'], ['gltf', 'glTF (one file)'], ['3mf', '3MF'], ['ply', 'PLY'], ['brep', 'BREP (Open CASCADE)'], ['off', 'OFF'], ['amf', 'AMF'],
-  ['wrl', 'VRML (WRL)'], ['x3d', 'X3D'], ['dae', 'Collada (DAE)'], ['png', 'PNG render'], ['pdf', 'PDF render']];
+  ['wrl', 'VRML (WRL)'], ['x3d', 'X3D'], ['dae', 'Collada (DAE)'], ['fbx', 'FBX'], ['usdz', 'USDZ (Apple AR)'], ['usd', 'USD'], ['abc', 'Alembic'], ['blend', 'Blender (.blend)'], ['png', 'PNG render'], ['pdf', 'PDF render']];
 const UNIT_OUT = ['stl', 'step', 'iges', 'obj', '3mf', 'ply', 'brep', 'off', 'amf', 'wrl', 'x3d', 'dae'];
 const MODEL_UNITS = [['mm', 'Millimetres'], ['cm', 'Centimetres'], ['m', 'Metres'], ['in', 'Inches'], ['ft', 'Feet']];
 const PLACE_OPTS = [select('centre', 'Position', [['', 'As it is'], ['centre', 'Centred'], ['floor', 'Centred, on the ground']], '', { advanced: true }), num('scale', 'Scale (%)', 100, { advanced: true, min: 0.001 })];
+// Written through Blender, so offered only where Blender is in the build (see blenderOk).
+const BLENDER_OUT = new Set(['fbx', 'usdz', 'usd', 'abc', 'blend']);
+const SOLID_EXT = ['solidcraft', 'solvecraft'];
 const MERGE_OUT = [['stl', 'STL'], ['step', 'STEP'], ['obj', 'OBJ'], ['glb', 'GLB'], ['3mf', '3MF'], ['ply', 'PLY']];
 const SAME_MODEL = ['stl', 'obj', 'ply', 'off', '3mf', 'glb', 'gltf'];
 const sameModel = (files) => (SAME_MODEL.includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'stl');
@@ -664,6 +667,25 @@ const TOOLS = [
   { id: 'cad-layers', cat: 'cad', name: 'Layer list', desc: 'Every layer, and which are off, frozen or locked, with blocks, sheets and objects.', accepts: ['cad2d'], craft: 'cadcraft', prio: 16, petal: ['Layers', 'List'], save: 'none', run: each((f, o, c) => craft().cadLayers(f, o, c)) },
   { id: 'cad-compare', cat: 'cad', name: 'Compare drawings', desc: 'What was added, removed or changed between two versions. Put the older one first.', accepts: ['cad2d'], min: 2, max: 2, ordered: true, craft: 'cadcraft', prio: 18, petal: ['Compare', '2 versions'], save: 'none',
     run: async (files, o, c) => [await craft().cadCompare(files, o, c)] },
+  // SolidCraft's parameters: what Lime's own 3D tools can't see in a design, read and changed by SolidCraft's CLI.
+  { id: 'solid-params', cat: 'cad', name: 'Parameters', desc: 'The named sizes that drive a SolidCraft design, with their values.', tags: 'solidcraft parametric dimensions variables', accepts: [], extAccept: SOLID_EXT, craft: 'solidcraft', prio: 10, petal: ['Parameters', 'List'], save: 'none',
+    options: [toggle('save', 'Save as a spreadsheet (CSV)', false)], run: each((f, o, c) => craft().solidParams(f, o, c)) },
+  { id: 'solid-change', cat: 'cad', name: 'Change parameters', desc: 'New values for a design’s parameters: SolidCraft rebuilds it and saves the design, STEP, STL or 3MF.', tags: 'solidcraft parametric resize variant rebuild export',
+    accepts: [], extAccept: SOLID_EXT, craft: 'solidcraft', prio: 12, petal: ['Change', 'Rebuild'], ext: (o) => o.to || 'solidcraft', suffix: '-changed',
+    options: [text('params', 'Changes', '', { placeholder: 'width = 90 mm, thickness = 8 mm', required: true }), select('to', 'Save as', [['solidcraft', 'SolidCraft design'], ['step', 'STEP'], ['stl', 'STL'], ['3mf', '3MF']])],
+    run: each((f, o, c) => craft().solidSetParams(f, o, c)) },
+  // Blender renders: pictures Lime's own flat preview can't make (materials, textures, light and shadow) and a turning video.
+  { id: 'blender-render', cat: 'cad', name: 'Studio render', desc: 'A lit, shaded picture of the model with its materials and textures, rendered by Blender.', tags: 'blender cycles eevee render photo realistic preview image', accepts: ['cad3d'], craft: 'blender', prio: 10, petal: ['Render', 'Studio'],
+    ext: 'png', outName: (files) => `${U.base(files[0])} - render.png`,
+    options: [select('quality', 'Quality', [['draft', 'Draft (fast)'], ['good', 'Good'], ['best', 'Best (slow)']], 'good'), select('size', 'Size', [['small', '1024 × 768'], ['medium', '1600 × 1200'], ['large', '2560 × 1920'], ['square', '1600 × 1600'], ['wide', '1920 × 1080']], 'medium'),
+      select('background', 'Background', [['studio', 'Soft grey'], ['white', 'White'], ['transparent', 'Transparent']]), select('engine', 'Renderer', [['cycles', 'Cycles (on the processor)'], ['eevee', 'Eevee (on the graphics card, fast)']], 'cycles', { advanced: true }),
+      toggle('ownCamera', 'Use the file’s own camera and lights, if it has them', true, { advanced: true })],
+    run: each((f, o, c) => craft().studioRender(f, o, c)) },
+  { id: 'blender-turntable', cat: 'cad', name: 'Turntable', desc: 'A video of the model turning once round, rendered by Blender.', tags: 'blender spin rotate 360 video gif showcase', accepts: ['cad3d'], craft: 'blender', prio: 12, petal: ['Turntable', 'Video'],
+    ext: (o) => (o.to === 'gif' ? 'gif' : 'mp4'), outName: (files, o) => `${U.base(files[0])} - turntable.${o.to === 'gif' ? 'gif' : 'mp4'}`,
+    options: [choice('to', 'Save as', [['mp4', 'MP4 video'], ['gif', 'GIF']]), range('seconds', 'Seconds for one turn', 4, 1, 20), select('quality', 'Quality', [['draft', 'Draft (fast)'], ['good', 'Good (slow)']], 'draft'),
+      select('background', 'Background', [['studio', 'Soft grey'], ['white', 'White']]), select('engine', 'Renderer', [['cycles', 'Cycles (on the processor)'], ['eevee', 'Eevee (on the graphics card, fast)']], 'cycles', { advanced: true })],
+    run: each((f, o, c) => craft().turntable(f, o, c)) },
 
   { id: 'master-audio', cat: 'media', name: 'Master', desc: 'Louder and polished, ready to publish: gentle EQ, compression and a limiter, to the loudness you pick.', tags: 'mastering loudness lufs limiter', accepts: ['audio'], ok: notMidi, craft: 'soundcraft', prio: 8, petal: ['Master', 'Loud & clear'],
     ext: (o, files) => craft().soundExt(files[0] || ''), suffix: '-mastered', options: [select('loudness', 'Loudness', [['-14', 'Streaming (−14 LUFS)'], ['-16', 'Podcast (−16 LUFS)'], ['-9', 'Club (−9 LUFS)'], ['-23', 'Broadcast (−23 LUFS)']], '-14')], run: each((f, o, c) => craft().masterAudio(f, o, c)) },
@@ -803,8 +825,8 @@ const WHEELS = {
   },
   cad3d: {
     convert: [W('convert-model', 'STL', '3D print', { to: 'stl' }), W('convert-model', 'STEP', 'CAD', { to: 'step' }), W('convert-model', 'OBJ', 'Universal', { to: 'obj' }), W('convert-model', 'GLB', 'Web & AR', { to: 'glb' }), W('convert-model', '3MF', 'Print', { to: '3mf' }),
-      W('convert-model', 'IGES', 'Older CAD', { to: 'iges' }), W('convert-model', 'PLY', 'Scan', { to: 'ply' }), W('convert-model', 'PNG', 'Render', { to: 'png' }), W('convert-model', 'PDF', 'Render', { to: 'pdf' })],
-    tools: [W('cad-info', 'Measure', 'Volume'), W('model-drawing', 'Drawing', 'Views', { to: 'pdf' }), W('repair-model', 'Repair', 'Mesh'), W('simplify-model', 'Simplify', 'Half', { keep: 50 }), ZIP],
+      W('convert-model', 'IGES', 'Older CAD', { to: 'iges' }), W('convert-model', 'PLY', 'Scan', { to: 'ply' }), W('convert-model', 'FBX', 'Games & film', { to: 'fbx' }), W('convert-model', 'USDZ', 'Apple AR', { to: 'usdz' }), W('convert-model', 'PNG', 'Render', { to: 'png' }), W('convert-model', 'PDF', 'Render', { to: 'pdf' })],
+    tools: [W('cad-info', 'Measure', 'Volume'), W('model-drawing', 'Drawing', 'Views', { to: 'pdf' }), W('blender-render', 'Render', 'Studio'), W('blender-turntable', 'Turntable', 'Video'), W('repair-model', 'Repair', 'Mesh'), W('simplify-model', 'Simplify', 'Half', { keep: 50 }), ZIP],
   },
   layout: {
     convert: [W('convert-layout', 'PDF', 'Print', { to: 'pdf' }), W('convert-layout', 'PNG', 'Pages', { to: 'png' }), W('convert-layout', 'EPUB', 'eBook', { to: 'epub' }), W('convert-layout', 'PPTX', 'Slides', { to: 'pptx' }), W('convert-layout', 'IDML', 'InDesign', { to: 'idml' })],
@@ -875,8 +897,12 @@ if (unshipped.size) {
   for (const w of Object.values(WHEELS)) for (const k of ['convert', 'tools']) if (w[k]) w[k] = w[k].filter((x) => !unshipped.has(x.tool));
 }
 const get = (id) => TOOLS.find((t) => t.id === id);
+// An optional app's tools, and files only an optional app reads, need that app's engine in this build.
+const blenderOk = () => craft().engineHere('blender');
 function accepts(t, files) {
   if (!t || t.noFiles) return false;
+  if (t.craft && craft().APPS[t.craft]?.optional && !craft().engineHere(t.craft)) return false;
+  if (files.some((f) => !craft().readable(f))) return false;
   if (t.ok && !t.ok(files)) return false;
   if (t.max && files.length > t.max) return false;
   if (t.min && files.length < t.min) return false;
@@ -894,7 +920,7 @@ function wheelsFor(files) {
   const norm = (e) => ({ jpeg: 'jpg', tif: 'tiff', htm: 'html', markdown: 'md' })[e] || e;
   const ex = (f) => (/\.kepub\.epub$/i.test(f) ? 'kepub' : U.ext(f));
   const ok = (w) => accepts(get(w.tool), files) && (!w.only || files.every((f) => w.only.includes(ex(f)))) && !(w.not && files.some((f) => w.not.includes(ex(f))))
-    && !(/^convert-(document|sheet|slides)$/.test(w.tool) && files.every((f) => norm(U.ext(f)) === norm(w.opts?.to))) && (!FFMPEG_TARGETS.has(w.tool) || !w.opts?.to || media().supports(w.opts.to));
+    && !(/^convert-(document|sheet|slides)$/.test(w.tool) && files.every((f) => norm(U.ext(f)) === norm(w.opts?.to))) && (!FFMPEG_TARGETS.has(w.tool) || !w.opts?.to || media().supports(w.opts.to)) && !(w.tool === 'convert-model' && BLENDER_OUT.has(w.opts?.to) && !blenderOk());
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
   if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
   const multi = [...(MULTI[g] || [])];
@@ -905,7 +931,9 @@ function wheelsFor(files) {
   const tools = [...multi, ...(g === 'mixed' ? [] : base.tools.filter((w) => !get(w.tool)?.editor).slice(0, 5)), all];
   return { convert: dedupe(convert.filter(ok)).slice(0, 10), tools: dedupe(tools.filter(ok)).slice(0, 10) };
 }
-const catalog = () => TOOLS.map(({ run, ext, single, outName, ok, ...meta }) => (FFMPEG_TARGETS.has(meta.id) ? { ...meta, options: meta.options.map((o) => (o.key === 'to' ? { ...o, choices: o.choices.filter(([v]) => media().supports(v)) } : o)) } : meta));
+const onlyTo = (meta, keep) => ({ ...meta, options: meta.options.map((o) => (o.key === 'to' ? { ...o, choices: o.choices.filter(([v]) => keep(v)) } : o)) });
+const catalog = () => TOOLS.map(({ run, ext, single, outName, ok, ...meta }) => (FFMPEG_TARGETS.has(meta.id) ? onlyTo(meta, (v) => media().supports(v))
+  : meta.id === 'convert-model' && !blenderOk() ? onlyTo(meta, (v) => !BLENDER_OUT.has(v)) : meta));
 function suggest(id, files, opts = {}) {
   const t = get(id);
   if (!t || t.save === 'none' || t.save === 'inplace' || t.editor) return { kind: 'none' };

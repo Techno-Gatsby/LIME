@@ -70,7 +70,7 @@ const publicSettings = () => { const { recent, ...rest } = settings; return { ..
 // The wheel's home: the buckets (Office, Design & media, Coding, Engineering) in the person's order, each with its apps in
 // order, and the apps they hid. Every app with a bucket in crafts.APPS has a place, so a new app appears without a setting.
 function homeBuckets(b = settings.buckets) {
-  const B = crafts.BUCKETS, A = crafts.APPS, ids = Object.keys(A).filter((id) => B[A[id].bucket]);
+  const B = crafts.BUCKETS, A = crafts.APPS, ids = Object.keys(A).filter((id) => B[A[id].bucket] && crafts.usable(id));
   const src = b && typeof b === 'object' && !Array.isArray(b) ? b : {};
   const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
   const order = [...new Set([...list(src.order).filter((k) => B[k]), ...Object.keys(B)])];

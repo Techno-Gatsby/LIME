@@ -575,7 +575,16 @@ function drawingDxf2000(items, model) {
   return require('./dxf').write({ layers, ltypes, ents, units: Number(model.units) || 0 });
 }
 
+// SolidCraft designs and the formats only Blender reads arrive as a STEP or GLB copy made by that app.
+async function viaApp(p, ctx) {
+  const C = require('./crafts'), e = U.ext(p);
+  if (C.SOLID_IN.includes(e)) return C.solidStep(p, ctx);
+  if (C.BLEND_IN.includes(e)) return C.blenderGlb(p, ctx);
+  return null;
+}
 async function readMesh(p) {
+  const via = await viaApp(p);
+  if (via) { try { return await readMesh(via); } finally { fsp.rm(path.dirname(via), { recursive: true, force: true }).catch(() => {}); } }
   const e = U.ext(p);
   const buf = await fsp.readFile(p);
   if (e === 'stl') return readStl(buf);
@@ -1151,7 +1160,15 @@ async function convert(p, opts, ctx) {
     }
     throw new Error(`Drawings can be saved as SVG, PDF, PNG, JPG or DXF, not ${to.toUpperCase()}.`);
   }
-  if (!MODEL_OUT.includes(to)) throw new Error(`Models can be saved as ${MODEL_OUT.filter((x) => !['stp', 'igs', 'jpg'].includes(x)).map((x) => x.toUpperCase()).join(', ')}, not ${to.toUpperCase()}.`);
+  if (!MODEL_OUT.includes(to)) throw new Error(`Models can be saved as ${MODEL_OUT.filter((x) => !['stp', 'igs', 'jpg', 'usdc', 'usda'].includes(x)).map((x) => x.toUpperCase()).join(', ')}, not ${to.toUpperCase()}.`);
+  const C = require('./crafts');
+  // With nothing to change on the way, the app that knows the format writes it whole: SolidCraft rebuilds a design to exact
+  // STEP or its own meshes, and Blender keeps materials, textures and animation between the formats only it handles.
+  const plain = !opts.repair && !(opts.keep < 100) && !opts.centre && !(opts.scale && Number(opts.scale) !== 100) && !(opts.units && opts.units !== 'mm') && !(to === 'stl' && opts.ascii);
+  if (plain && C.SOLID_IN.includes(e) && C.SOLID_OUT.includes(to)) return C.solidExport(p, to, out, ctx);
+  if (plain && (C.BLEND_IN.includes(e) || C.BLEND_OUT.includes(to)) && C.BLEND_READS.includes(e) && C.BLEND_WRITES.includes(to)) return C.blenderConvert(p, to, out, ctx);
+  const via = await viaApp(p, ctx);
+  if (via) { try { return await convert(via, { ...opts, suffix: '' }, { ...ctx, out: { ...ctx.out, file: () => out } }); } finally { fsp.rm(path.dirname(via), { recursive: true, force: true }).catch(() => {}); } }
   const X = require('./mesh'), B = require('./brep');
   if (B_REP.includes(to) && B_REP.includes(e) && !opts.repair && !(opts.keep < 100)) {
     ctx.progress?.(0.3, 'Open CASCADE');
@@ -1165,6 +1182,12 @@ async function convert(p, opts, ctx) {
   return saveModel(X.place(m, opts), to, out, opts, U.base(p), ctx);
 }
 async function saveModel(m, to, out, opts, name, ctx) {
+  const C = require('./crafts');
+  if (C.BLEND_OUT.includes(to)) {
+    // Lime writes a GLB and Blender turns it into FBX, USD or Alembic.
+    const tmp = path.join(await U.tmpDir('blend'), `${U.sanitize(name)}.glb`);
+    try { await fsp.writeFile(tmp, writeGltf(m, false)); return await C.blenderConvert(tmp, to, out, ctx); } finally { fsp.rm(path.dirname(tmp), { recursive: true, force: true }).catch(() => {}); }
+  }
   const X = require('./mesh'), u = X.UNITS[opts.units] ? opts.units : 'mm', mu = X.inUnits(m, u);
   ctx.progress?.(0.6, `Writing ${to.toUpperCase()}`);
   if (to === 'stl') await fsp.writeFile(out, opts.ascii ? X.writeStlAscii(mu, name.replace(/\s+/g, '_')) : writeStl(mu));
@@ -1194,7 +1217,7 @@ async function saveModel(m, to, out, opts, name, ctx) {
   return out;
 }
 const B_REP = ['step', 'stp', 'iges', 'igs', 'brep'];
-const MODEL_OUT = ['stl', 'obj', 'glb', 'gltf', '3mf', 'ply', 'step', 'stp', 'iges', 'igs', 'brep', 'off', 'amf', 'wrl', 'x3d', 'dae', 'png', 'jpg', 'pdf'];
+const MODEL_OUT = ['stl', 'obj', 'glb', 'gltf', '3mf', 'ply', 'step', 'stp', 'iges', 'igs', 'brep', 'off', 'amf', 'wrl', 'x3d', 'dae', 'fbx', 'usdz', 'usd', 'usdc', 'usda', 'abc', 'blend', 'png', 'jpg', 'pdf'];
 async function render(p, opts, ctx) { return convert(p, { ...opts, to: 'png' }, ctx); }
 const sameModel = (p) => (['stl', 'obj', 'ply', 'off', '3mf', 'glb', 'gltf'].includes(U.ext(p)) ? U.ext(p) : 'stl');
 const count = (v, one, many) => `${v.toLocaleString('en-US')} ${v === 1 ? one : many}`;
