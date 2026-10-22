@@ -42,6 +42,9 @@ const GROUPS = {
   archive: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz', 'zst', 'lz', 'lzma', 'z', 'iso', 'img', 'cab', 'wim', 'dmg', 'arj', 'lzh', 'cpio', 'rpm', 'deb', 'jar', 'apk', 'xpi', 'msi', 'vhd', 'vhdx', 'chm', 'udf', 'squashfs'],
   subtitle: ['srt', 'vtt', 'ass', 'ssa', 'sub'],
   data: ['json', 'yaml', 'yml'],
+  gis: ['shp', 'geojson', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'topojson', 'tab', 'mif', 'hgt'],
+  hydro: ['inp', 'dss', 'hdf', 'h5'],
+  project: ['mpp', 'mpt', 'mpx', 'pod', 'xer', 'gan'],
 };
 const EXT_GROUP = {};
 for (const [g, list] of Object.entries(GROUPS)) for (const e of list) if (!EXT_GROUP[e]) EXT_GROUP[e] = g;

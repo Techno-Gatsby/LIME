@@ -86,7 +86,7 @@ async function ensure(id, vendor, root, progress = () => {}) {
   if (!m) return null;
   const dir = path.join(root, id), exe = path.join(dir, m.file);
   if (fs.existsSync(exe)) return exe;
-  const part = `${dir}.part-${process.pid}-${Date.now()}`;
+  const part = `${dir}.part-${process.pid}-${require('worker_threads').threadId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await fsp.mkdir(part, { recursive: true });
   try {
     progress({ id, phase: 'unpack' });

@@ -2438,6 +2438,11 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   const { execFileSync } = require('child_process');
   const running = (exe) => {
     try {
+      // A Java app (ProjectLibre) runs as the bundled java with its jar on the command line.
+      if (exe.endsWith('.jar')) {
+        if (process.platform === 'win32') return execFileSync('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${exe.replace(/'/g, "''")}*' } | ForEach-Object { $_.ProcessId }`], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
+        return execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' }).split('\n').filter((l) => l.includes(exe) && /\bjava\b/.test(l)).map((l) => l.trim().split(/\s+/)[0]);
+      }
       if (process.platform === 'darwin') return execFileSync('pgrep', ['-f', `${exe}/Contents/MacOS/`], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
       return execFileSync('powershell', ['-NoProfile', '-Command', `Get-Process | Where-Object { $_.Path -eq '${exe.replace(/'/g, "''")}' } | ForEach-Object { $_.Id }`], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
     } catch (_) { return []; }
@@ -2469,6 +2474,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   }
   pw.close();
   results.push(...(await require('./diagrams.test').ui({ openEditor, editors, dir })));
+  results.push(...(await require('./engineering.test').ui({ openEditor, editors, dir })));
   await require('./settings-search.ui')({ check, js, openPrefs, prefs, app, dir });
 
   // Dictation through the real microphone path: Chromium plays LIME_FAKE_MIC as the capture device.

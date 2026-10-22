@@ -59,7 +59,7 @@ const CALLS = {
   ...Object.fromEntries(Object.entries(editor).filter(([, f]) => typeof f === 'function').map(([k, f]) => [`editor.${k}`, f])),
 };
 
-const EDITORS = { image: './imgedit', media: './mediaedit', studio: './studio', web: './webedit', diagram: './diagrams' };
+const EDITORS = { image: './imgedit', media: './mediaedit', studio: './studio', web: './webedit', diagram: './diagrams', geo: './engines/geo', hydro: './engines/hydro' };
 function editorCall(method) {
   const [ns, name] = String(method).split('.');
   const m = EDITORS[ns] ? require(EDITORS[ns]) : null;

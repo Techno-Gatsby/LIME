@@ -1,0 +1,73 @@
+/* Maps window: layers on the left, the map in the middle, an attribute table below it and coordinates at the foot. */
+.mapview { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+.mapview .topbar .tb .lbl { margin-left: 5px; }
+.mapview .topbar .seg .tb.on, .hydroview .topbar .seg .tb.on { background: var(--accent-soft); color: var(--accent-strong); }
+.mv-body { display: grid; grid-template-columns: 290px 1fr; min-height: 0; }
+.mv-side { border-right: 1px solid var(--line); background: var(--surface); overflow: auto; display: flex; flex-direction: column; }
+.mv-h { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); padding: 12px 12px 6px; }
+.mv-layers { list-style: none; margin: 0; padding: 0 6px; flex: 1; }
+.mv-layers li { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; background: var(--surface-2); font-size: 12.5px; }
+.mv-layers li.cur { border-color: var(--accent); }
+.mv-layers li.empty { border-style: dashed; color: var(--ink-3); line-height: 1.4; background: none; }
+.mv-layers .r1 { display: flex; align-items: center; gap: 4px; }
+.mv-layers .r1 .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.mv-layers .r1 input[type=color] { width: 20px; height: 20px; padding: 0; border: 1px solid var(--line-2); border-radius: 4px; background: none; }
+.mv-layers .r1 .tb.sm { width: 22px; height: 22px; min-width: 0; padding: 0; font-size: 10px; }
+.mv-layers .r2 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; color: var(--ink-2); }
+.mv-layers .r2 input[type=range] { width: 64px; vertical-align: middle; }
+.mv-layers .r2 label { font-size: 11.5px; white-space: nowrap; }
+.mv-layers .r2 select { max-width: 110px; font-size: 12px; }
+.mv-layers .r3 { margin-top: 3px; color: var(--ink-3); font-size: 11.5px; }
+.mv-base { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.mv-base small { color: var(--ink-3); }
+.mv-main { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+.mv-map { position: relative; min-height: 200px; background: #dbe9f5; }
+:root[data-theme="dark"] .mv-map { background: #1b2633; }
+.mv-map .ol-scale-line { left: 12px; bottom: 12px; background: rgba(255, 255, 255, .85); }
+.mv-map .ol-scale-line-inner { color: #222; border-color: #222; }
+.mv-table { height: 34vh; border-top: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.mv-table .tb-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.mv-table .tb-head .muted { color: var(--ink-3); flex: 1; }
+.mv-table .tb-filter { width: 180px; }
+.mv-table .tb-scroll { overflow: auto; flex: 1; }
+.mv-table table { border-collapse: collapse; font-size: 12px; width: max-content; min-width: 100%; }
+.mv-table th, .mv-table td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.mv-table th { position: sticky; top: 0; background: var(--surface-2); font-weight: 600; }
+.mv-table tr.sel td { background: var(--accent-soft); }
+.mv-table tbody tr:hover td { background: var(--hover); cursor: pointer; }
+.mv-status { display: flex; align-items: center; gap: 10px; padding: 4px 12px; border-top: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.mv-status .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-status select { font-size: 12px; }
+.mv-coord { min-width: 230px; }
+.mv-popup { pointer-events: auto; }
+.mv-pop { background: var(--surface); color: var(--ink); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .18); padding: 8px 10px; font-size: 12px; max-width: 320px; max-height: 260px; overflow: auto; }
+.mv-pop b { display: block; margin-bottom: 4px; }
+.mv-pop div { display: flex; gap: 8px; }
+.mv-pop div span { color: var(--ink-3); min-width: 80px; }
+.mv-pop .meas { margin-top: 4px; color: var(--accent-strong); font-weight: 600; }
+.mapview .popmenu .mi .grow, .hydroview .popmenu .mi .grow { flex: 1; }
+.mapview .popmenu .mi small, .hydroview .popmenu .mi small { color: var(--ink-3); font-size: 11px; }
+.mv-crs, .mv-epsg { width: 100%; margin-top: 10px; }
+
+/* Hydrology window: a list of elements or records, a chart and a table. */
+.hydroview { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; }
+.hydroview .topbar .tb .lbl { margin-left: 5px; }
+.hv-body { display: grid; grid-template-columns: 280px 1fr; min-height: 0; }
+.hv-side { border-right: 1px solid var(--line); background: var(--surface); overflow: auto; font-size: 12.5px; }
+.hv-side .grp { padding: 10px 12px 4px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
+.hv-side label { display: flex; gap: 6px; align-items: center; padding: 3px 12px; cursor: pointer; }
+.hv-side label:hover { background: var(--hover); }
+.hv-side label small { color: var(--ink-3); margin-left: auto; }
+.hv-side select { margin: 4px 12px; width: calc(100% - 24px); }
+.hv-main { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; overflow: hidden; }
+.hv-tabs { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.hv-tabs .tb.on { background: var(--accent-soft); color: var(--accent-strong); }
+.hv-view { overflow: auto; min-height: 0; padding: 10px; background: var(--bg); }
+.hv-view svg { display: block; max-width: 100%; height: auto; background: #fff; border-radius: 8px; border: 1px solid var(--line); }
+.hv-view pre { font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre; background: var(--surface); padding: 10px; border-radius: 8px; border: 1px solid var(--line); margin: 0; }
+.hv-view table { border-collapse: collapse; font-size: 12px; background: var(--surface); width: max-content; min-width: 100%; }
+.hv-view th, .hv-view td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.hv-view th:first-child, .hv-view td:first-child { text-align: left; }
+.hv-view th { position: sticky; top: 0; background: var(--surface-2); }
+.hv-summary { padding: 8px 12px; border-top: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.hv-summary .bad { color: #c92a2a; font-weight: 600; }

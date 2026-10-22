@@ -4,3 +4,7 @@ as1.stp          CAx-IF AS1 assembly via occt-import-js (LGPL-2.1)  https://gith
 cube.igs         occt-import-js test file (LGPL-2.1)  https://github.com/kovacsv/occt-import-js/blob/main/test/testfiles/cube-10x10mm/Cube%2010x10.igs
 test.dxf         written for Lime
 photo.heic       made for Lime (used where no HEIC encoder is installed)
+eng/plot-drainage.inp  written for Lime (a three-subcatchment EPA SWMM 5.2 model)
+eng/villa-works.xml    written for Lime (a Microsoft Project XML schedule)
+eng/wadi.p01.hdf       written for Lime by eng/rasfixture.py (HDF5 laid out like a HEC-RAS 6 plan results file)
+eng/dss6-sample.dss    HEC-DSS test data (MIT, U.S. Army Corps of Engineers HEC)  https://github.com/HydrologicEngineeringCenter/hec-dss/blob/7-JA-7/test/VB/sample.dss

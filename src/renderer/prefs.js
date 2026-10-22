@@ -17,7 +17,7 @@ function seg(key, choices) {
   return `<div class="seg" data-k="${key}">${choices.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(s[key]) === v}">${l}</button>`).join('')}</div>`;
 }
 const sw = (key, on = s[key]) => `<label class="switch"><input type="checkbox" data-k="${key}" ${on ? 'checked' : ''}></label>`;
-const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf', cadcraft: 'compass', soundcraft: 'wave', wordcraft: 'doc', gridcraft: 'grid', deckcraft: 'present' };
+const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf', cadcraft: 'compass', soundcraft: 'wave', wordcraft: 'doc', gridcraft: 'grid', deckcraft: 'present', maps: 'map', hydro: 'drop', projectlibre: 'gantt' };
 const fail = (t, why) => { const n = t.querySelector('.why') || t.appendChild(Object.assign(document.createElement('small'), { className: 'why' })); n.textContent = why; n.style.color = 'var(--danger)'; };
 const reason = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 const RING_CAP = { first: 9, second: 10 };
