@@ -15,7 +15,7 @@ const APP_ICONS = ['image', 'sparkle', 'pen', 'layers', 'eye', 'video', 'pdf'];
 const PICS = [
   `${svg(`<rect x="214" y="-4" width="40" height="112" fill="var(--surface-3)"/><line x1="214" y1="0" x2="214" y2="104" stroke="var(--line-2)"/>
     ${glyph('doc', 42, 28, 2, 'accent')}
-    <path d="M96 52C130 52 150 50 196 50" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="4 5" stroke-linecap="round"/><path d="M190 44l8 6-8 6" ${stroke}/>`)}${limeSvg(52, 'edge')}`,
+    <path d="M96 52H184" fill="none" stroke="currentColor" stroke-width="1.7" stroke-dasharray="4 5" stroke-linecap="round"/><path d="M178 46l8 6-8 6" ${stroke}/>`)}${limeSvg(52, 'edge')}`,
   `${svg(`${ring(176, 52, 8, 13, 40, 5)}
     ${glyph('doc', 60, 46, 1.4, 'faint')}${glyph('cursor', 44, 26, 1.8)}
     <rect x="18" y="68" width="60" height="24" rx="6" fill="var(--surface)" stroke="var(--line-2)" stroke-width=".8"/><text x="48" y="84" text-anchor="middle">⇧ Shift</text>
