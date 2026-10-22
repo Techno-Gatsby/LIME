@@ -101,9 +101,12 @@ async function ensure(id, vendor, root, progress = () => {}) {
       pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress({ params: { [require('zlib').constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch((e) => { broken = e; });
     });
     if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id]?.name || id} was not in its archive`);
-    if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }
-    await settle(() => fsp.rm(dir, { recursive: true, force: true }));
-    await settle(() => fsp.rename(part, dir));
+    // Another worker may finish the same unpack meanwhile (and start using it, which locks it on Windows): whoever
+    // gets there first wins, and the others keep theirs out of the way.
+    try {
+      await settle(async () => { if (fs.existsSync(exe)) return; await fsp.rm(dir, { recursive: true, force: true }); await fsp.rename(part, dir); });
+    } catch (e) { if (!fs.existsSync(exe)) throw e; }
+    if (fs.existsSync(part)) fsp.rm(part, { recursive: true, force: true }).catch(() => {});
     return exe;
   } catch (e) { await fsp.rm(part, { recursive: true, force: true }).catch(() => {}); throw e; }
 }
