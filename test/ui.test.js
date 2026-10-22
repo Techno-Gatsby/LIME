@@ -2444,6 +2444,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   }
   pw.close();
   results.push(...(await require('./diagrams.test').ui({ openEditor, editors, dir })));
+  results.push(...(await require('./engineering.test').ui({ openEditor, editors, dir })));
   await require('./settings-search.ui')({ check, js, openPrefs, prefs, app, dir });
 
   // Dictation through the real microphone path: Chromium plays LIME_FAKE_MIC as the capture device.

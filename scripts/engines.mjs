@@ -189,7 +189,7 @@ async function apps() {
     console.log('▣', manifest[id].file, '+', cli, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   });
-  for (const f of ls(APPS)) if (f !== 'manifest.json' && !Object.keys(CRAFT).some((id) => f === `${id}.tar.br`)) fs.rmSync(path.join(APPS, f), { force: true });
+  for (const f of ls(APPS)) if (f !== 'manifest.json' && !Object.keys(CRAFT).some((id) => f === `${id}.tar.br`) && !JAVA_APPS.some((id) => f === `${id}.tar.br`)) fs.rmSync(path.join(APPS, f), { force: true });
 }
 
 async function webs() {
@@ -408,6 +408,8 @@ async function codecs() {
   console.log('▣ ghostscript', GS.version, `${(fs.statSync(dest).size / 1048576).toFixed(1)} MB`);
 }
 
+// The Java runtime and ProjectLibre (scripts/javavendor.mjs) share vendor/apps with the ArtCraft apps.
+const JAVA_APPS = ['java', 'projectlibre'];
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
@@ -419,5 +421,8 @@ if (!only || only === 'models') await models();
 if (!only || only === 'codecs') await codecs();
 if (!only || only === 'diagrams') { const DV = await import('./diagramvendor.mjs'); await DV.buildDrawio(path.join(V, 'diagrams'), CACHE); await DV.buildTranslate(path.join(V, 'translate'), CACHE); }
 if (!only || only === 'speech') await speech();
+if (!only || only === 'geo') await (await import('./geovendor.mjs')).buildBasemap(path.join(V, 'geo'), CACHE);
+if (!only || only === 'hydro') await (await import('./hydrovendor.mjs')).buildHydro(path.join(V, 'hydro'), CACHE);
+if (!only || only === 'java') await (await import('./javavendor.mjs')).buildJava(TARGET, APPS, CACHE);
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);

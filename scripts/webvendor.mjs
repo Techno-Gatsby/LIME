@@ -32,7 +32,40 @@ export async function buildWebVendor({ quiet } = {}) {
   const grapes = path.dirname(require.resolve('grapesjs/package.json', { paths: [ROOT, ...nodePaths] }));
   fs.copyFileSync(path.join(grapes, 'dist', 'css', 'grapes.min.css'), path.join(OUT, 'grapes.min.css'));
   await buildDiagramVendor({ quiet }).catch((e) => console.warn(`! the whiteboard and diagram libraries weren't built: ${e.message}`));
+  await buildGeoVendor({ quiet }).catch((e) => console.warn(`! the map libraries weren't built: ${e.message}`));
   return OUT;
+}
+
+// OpenLayers (BSD-2) and proj4js (MIT) for the Maps window. It draws with Canvas 2D, so it needs no GPU.
+const GEO_ENTRY = `
+export { default as Map } from 'ol/Map.js';
+export { default as View } from 'ol/View.js';
+export { default as Overlay } from 'ol/Overlay.js';
+export { default as Feature } from 'ol/Feature.js';
+export { default as VectorLayer } from 'ol/layer/Vector.js';
+export { default as ImageLayer } from 'ol/layer/Image.js';
+export { default as VectorSource } from 'ol/source/Vector.js';
+export { default as ImageStatic } from 'ol/source/ImageStatic.js';
+export { default as GeoJSON } from 'ol/format/GeoJSON.js';
+export { Style, Fill, Stroke, Circle as CircleStyle, Text, RegularShape } from 'ol/style.js';
+export { default as Draw } from 'ol/interaction/Draw.js';
+export { default as ScaleLine } from 'ol/control/ScaleLine.js';
+export { default as Zoom } from 'ol/control/Zoom.js';
+export { default as Attribution } from 'ol/control/Attribution.js';
+export { defaults as defaultControls } from 'ol/control/defaults.js';
+export { fromLonLat, toLonLat, transform, transformExtent, get as getProjection } from 'ol/proj.js';
+export { register as registerProj4 } from 'ol/proj/proj4.js';
+export { getLength, getArea } from 'ol/sphere.js';
+export { createEmpty, extend, isEmpty, getCenter, boundingExtent } from 'ol/extent.js';
+export { unByKey } from 'ol/Observable.js';
+export { default as proj4 } from 'proj4';
+`;
+export async function buildGeoVendor({ quiet } = {}) {
+  const esbuild = require('esbuild'), dest = path.join(OUT, 'geo');
+  fs.mkdirSync(dest, { recursive: true });
+  await esbuild.build({ stdin: { contents: GEO_ENTRY, resolveDir: ROOT, loader: 'js' }, nodePaths, bundle: true, format: 'esm', minify: true, target: 'chrome130', outfile: path.join(dest, 'maplibs.js'), legalComments: 'eof', logLevel: quiet ? 'error' : 'warning' });
+  fs.copyFileSync(path.join(path.dirname(require.resolve('ol/package.json', { paths: [ROOT, ...nodePaths] })), 'ol.css'), path.join(dest, 'ol.css'));
+  return dest;
 }
 
 // Excalidraw and Mermaid share chunks, and only load when a board or a diagram opens. Nothing is fetched from the web:

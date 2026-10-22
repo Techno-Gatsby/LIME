@@ -17,6 +17,8 @@ function palmBook(p) {
 function groupOf(p) {
   const g = U.groupOf(p), e = U.ext(p);
   if (g === 'folder') return g;
+  const eng = require('./engtools').groupOf(p, e);
+  if (eng) return eng;
   if (g === 'doc' && e === 'xml') return 'data';
   return MORE_EXT[e] || (e === 'pdb' && palmBook(p) ? 'ebook' : g);
 }
@@ -853,6 +855,7 @@ const SINGLE_OUTPUT = new Set(['mix-tracks', 'compare-docs', 'merge-slides', 'hd
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js', web: 'vendor/weblibs.js' };
 require('./diagramtools').register({ TOOLS, WHEELS, EDITOR_FILE, W, each });
+require('./engtools').register({ TOOLS, WHEELS, EDITOR_FILE, W, each });
 const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
 if (unshipped.size) {
   TOOLS.splice(0, TOOLS.length, ...TOOLS.filter((t) => !unshipped.has(t.id)));

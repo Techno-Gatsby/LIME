@@ -81,7 +81,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, codecs: app.isPackaged ? path.join(RES, 'codecs') : path.join(ROOT, 'vendor', 'codecs', `${process.platform}-${process.arch}`), ...(app.isPackaged ? { ai: path.join(RES, 'ai') } : {}), models: process.env.LIME_MODELS || path.join(RES, 'models'), user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, geo: process.env.LIME_GEO || path.join(RES, 'geo'), hydro: process.env.LIME_HYDRO || path.join(RES, 'hydro'), codecs: app.isPackaged ? path.join(RES, 'codecs') : path.join(ROOT, 'vendor', 'codecs', `${process.platform}-${process.arch}`), ...(app.isPackaged ? { ai: path.join(RES, 'ai') } : {}), models: process.env.LIME_MODELS || path.join(RES, 'models'), user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -644,6 +644,10 @@ async function doAction(item, files) {
       openCraftWeb(item.app, files[0]).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
       return `Opening ${crafts.APPS[item.app]?.name || 'the app'}…`;
     }
+    case 'external': {
+      crafts.openExternal(item.ext, files).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
+      return `Opening ${crafts.EXTERNAL[item.ext]?.name || 'the app'}…`;
+    }
     case 'quicklook': execFile('qlmanage', ['-p', ...files.slice(0, 10)], () => {}); return null;
     case 'trash': for (const f of files) await shell.trashItem(f); return `Moved ${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} to the Trash`;
     case 'reveal': shell.showItemInFolder(files[0]); return null;
@@ -651,7 +655,7 @@ async function doAction(item, files) {
   }
 }
 
-const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'], soundcraft: ['edit-audio'], webcraft: ['edit-web'] };
+const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'], soundcraft: ['edit-audio'], webcraft: ['edit-web'], maps: ['open-map'], hydro: ['open-hydro'] };
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
@@ -660,6 +664,10 @@ function appRing(id, files) {
   const web = crafts.hasWeb(id) && files.length <= 1;
   const ring = web ? [{ action: 'craftweb', app: id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${files.length ? `${path.basename(files[0])} in ` : ''}${a.name}, in a Lime window` }, full] : edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
   if (a.builtin && ring.includes(full)) ring.splice(ring.indexOf(full), 1);
+  // Lime's own engineering windows open in QGIS, HEC-RAS, HEC-HMS or EPA SWMM as the full app when one is installed.
+  for (const x of (a.external || []).filter((x) => crafts.hasExternal(x) && (!files.length || files.every((f) => crafts.EXTERNAL[x].opens(f)))).reverse()) {
+    ring.splice(ring.findIndex((r) => r.appOpen) + 1, 0, { action: 'external', app: id, ext: x, label: crafts.EXTERNAL[x].name, hint: 'Full app', desc: `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${crafts.EXTERNAL[x].name}` });
+  }
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
@@ -804,7 +812,7 @@ function registerIpc() {
   hE('picker:data', async (e) => { const d = BrowserWindow.fromWebContents(e.sender)?.pickerData; return d ? { ...d, ...(await call('sheetPreview', d.file)) } : null; });
   hE('picker:done', (e, v) => { BrowserWindow.fromWebContents(e.sender)?.pick?.(v); });
   h('editor:call', (method, ...args) => call(`editor.${method}`, ...args));
-  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio', 'web', 'diagram'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
+  h('edit:call', (ns, method, ...args) => (['image', 'media', 'studio', 'web', 'diagram', 'geo', 'hydro'].includes(ns) ? call(`${ns}.${method}`, ...args) : Promise.reject(new Error(`No editor ${ns}`))));
   hE('dialog:open', async (e, o = {}) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender), { properties: [o.folders ? 'openDirectory' : 'openFile', ...(o.multi !== false ? ['multiSelections'] : []), ...(o.create ? ['createDirectory'] : [])], filters: o.filters, title: o.title });
     return r.canceled ? [] : r.filePaths;

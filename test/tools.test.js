@@ -1583,20 +1583,21 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() && !E('office').status().bundled.soffice ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html' };
   { const d = require('./diagrams.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }
+  { const d = await require('./engineering.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }
   const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])] || SWEEP_EXT[(t.extAccept || []).find((e) => SWEEP_EXT[e])]];
   const defaults = (t) => ({ ...Object.fromEntries((t.options || []).map((o) => [o.key, Array.isArray(o.default) ? [...o.default] : o.default])), ...SWEEP[t.id]?.[1] });
   const VIDEO_EXT = new Set(['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpg', 'ts', 'm2ts', 'vob', 'ogv', '3gp', '3g2', 'dv', 'mxf']);
   const AUDIO_EXT = new Set(['mp3', 'm4a', 'wav', 'flac', 'aiff', 'ogg', 'opus', 'aac', 'wma', 'ac3', 'eac3', 'm4b', 'wv', 'tta', 'caf', 'au', 'w64', 'mp2', 'mka', 'weba', 'voc', 'amr']);
   const SHARP_EXT = { jpg: 'jpeg', jpeg: 'jpeg', png: 'png', apng: 'png', webp: 'webp', gif: 'gif', tif: 'tiff', tiff: 'tiff', avif: 'heif' };
   const MAGIC = { bmp: /^BM/, ico: /^\0\0\x01\0/, cur: /^\0\0\x02\0/, icns: /^icns/, jxl: /^(\xff\x0a|\0\0\0\x0cJXL )/, jp2: /^\0\0\0\x0cjP {2}/, qoi: /^qoif/, dds: /^DDS /, pcx: /^\x0a/, ppm: /^P6/, pgm: /^P5/, pbm: /^P4/,
-    pam: /^P7/, pfm: /^P[Ff]/, sgi: /^\x01\xda/, ras: /^\x59\xa6\x6a\x95/, xpm: /^\/\* XPM \*\//, xbm: /^#define/, wbmp: /^\0\0/, psd: /^8BPS/, heic: /^[\s\S]{4}ftyp(heic|heix|mif1)/, woff: /^wOFF/, woff2: /^wOF2/,
+    pam: /^P7/, pfm: /^P[Ff]/, gpkg: /^SQLite format 3\0/, fgb: /^fgb\x03/, sgi: /^\x01\xda/, ras: /^\x59\xa6\x6a\x95/, xpm: /^\/\* XPM \*\//, xbm: /^#define/, wbmp: /^\0\0/, psd: /^8BPS/, heic: /^[\s\S]{4}ftyp(heic|heix|mif1)/, woff: /^wOFF/, woff2: /^wOF2/,
     ttf: /^(\0\x01\0\0|true)/, otf: /^(OTTO|\0\x01\0\0)/, zip: /^PK\x03\x04/, '7z': /^7z\xbc\xaf/, gz: /^\x1f\x8b/, bz2: /^BZh/, xz: /^\xfd7zXZ\0/ };
   const MEDIA_FMT = { mp4: /mov,mp4/, m4v: /mov,mp4/, mov: /mov,mp4/, '3gp': /mov,mp4/, '3g2': /mov,mp4/, m4a: /mov,mp4/, m4b: /mov,mp4/, mkv: /matroska/, mka: /matroska/, webm: /matroska/, weba: /matroska/,
     wmv: /^asf$/, wma: /^asf$/, mpg: /^mpeg$/, vob: /^mpeg$/, ts: /^mpegts$/, m2ts: /^mpegts$/, ogv: /^ogg$/, ogg: /^ogg$/, opus: /^ogg$/, mp2: /^mp3$/ };
   const PIXEL_EXT = new Set(['heic', 'heif', 'bmp', 'ico', 'icns', 'cur', 'jxl', 'jp2', 'tga', 'qoi', 'dds', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xpm', 'xbm', 'wbmp', 'psd']);
   const TEXT_EXT = { csv: /\S/, tsv: /\S/, txt: /\S/, md: /\S/, html: /<(html|body|table|p|div|h1)\b/i, srt: /-->/, vtt: /^\ufeff?WEBVTT/, ass: /\[Script Info\]/, lrc: /\[\d\d:\d\d/, sub: /^\{\d+\}\{\d+\}/m,
-    smi: /<SAMI>/i, edl: /^(TITLE|001)/m, rtf: /^\{\\rtf/, eml: /^[\w-]+: /m, vcf: /BEGIN:VCARD/, obj: /^v /m, dxf: /SECTION[\s\S]*EOF/ };
-  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2', 'amf', 'x3d', 'dae', 'xfdf']);
+    smi: /<SAMI>/i, edl: /^(TITLE|001)/m, rtf: /^\{\\rtf/, eml: /^[\w-]+: /m, vcf: /BEGIN:VCARD/, obj: /^v /m, dxf: /SECTION[\s\S]*EOF/, rpt: /EPA STORM WATER MANAGEMENT MODEL/, mpx: /^MPX,/ };
+  const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2', 'amf', 'x3d', 'dae', 'xfdf', 'kml', 'gpx', 'gml']);
   const ZIP_MAIN = { docx: 'word/document.xml', xlsx: 'xl/workbook.xml', pptx: 'ppt/presentation.xml', odt: 'content.xml', ods: 'content.xml', epub: 'META-INF/container.xml', htmlz: 'index.html', txtz: 'index.txt',
     '3mf': '3D/3dmodel.model', idml: 'designmap.xml', designcraft: 'mimetype' };
   const utf8 = (b) => { try { return new TextDecoder('utf-8', { fatal: true }).decode(b); } catch (_) { return null; } };
@@ -1605,6 +1606,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const b = read(o), name = path.basename(o), e = U.ext(o), head = b.toString('latin1', 0, 64), text = () => { const t = utf8(b); ok(t != null, `${name} is not UTF-8`); return t.replace(/^\ufeff/, ''); };
     ok(b.length, `${name} is empty`);
     if (MAGIC[e]) ok(MAGIC[e].test(head), `${name} is not ${e.toUpperCase()} inside: ${JSON.stringify(head.slice(0, 8))}`);
+    if (e === 'gpkg' || e === 'fgb') return;
     if (e === 'pdf' || (e === 'ai' && head.startsWith('%PDF'))) return ok((await E('pdf').pageCount(o, opts.userPassword || opts.password)) >= 1, `${name} has no pages`);
     if (e === 'docx' && opts.password && b.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1') return;
     if (ZIP_MAIN[e]) { const z = require('fflate').unzipSync(new Uint8Array(b)); ok(z[ZIP_MAIN[e]], `${name} lacks ${ZIP_MAIN[e]}`); if (e === 'xlsx' || e === 'ods') ok(XLSX.read(b).SheetNames.length, `${name} has no sheets`); return; }
@@ -1625,6 +1627,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       ok(e !== 'eot' || b.readUInt16LE(34) === 0x504c, `${name} lacks the EOT magic number`);
       return ok(f.tables.has('head') && f.tables.has('cmap') && (!['ttf', 'eot'].includes(e) || f.tables.has('glyf')), `${name} lacks font tables or TrueType outlines`);
     }
+    if (e === 'geojson') return ok(/^(FeatureCollection|Feature)$/.test(JSON.parse(text()).type), `${name} is not GeoJSON`);
     if (['json', 'gltf', 'otio'].includes(e)) return JSON.parse(text());
     if (e === 'jsonl') return text().split('\n').filter((l) => l.trim()).forEach((l) => JSON.parse(l));
     if (e === 'yaml' || e === 'yml') return require('yaml').parse(text());
@@ -1697,7 +1700,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       }
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
-    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : undefined;
+    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : t.engine && !require('../src/main/engtools').engineReady(t.engine) ? `the ${t.engine} engine isn’t in this build` : undefined;
     for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine, limit: t.ai ? 900000 : undefined });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
@@ -1925,6 +1928,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./codecs.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./diagrams.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./dictate.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./engineering.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));

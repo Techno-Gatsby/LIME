@@ -109,3 +109,36 @@ idea from whisper_streaming by ÚFAL (https://github.com/ufal/whisper_streaming,
 focus (clipboard, then Ctrl+V or ⌘V) and hold-to-talk follow Handy by CJ Pais (https://github.com/cjpais/Handy, MIT License);
 offering a corrected word for the dictionary follows OpenWhispr (https://github.com/OpenWhispr/openwhispr, MIT License).
 No code is copied from Handy, OpenWhispr or whisper_streaming.
+
+Engineering: maps, hydrology and project schedules
+  GDAL, PROJ, GEOS, SQLite and libtiff as gdal3.js 2.8.1 (WebAssembly), LGPL-2.1-or-later (the gdal3.js port, by Buğra Gündüz,
+  https://github.com/bugra9/gdal3.js); GDAL MIT/X (https://gdal.org), PROJ MIT (https://proj.org, with its EPSG database,
+  whose terms of use are at https://epsg.org/terms-of-use.html), GEOS LGPL-2.1, SQLite public domain, libtiff libtiff licence,
+  expat MIT, zlib zlib, iconv LGPL. Used unchanged from npm; the source is at the gdal3.js address.
+  OpenLayers 10, BSD-2-Clause, OpenLayers contributors (https://openlayers.org), with rbush, earcut, pbf, quickselect (ISC/MIT/BSD)
+  and geotiff.js (MIT): the Maps window. proj4js, MIT, Andreas Hocevar and contributors (https://github.com/proj4js/proj4js),
+  with mgrs and wkt-parser (MIT): the Maps window's coordinate readout.
+  Natural Earth 1:10m (countries, regions, lakes, rivers, urban areas, roads and populated places, v5.1.2), public domain,
+  naturalearthdata.com (https://github.com/nvkelso/natural-earth-vector): the offline basemap, simplified by scripts/geovendor.mjs.
+  h5wasm 0.10.3, NIST (https://github.com/usnistgov/h5wasm), NIST software licence (public domain in the United States; please
+  acknowledge the National Institute of Standards and Technology as the source), with HDF5 by The HDF Group, BSD-style licence
+  (https://www.hdfgroup.org/licenses): reading HEC-RAS results.
+  EPA SWMM 5.2.4, U.S. Environmental Protection Agency, public domain (https://github.com/USEPA/Stormwater-Management-Model):
+  its solver and command line built unchanged as WebAssembly by scripts/hydrovendor.mjs, with scripts/hydro/lime-wasi.c
+  supplying temporary file names and the working folder that WASI lacks.
+  HEC-DSS heclib 7-JA-7, U.S. Army Corps of Engineers Hydrologic Engineering Center, MIT License
+  (https://github.com/HydrologicEngineeringCenter/hec-dss), with zlib 1.3.1 (zlib licence, Jean-loup Gailly and Mark Adler):
+  built as WebAssembly with Lime's reader scripts/hydro/dsstool.c. HEC-RAS, HEC-HMS and HEC-DSSVue are not included; Lime
+  opens files in them when they are installed. The HEC-RAS results layout read by src/main/engines/hydro.js follows the
+  public HEC-RAS HDF5 output documentation.
+  WASI SDK 34 (Apache-2.0 WITH LLVM-exception), build only, not shipped.
+  ProjectLibre 1.9.8, Copyright (c) 2012-2025 ProjectLibre, Inc., Common Public Attribution License 1.0 (CPAL-1.0), with its
+  attribution notice: "Powered by ProjectLibre" (https://www.projectlibre.com, https://sourceforge.net/projects/projectlibre).
+  Shipped unchanged as its makers publish it (the platform-independent .tar.gz), in its own archive with its licence/
+  folder (license.txt, license.rtf and third-party/ notices for MPXJ (LGPL-2.1), Apache POI (Apache-2.0), JasperReports
+  (LGPL), Groovy (Apache-2.0), JFreeChart (LGPL), iText (MPL/LGPL) and the rest); Lime runs it as a separate program and keeps
+  ProjectLibre's own name, logo and attribution screens. The schedule tools run MPXJ (Jon Iles, LGPL-2.1, https://www.mpxj.org)
+  as shipped inside ProjectLibre (net.sf.mpxj.sample.MpxjConvert).
+  Eclipse Temurin 21.0.9+10 (OpenJDK), GPL-2.0 with the Classpath Exception, Eclipse Adoptium (https://adoptium.net,
+  source https://github.com/adoptium/jdk21u): a runtime image made with jlink from the unchanged Temurin JDK, holding only
+  the modules ProjectLibre needs; its legal/ folder and release file ship inside it.

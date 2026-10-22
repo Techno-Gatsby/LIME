@@ -20,7 +20,59 @@ const APPS = {
   gridcraft: { name: 'GridCraft', role: 'Spreadsheets', short: 'Sheets', opens: ['sheet'], except: ['numbers', 'dif', 'sylk'] },
   deckcraft: { name: 'DeckCraft', role: 'Presentations', short: 'Slides', opens: ['pptx', 'pptm', 'ppsx', 'potx', 'deckcraft', 'md', 'markdown'] },
   webcraft: { name: 'WebCraft', role: 'Web pages', short: 'Web', opens: ['html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'md', 'svg'], builtin: true },
+  // Engineering: Lime's map and hydrology windows (QGIS, HEC-RAS, HEC-HMS and EPA SWMM open as the full app when they
+  // are installed), and ProjectLibre, a full app that ships inside Lime with its own Java runtime.
+  maps: { name: 'Maps', role: 'GIS maps', short: 'Maps', opens: ['gis'], builtin: true, external: ['qgis'], bucket: 'engineering' },
+  hydro: { name: 'Hydrology', role: 'Stormwater and rivers', short: 'Hydro', opens: ['hydro'], builtin: true, external: ['hecras', 'hechms', 'swmm', 'dssvue'], bucket: 'engineering' },
+  projectlibre: { name: 'ProjectLibre', role: 'Project schedules', short: 'Projects', opens: ['project'], bucket: 'engineering' },
 };
+// Files an app also opens that share their extension with other things (a CSV of coordinates, a GeoTIFF, MS Project XML).
+const SNIFF = {
+  maps: (f) => require('./geosniff').isGeo(f),
+  hydro: (f) => { const S = require('./geosniff'); return S.swmmInp(f) || S.swmmOut(f) || S.rasHdf(f); },
+  projectlibre: (f) => U.ext(f) === 'xml' && require('./geosniff').msProject(f),
+};
+// Programs Lime opens files in when they are installed, but never ships: found in their usual install folders.
+const EXTERNAL = {
+  qgis: { name: 'QGIS', mac: /^QGIS.*\.app$/i, win: [['QGIS *', 'bin', ['qgis-ltr-bin.exe', 'qgis-bin.exe']], ['OSGeo4W*', 'bin', ['qgis-ltr-bin.exe', 'qgis-bin.exe']]], opens: (f) => require('./geosniff').isGeo(f) || ['qgz', 'qgs'].includes(U.ext(f)) },
+  hecras: { name: 'HEC-RAS', win: [['HEC/HEC-RAS/*', '', ['Ras.exe']]], opens: (f) => /\.(prj|[pgfu]\d\d|hdf)$/i.test(f) },
+  hechms: { name: 'HEC-HMS', mac: /^HEC-HMS.*\.app$/i, win: [['HEC/HEC-HMS/*', '', ['HEC-HMS.exe']]], opens: (f) => /\.(hms|dss|basin|met|control|gage)$/i.test(f) },
+  swmm: { name: 'EPA SWMM', win: [['EPA SWMM*', '', ['epaswmm5.exe']]], opens: (f) => /\.inp$/i.test(f) },
+  dssvue: { name: 'HEC-DSSVue', mac: /^HEC-DSSVue.*\.app$/i, win: [['HEC/HEC-DSSVue*', '', ['HEC-DSSVue.exe']], ['HEC/HEC-DSSVue/*', '', ['HEC-DSSVue.exe']]], opens: (f) => /\.dss$/i.test(f) },
+};
+const verCmp = (a, b) => b.localeCompare(a, undefined, { numeric: true });
+function findExternal(id) {
+  const x = EXTERNAL[id];
+  if (!x) return null;
+  if (U.cfg[id] && fs.existsSync(U.cfg[id])) return U.cfg[id];
+  if (process.platform === 'darwin') {
+    if (!x.mac) return null;
+    for (const dir of ['/Applications', path.join(os.homedir(), 'Applications')]) { const hit = (fs.existsSync(dir) ? fs.readdirSync(dir) : []).filter((n) => x.mac.test(n)).sort(verCmp)[0]; if (hit) return path.join(dir, hit); }
+    return null;
+  }
+  if (!U.isWin || !x.win) return null;
+  // Each pattern is "folder/folder*" under Program Files; a star picks the newest version folder.
+  const roots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs'), 'C:\\'].filter(Boolean);
+  const expand = (base, parts) => {
+    if (!parts.length) return [base];
+    const [p, ...rest] = parts;
+    if (!p.includes('*')) return expand(path.join(base, p), rest);
+    const re = new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
+    let names = [];
+    try { names = fs.readdirSync(base).filter((n) => re.test(n)).sort(verCmp); } catch (_) {}
+    return names.flatMap((n) => expand(path.join(base, n), rest));
+  };
+  for (const root of roots) for (const [pattern, sub, exes] of x.win) for (const dir of expand(root, pattern.split('/'))) for (const exe of exes) { const p = path.join(dir, sub, exe); if (fs.existsSync(p)) return p; }
+  return null;
+}
+const hasExternal = (id) => !!findExternal(id);
+const bundledManifest = () => bundledApps();
+async function openExternal(id, files = []) {
+  const app = findExternal(id);
+  if (!app) throw new Error(`${EXTERNAL[id]?.name || 'That program'} isn’t installed on this computer.`);
+  await launch(app, files, EXTERNAL[id].name);
+  return app;
+}
 const exe = (id) => `${id}-cli${U.isWin ? '.exe' : ''}`;
 const unpacking = new Map();
 
@@ -861,18 +913,21 @@ function installedApp(id) {
 const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 'vectorcraft', ai: 'vectorcraft', eps: 'vectorcraft', afdesign: 'vectorcraft', pdf: 'pdfcraft', idml: 'designcraft', indd: 'designcraft', ecproj: 'effectcraft', lottie: 'effectcraft', fcproj: 'filmcraft', otio: 'filmcraft', fcpxml: 'filmcraft',
   dwg: 'cadcraft', dxf: 'cadcraft', scraft: 'soundcraft', md: 'wordcraft', markdown: 'wordcraft', deckcraft: 'deckcraft', html: 'webcraft', htm: 'webcraft', xhtml: 'webcraft', css: 'webcraft' };
 const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'cadcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft',
-  audio: 'soundcraft', doc: 'wordcraft', sheet: 'gridcraft', slides: 'deckcraft' };
+  audio: 'soundcraft', doc: 'wordcraft', sheet: 'gridcraft', slides: 'deckcraft', gis: 'maps', hydro: 'hydro', project: 'projectlibre' };
 let bundled = null;
 const bundledApps = () => { if (!bundled) { try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
 const appSource = (id) => path.join(U.cfg.apps, `${id}.tar.br`);
 const appDir = (id) => path.join(U.cfg.user, 'apps', `${id}-${bundledApps()[id].version}`);
 // Whether the full app can be opened: installed on this computer, or shipped inside Lime.
-const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || (!!bundledApps()[id] && fs.existsSync(appSource(id))));
-const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)));
+// A Java app (ProjectLibre) also needs the shared Java runtime that ships beside it.
+const shipped = (id) => !!bundledApps()[id] && fs.existsSync(appSource(id)) && (!bundledApps()[id].java || (!!bundledApps().java && fs.existsSync(appSource('java'))));
+const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || shipped(id));
+const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)) || !!SNIFF[id]?.(f));
 // The apps that open every one of these files, the likeliest first.
 function appsFor(files) {
   if (!files.length) return [];
-  const first = PREF[U.ext(files[0])] || BY_GROUP[U.groupOf(files[0])];
+  // A GeoTIFF, SWMM results or MS Project XML belong to the engineering apps, whatever their extension suggests.
+  const first = PREF[U.ext(files[0])] || BY_GROUP[require('../engtools').groupOf(files[0], U.ext(files[0])) || U.groupOf(files[0])];
   const ids = Object.keys(APPS).filter((id) => files.every((f) => opens(id, f)));
   return first && ids.includes(first) ? [first, ...ids.filter((id) => id !== first)] : ids;
 }
@@ -904,8 +959,11 @@ async function untar(src, dest) {
     let err = '';
     tar.stderr.on('data', (d) => { err += d; });
     tar.on('error', (e) => no(e.code === 'ENOENT' ? new Error('tar.exe is missing: Windows 10 (1803) or later is needed') : e));
-    tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress({ params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch(no);
+    // tar's exit code is the verdict: tar may stop reading at the archive's end marker, before the padding after it, and the
+    // pipeline then reports its stdin closed early although every file is out (as in helpers.js).
+    let broken = null;
+    tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || broken?.message || `tar exited with ${c}`))));
+    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress({ params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch((e) => { broken = e; });
   });
 }
 async function bundledApp(id) {
@@ -916,33 +974,50 @@ async function bundledApp(id) {
   if (!unpackingApps.has(id)) {
     unpackingApps.set(id, (async () => {
       // Each unpack has a folder of its own, so two at once (or a leftover from one that stopped) never collide.
-      const part = `${dir}.part-${process.pid}-${Date.now()}`;
+      // Tool workers are threads of one process, so the thread and a random part make the folder name unique.
+      const part = `${dir}.part-${process.pid}-${require('worker_threads').threadId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await fsp.mkdir(part, { recursive: true });
       await untar(appSource(id), part);
       if (!U.isWin) await new Promise((r) => { const x = spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', part], { stdio: 'ignore' }); x.on('error', r); x.on('close', r); });
       if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
-      await settle(() => fsp.rm(dir, { recursive: true, force: true }));
-      await settle(() => fsp.rename(part, dir));
+      // Another worker may finish first: its complete copy wins and this one is dropped.
+      try { await fsp.rename(part, dir); } catch (e) {
+        if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
+        await settle(() => fsp.rm(dir, { recursive: true, force: true }));
+        await settle(() => fsp.rename(part, dir));
+      }
       await sweepOld(root, id, dir);
       return target;
-    })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingApps.delete(id)));
+    })().catch((e) => { throw new Error(`${APPS[id]?.name || (id === 'java' ? 'Java' : id)} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingApps.delete(id)));
   }
   return unpackingApps.get(id);
 }
+// A launch that dies at once (blocked, quarantined, a missing runtime) says so instead of silently doing nothing.
+const start = (cmd, args, opts) => new Promise((done) => {
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', ...opts });
+  child.on('error', (e) => done(e.code || e.message));
+  child.on('exit', (code, sig) => done(code || sig ? `exited with ${sig || code}` : null));
+  setTimeout(() => { done(null); child.unref(); }, 800);
+});
+async function launch(app, files, name) {
+  let why = process.platform === 'darwin' && /\.app$/i.test(app) ? await start('open', ['-a', app, ...files]) : await start(app, files, { cwd: path.dirname(app) });
+  if (why && U.isWin) { try { why = (await require('electron').shell.openPath(app)) || null; } catch (_) {} }
+  if (why) throw new Error(`${name} didn’t start (${why}).`);
+}
 async function openApp(id, files = []) {
   if (!APPS[id]) throw new Error('Unknown app.');
-  const app = installedApp(id) || (await bundledApp(id));
+  const own = installedApp(id);
+  if (!own && bundledApps()[id]?.java && shipped(id)) {
+    // A Java app runs on the runtime Lime ships with it, in its own folder so it finds its libraries.
+    const [jre, jar] = await Promise.all([bundledApp('java'), bundledApp(id)]);
+    const mac = process.platform === 'darwin' ? [`-Xdock:name=${APPS[id].name}`, '-Dapple.awt.application.name=' + APPS[id].name] : [];
+    const why = await start(jre, [...mac, '-Xmx1g', '-jar', jar, ...files], { cwd: path.dirname(jar) });
+    if (why) throw new Error(`${APPS[id].name} didn’t start (${why}).`);
+    return jar;
+  }
+  const app = own || (await bundledApp(id));
   if (!app) throw new Error(`${APPS[id].name} isn’t included in this build of Lime.`);
-  // A launch that dies at once (blocked, quarantined, a missing runtime) says so instead of silently doing nothing.
-  const launch = (cmd, args, opts) => new Promise((done) => {
-    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', ...opts });
-    child.on('error', (e) => done(e.code || e.message));
-    child.on('exit', (code, sig) => done(code || sig ? `exited with ${sig || code}` : null));
-    setTimeout(() => { done(null); child.unref(); }, 800);
-  });
-  let why = process.platform === 'darwin' ? await launch('open', ['-a', app, ...files]) : await launch(app, files, { cwd: path.dirname(app) });
-  if (why && U.isWin) { try { why = (await require('electron').shell.openPath(app)) || null; } catch (_) {} }
-  if (why) throw new Error(`${APPS[id].name} didn’t start (${why}).`);
+  await launch(app, files, APPS[id].name);
   return app;
 }
 const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true } };
@@ -975,7 +1050,7 @@ function status() {
   return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)) || (!!apps[id]?.cli && fs.existsSync(appSource(id))), web: hasWeb(id), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
 }
 
-module.exports = { APPS, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
+module.exports = { APPS, EXTERNAL, SNIFF, findExternal, hasExternal, openExternal, bundledManifest, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
   autoTone, sharpenPhoto, denoisePhoto, liftShadows, paintPhoto, straightenScans, exportLayers, layerInfo, lookPhoto, smartBw, straightenPhoto, removeDust, hdrBatch,
   traceImage, outlineText, exportArtboards, logoPackage, vectorInfo, preflightLayout, packageLayout, layoutPdf, fixedEpub, bookletPdf, posterFrame, alphaRender, frameSequence, motionInfo,
   splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS,
