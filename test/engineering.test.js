@@ -262,10 +262,13 @@ module.exports = async ({ submit, jobs, dir }) => {
     const jar = await crafts.openApp('projectlibre', [X.msp]);
     ok(/projectlibre\.jar$/.test(jar), jar);
     await sleep(6000);
-    const ps = require('child_process').execFileSync(process.platform === 'win32' ? 'tasklist' : 'ps', process.platform === 'win32' ? [] : ['-eo', 'pid,args']).toString();
-    const line = ps.split('\n').find((l) => /projectlibre\.jar/.test(l) && /villa-works\.xml/.test(l));
+    // tasklist shows no command lines, so on Windows they come from CIM.
+    const ps = process.platform === 'win32'
+      ? require('child_process').execFileSync('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }']).toString()
+      : require('child_process').execFileSync('ps', ['-eo', 'pid,args']).toString();
+    const line = ps.split(/\r?\n/).find((l) => /projectlibre\.jar/.test(l) && /villa-works\.xml/.test(l));
     ok(line, 'ProjectLibre is not running');
-    if (process.platform !== 'win32') try { process.kill(+line.trim().split(/\s+/)[0]); } catch (_) {}
+    try { process.kill(+line.trim().split(/\s+/)[0]); } catch (_) {}
     return 'running';
   });
   return results;
