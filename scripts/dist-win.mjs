@@ -42,11 +42,18 @@ const installed = path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Fil
 const makensis = which('MAKENSIS', 'makensis') || (process.platform === 'win32' && (fs.existsSync(installed) ? installed : await nsis()));
 if (!makensis) throw new Error('Install NSIS (makensis) to build the Windows installer.');
 const kb = (d) => fs.readdirSync(d, { withFileTypes: true }).reduce((s, e) => s + (e.isDirectory() ? kb(path.join(d, e.name)) : fs.statSync(path.join(d, e.name)).size / 1024), 0);
-// Over NSIS's 2 GB limit, Blender and Code go beside the installer in Lime-data (both ship in the same download).
-const side = ['blender.tar.br', 'code.tar.br'].filter((f) => fs.existsSync(path.join(dir, 'resources', 'apps', f)));
-const data = path.join(OUT, 'Lime-data');
+// NSIS is a 32-bit program and can't hold more than about 1.5 GB of data, so every large archive (already compressed)
+// goes beside the installer in Lime-data, which ships in the same download and is copied in at install time.
+const res = path.join(dir, 'resources'), data = path.join(OUT, 'Lime-data');
 rm(data);
-const split = kb(dir) > 1900 * 1024 && side.length > 0;
-if (split) { fs.mkdirSync(path.join(data, 'apps'), { recursive: true }); for (const f of side) fs.copyFileSync(path.join(dir, 'resources', 'apps', f), path.join(data, 'apps', f)); }
-sh(makensis, ['-V2', '-INPUTCHARSET', 'UTF8', ...(split ? ['-DSPLIT'] : []), `-DSRC=${dir}`, `-DOUT=${setup}`, `-DVERSION=${pkg.version}`, `-DSIZE=${Math.round(kb(dir))}`, path.join(ROOT, 'build/lime.nsi')], { stdio: 'inherit' });
+const big = [];
+const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else if (fs.statSync(f).size > 30 * 1048576 && !f.includes(`${path.sep}app${path.sep}`) && !f.includes(`${path.sep}app.asar`)) big.push(f); } };
+walk(res);
+const split = kb(dir) > 1400 * 1024 && big.length > 0;
+const nsh = path.join(OUT, 'split.nsh');
+if (split) {
+  for (const f of big) { const to = path.join(data, path.relative(res, f)); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.copyFileSync(f, to); }
+  fs.writeFileSync(nsh, `File /r ${[...new Set(big.map((f) => path.basename(f)))].map((n) => `/x "${n}"`).join(' ')} "\${SRC}\\*.*"\n`);
+}
+sh(makensis, ['-V2', '-INPUTCHARSET', 'UTF8', ...(split ? [`-DSPLIT=${nsh}`] : []), `-DSRC=${dir}`, `-DOUT=${setup}`, `-DVERSION=${pkg.version}`, `-DSIZE=${Math.round(kb(dir))}`, path.join(ROOT, 'build/lime.nsi')], { stdio: 'inherit' });
 console.log('✓', path.relative(ROOT, setup), `${(fs.statSync(setup).size / 1048576).toFixed(0)} MB`, split ? `+ Lime-data ${(kb(data) / 1024).toFixed(0)} MB` : '');
