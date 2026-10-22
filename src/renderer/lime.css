@@ -97,7 +97,8 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 6px; box-s
 .toast.success .ic { color: var(--success); }
 @keyframes rise { from { transform: translateY(10px) scale(.98); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+/* A 1 ms duration on every element would make every property change transition, so sizes read back stale; none at all instead. */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 0s !important; } }
 @font-face { font-family: "Noto Sans"; src: url("media://font/NotoSans-Regular.ttf"); font-weight: 400; }
 @font-face { font-family: "Noto Sans"; src: url("media://font/NotoSans-Bold.ttf"); font-weight: 700; }
 @font-face { font-family: "Noto Sans"; src: url("media://font/NotoSans-Italic.ttf"); font-style: italic; }

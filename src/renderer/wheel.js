@@ -233,10 +233,15 @@ function fitLabels(n) {
     const size = Math.max(floor, Math.min(base, ...ts.map((t) => (base * max * 0.99) / (t.getComputedTextLength() || 1))));
     for (const t of ts) {
       if (size < base) t.style.fontSize = `${Math.floor(size * 100) / 100}px`;
-      const s = t.textContent;
-      for (let k = 1; k < s.length - 1 && t.getComputedTextLength() > max; k++) t.textContent = mid(s, k);
+      const s = t.textContent, glass = t.parentNode.querySelector('path.glass');
+      // The chord is only a guide: crowded rings narrow toward the middle, so the label must sit inside the slice itself.
+      for (let k = 1; k < s.length - 1 && (t.getComputedTextLength() > max || !inside(t, glass)); k++) t.textContent = mid(s, k);
     }
   }
+}
+function inside(t, glass) {
+  const b = t.getBBox(), i = 0.6;
+  return !b.width || [[b.x + i, b.y + i], [b.x + b.width - i, b.y + i], [b.x + i, b.y + b.height - i], [b.x + b.width - i, b.y + b.height - i]].every(([x, y]) => glass.isPointInFill(new DOMPoint(x, y)));
 }
 function setHot(i, force) {
   if (i === S.hot && !force) return;

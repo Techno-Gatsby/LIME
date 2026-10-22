@@ -628,7 +628,11 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
           const card = await lime(`const c = document.querySelector('.card'); if (c.hidden) return null; const t = L.catalog[${JSON.stringify(it.tool)}]; return { required: [...c.querySelectorAll('[required]')].some((x) => !x.value) || (t.options || []).some((o) => o.required && c.querySelector('#o-' + o.key) && !c.querySelector('#o-' + o.key).value) };`);
           if (card) {
             if (card.required) { status = 'SKIP'; detail = 'needs typed input'; await lime('await L.collapse();'); }
-            else await click('.card .foot .btn.primary');
+            else {
+              // The samples are English and Translate's default is English, so the wheel run picks another language.
+              if (it.tool === 'translate') await lime(`const s = document.querySelector('.card #o-to'); if (s) { s.value = 'de'; s.dispatchEvent(new Event('change', { bubbles: true })); }`);
+              await click('.card .foot .btn.primary');
+            }
           }
           if (status !== 'SKIP') {
             const end = await settle();
@@ -881,6 +885,11 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       return p;
     };
     const toDial = (p) => js(`(() => { const r = document.querySelector('.dial').getBoundingClientRect(), k = 300 / r.width; return [(${p.x} - (r.left + r.width / 2)) * k, (${p.y} - (r.top + r.height / 2)) * k]; })()`);
+    // Windows CI desktops ask for reduced motion, which stills the glass on purpose; these checks want motion, so the wheel
+    // is told the user has no preference, and the reduced-motion part asks for it explicitly.
+    const dbg = wheel().webContents.debugger;
+    const motion = async (value) => { if (!dbg.isAttached()) dbg.attach('1.3'); await dbg.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value }] }); };
+    await motion('no-preference').catch((e) => console.warn(`[ui] could not set reduced motion: ${e.message}`));
     await check('glass · the light follows the pointer and drifts when it leaves', async () => {
       await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
       await sleep(600);
@@ -898,11 +907,9 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       const gone = await lightAt(), moved = Math.hypot(gone[0] - after[0], gone[1] - after[1]), radius = Math.hypot(...gone);
       if (moved < 15) throw new Error(`the light moved only ${Math.round(moved)} units after the pointer left`);
       if (radius < 120) throw new Error(`drifting at radius ${Math.round(radius)}, inside the wheel`);
-      const dbg = wheel().webContents.debugger;
       let still;
       try {
-        dbg.attach('1.3');
-        await dbg.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+        await motion('reduce');
         await sleep(300);
         const l0 = await lightAt();
         await spot('.petal[data-i="4"] text.l', 6, 4);
@@ -910,8 +917,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
         const l1 = await lightAt();
         still = { l0, l1, nudge: await js('getComputedStyle(document.querySelector(".petal.hot")).translate') };
       } finally {
-        await dbg.sendCommand('Emulation.setEmulatedMedia', { features: [] }).catch(() => {});
-        dbg.detach();
+        await motion('no-preference').catch(() => {});
       }
       wheel().webContents.sendInputEvent({ type: 'mouseMove', x: 3, y: 3 });
       if (Math.hypot(still.l1[0] - still.l0[0], still.l1[1] - still.l0[1]) > 0.5) throw new Error(`with reduced motion the light still moved from ${still.l0} to ${still.l1}`);
@@ -954,6 +960,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       wheel().webContents.sendInputEvent({ type: 'mouseMove', x: 3, y: 3 });
       return `leaned ${out.join(', ')}; always still under the pointer`;
     });
+    if (dbg.isAttached()) { await dbg.sendCommand('Emulation.setEmulatedMedia', { features: [] }).catch(() => {}); dbg.detach(); }
   }
   await check('sheet print · choose cells in the picker', async () => {
     if (!fs.existsSync(fx('print.xlsx'))) throw Object.assign(new Error('no print.xlsx'), { skip: true });
