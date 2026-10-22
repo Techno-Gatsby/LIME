@@ -261,12 +261,16 @@ const PC = {
   tiltShift: [['filter.blurGallery.tiltShift']],
   glow: [['filter.gallery.diffuseGlow']],
 };
-const LIME = { removeBg: 'remove-background', blurFaces: 'blur-faces', upscale: 'upscale-image' };
+const LIME = { removeBg: 'remove-background', blurFaces: 'blur-faces', upscale: 'upscale-image', upscaleAi: 'upscale-ai' };
+// Brush points arrive in the turned and flipped frame the editor shows; the picture itself is stored unturned.
+const TURNS = { Normal: [0, 0], FlipH: [0, 1], Rotate180: [2, 0], FlipV: [2, 1], Rotate90: [1, 0], Rotate270: [3, 0], Transverse: [1, 1], Transpose: [3, 1] };
+const unturn = ([u, v], o) => { const [turn, flip] = TURNS[o] || [0, 0]; for (let i = 0; i < turn; i++) [u, v] = [v, 1 - u]; return [flip ? 1 - u : u, v]; };
 async function step(id, state, kind, opts = {}) {
   const s = get(id), before = s.bases[state.base];
   const { file, baked } = await pixels(s, state);
   let out;
   if (PC[kind]) out = await photocraft(s, file, PC[kind]);
+  else if (kind === 'erase') out = await require('./engines/ai').erase(file, { points: opts.points.map((q) => unturn(q, state.dev?.orientation)), size: opts.size }, path.join(s.dir, `erased-${++s.n}.png`));
   else if (LIME[kind]) {
     const dir = path.join(s.dir, `tool-${++s.n}`);
     await fsp.mkdir(dir, { recursive: true });

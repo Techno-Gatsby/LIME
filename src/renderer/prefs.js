@@ -1,9 +1,12 @@
 import { icon } from './icons.js';
 import { limeSvg, setIcon } from './petal.js';
 import { api, $, h, esc, nameOf, applyTheme } from './ui.js';
+import { aboutRows, wireAbout } from './prefs-about.js';
+import { wireSearch } from './prefs-search.js';
 
 let s = await applyTheme();
 const info = await api.invoke('app:info');
+let update = await api.invoke('update:status').catch(() => ({ phase: 'idle' }));
 const isMac = api.platform === 'darwin';
 if (!isMac) document.body.classList.add('solid');
 const app = $('#app');
@@ -92,9 +95,8 @@ async function render() {
   setIcon(s.icon);
   const eng = await api.invoke('engines:status').catch(() => ({ crafts: [] }));
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
-  const SIZE = { soffice: 350, pandoc: 40 };
-  const dl = (key, what, cls = '') => `<button class="btn ${cls}" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key] || 90} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`;
-  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : dl(key, what, 'primary')}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
+  const absent = '<span class="tag">Not included</span>';
+  const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : absent}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
   <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">
@@ -115,7 +117,7 @@ async function render() {
     ${row('fit', 'Reset position', '', '<button class="btn" data-a="reset">Reset</button>')}
   </div></section>
   <section><h2>ArtCraft apps</h2><div class="group apps">
-    ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : dl(c.id, c.name))).join('')}
+    ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : absent)).join('')}
   </div></section>
   ${ringsSection(eng)}
   <section><h2>Built-in engines</h2>
@@ -124,13 +126,15 @@ async function render() {
     ${row('video', 'FFmpeg', 'Video and audio conversion', '<span class="dot on"></span>')}
     ${row('image', 'libvips · MuPDF · Tesseract', 'Images, PDF and text recognition in 13 languages', '<span class="dot on"></span>')}
     ${row('ruler', 'LibreDWG · OpenCascade', 'DWG drawings and STEP, IGES and BREP models', '<span class="dot on"></span>')}
+    ${row('sparkle', 'Real-ESRGAN · LaMa', 'Upscale with AI and Erase object, on this computer', `<span class="dot ${eng.models?.length === 2 ? 'on' : ''}"></span>`)}
   </div></section>
   <section><h2>Optional helpers</h2><p class="note">Lime converts Office documents on its own. If these free apps are on this ${isMac ? 'Mac' : 'PC'}, it uses them for even more exact layouts and extra formats.</p><div class="group">
     ${row('doc', 'LibreOffice', eng.libreoffice ? esc(eng.libreoffice) : 'Exact Word, Excel and PowerPoint layouts', helper('soffice', eng.libreoffice, 'LibreOffice'))}
     ${isMac ? row('layers', 'Pages · Keynote · Numbers', 'Opens and exports Apple iWork files', found(eng.pages || eng.keynote || eng.numbers, 'iWork')) : ''}
     ${row('text', 'Pandoc', eng.pandoc ? esc(eng.pandoc) : 'LaTeX, reStructuredText and Org files', helper('pandoc', eng.pandoc, 'Pandoc'))}
   </div></section>
-  <section><h2>About</h2><div class="group">
+  <section id="about"><h2>About</h2><div class="group">
+    ${aboutRows(row, sw, info, s, update)}
     ${row('eye', 'How Lime works', 'The four steps shown the first time Lime ran', '<button class="btn" data-a="welcome">Show again</button>')}
     ${row('info', 'Open-source licences', 'Lime is AGPL-3.0. ArtCraft engines are MIT or Apache-2.0', '<button class="btn" data-a="licenses">View</button>')}
   </div></section>`;
@@ -152,19 +156,6 @@ app.addEventListener('click', async (e) => {
       fail(b.closest('.row').querySelector('.t'), reason(err));
     } finally { b.disabled = false; }
   }
-  if (a === 'get' || a === 'stop') {
-    const b = e.target.closest('[data-a]'), k = b.dataset.k, t = b.closest('.row').querySelector('.t');
-    if (a === 'stop') { b.disabled = true; api.invoke('helpers:cancel', k); return; }
-    const primary = b.classList.contains('primary');
-    b.dataset.a = 'stop'; b.textContent = 'Stop'; b.classList.remove('primary');
-    t.querySelector('.why')?.remove();
-    const sub = t.querySelector('small'), was = sub.textContent;
-    try { await api.invoke('helpers:get', k); render(); } catch (err) {
-      b.dataset.a = 'get'; b.textContent = 'Download…'; b.classList.toggle('primary', primary); b.disabled = false;
-      sub.textContent = was;
-      if (reason(err) !== 'Stopped.') fail(t, `Couldn’t download ${b.dataset.what}: ${reason(err)}`);
-    }
-  }
   if (a === 'locate') {
     const el = e.target.closest('[data-a]');
     const [f] = await api.invoke('dialog:open', { title: `Find ${el.dataset.what}`, multi: false, filters: isMac ? undefined : [{ name: 'Programs', extensions: ['exe'] }] });
@@ -180,8 +171,8 @@ app.addEventListener('click', async (e) => {
 });
 app.addEventListener('change', (e) => { const i = e.target.closest('input[type=checkbox][data-k]'); if (i) set({ [i.dataset.k]: i.checked }); });
 api.on('settings', (n) => { s = n; render(); });
-api.on('helpers:progress', (p) => {
-  const sub = $(`.row [data-k="${p.id}"]`)?.closest('.row')?.querySelector('.t small');
-  if (sub) sub.textContent = p.phase === 'download' ? `Downloading… ${p.pct}% of ${Math.round(p.total / 1048576)} MB` : p.phase === 'unpack' ? 'Unpacking…' : 'Starting…';
-});
-render();
+wireAbout(app, api, (u) => { update = u; });
+const search = wireSearch(app);
+await render();
+if (location.hash === '#about') $('#about')?.scrollIntoView();
+api.on('prefs:tab', (t) => { if (t === 'about') $('#about')?.scrollIntoView({ behavior: 'smooth' }); });

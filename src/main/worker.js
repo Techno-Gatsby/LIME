@@ -55,11 +55,11 @@ const CALLS = {
   pdfMetadata: (p) => require('./engines/pdf').readMetadata(p),
   archiveList: (p, pw) => require('./engines/archive').list(p, pw),
   probe: (p) => require('./engines/media').probe(p),
-  enginesStatus: () => ({ ...require('./engines/office').status(), crafts: require('./engines/crafts').status() }),
+  enginesStatus: () => ({ ...require('./engines/office').status(), crafts: require('./engines/crafts').status(), models: ['upscale', 'lama'].filter((id) => require('./engines/ai').available(id)) }),
   ...Object.fromEntries(Object.entries(editor).filter(([, f]) => typeof f === 'function').map(([k, f]) => [`editor.${k}`, f])),
 };
 
-const EDITORS = { image: './imgedit', media: './mediaedit', studio: './studio', web: './webedit' };
+const EDITORS = { image: './imgedit', media: './mediaedit', studio: './studio', web: './webedit', diagram: './diagrams' };
 function editorCall(method) {
   const [ns, name] = String(method).split('.');
   const m = EDITORS[ns] ? require(EDITORS[ns]) : null;

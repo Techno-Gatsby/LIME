@@ -228,3 +228,10 @@
 .dialog.wide .dlgform { min-width: 0; }
 .webed .gjs-layer-item, .webed .gjs-layer-name, .webed .gjs-layer-item-left { color: var(--ink); opacity: 1; letter-spacing: normal; font: 13px/1.3 var(--font); }
 .webed .gjs-layer.gjs-selected > .gjs-layer-item, .webed .gjs-layer.gjs-selected > .gjs-layer-item .gjs-layer-name { color: var(--accent-strong); }
+
+.we-mermaid { width: min(900px, calc(100vw - 48px)); max-width: none; }
+.we-mmgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 12px; }
+.we-mmgrid textarea { font: 12.5px/1.5 var(--mono); min-height: 280px; resize: vertical; }
+.we-mmview { display: grid; place-items: center; min-height: 280px; padding: 10px; border-radius: 8px; background: #fff; box-shadow: inset 0 0 0 .5px var(--line-2); overflow: auto; }
+.we-mmview img { max-width: 100%; }
+.we-mmerr { color: var(--danger); margin: 8px 0 0; }

@@ -91,6 +91,19 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
     ok(ink > a.length * 0.002 && diff / a.length < 2, `the scanned page changed: mean difference ${(diff / a.length).toFixed(2)} over ${ink} dark samples`);
     return `the page still shows the scan (mean difference ${(diff / a.length).toFixed(2)}) with the words over it`;
   });
+  await check('OCR words that all carry their line’s box (Apple Vision) are laid along the line', async () => {
+    // Vision's accurate mode often gives each word the box of its whole line; words left that way read back as one per line.
+    const lineOnly = (m) => { const w = m.width, h = m.height, line = (y, t) => { const box = [0.1 * w, y * h, t.length * 0.018 * w, 0.03 * h]; return { text: t, box, words: t.split(' ').map((x) => ({ text: x, box })) }; };
+      return { width: w, height: h, lines: [line(0.2, 'The quick brown fox jumps over the lazy dog.'), line(0.3, 'Invoice 2041 total due by October 31.')] }; };
+    ocr.engines.os = fake(['en-US'], lineOnly);
+    const png = await sharp({ create: { width: PAGE.width, height: PAGE.height, channels: 3, background: '#ffffff' } }).png().toBuffer();
+    const { pdf } = await ocr.imageToTextPdf(png, 'eng');
+    const file = path.join(OUT, 'vision-lines.pdf');
+    fs.writeFileSync(file, pdf);
+    const lines = (await pdfLines(file)).map((l) => l.text.trim());
+    ok(lines.length === 2 && lines[0] === 'The quick brown fox jumps over the lazy dog.' && lines[1] === 'Invoice 2041 total due by October 31.', `lines ${JSON.stringify(lines)}`);
+    return lines.join(' | ');
+  });
   await check('OCR falls back to tesseract and says so', async () => {
     notes.length = 0;
     ocr.engines.os = fake(['en-US'], () => { throw new Error('boom'); });

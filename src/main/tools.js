@@ -4,11 +4,13 @@ const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
 const word = lazy('word'), excel = lazy('excel'), slides = lazy('slides'), kit = lazy('officekit');
+const gif = lazy('gif'), plus = lazy('pdfplus');
 const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email'), web = lazy('web'), voice = lazy('voice');
 
 const MORE_GROUPS = { subtitle: ['smi', 'sami', 'lrc', 'ttml', 'dfxp', 'scc'], data: ['jsonl', 'ndjson', 'jsonc', 'toml'], contacts: ['vcf', 'vcard'],
   font: ['ttf', 'otf', 'woff', 'woff2', 'eot', 'ttc'], mail: ['eml', 'msg'], webarchive: ['mht', 'mhtml'], comic: ['cbz', 'cbr', 'cb7', 'cbt', 'cbc'], ebook: ['epub', 'kepub', 'mobi', 'azw', 'azw3', 'azw4', 'prc', 'fb2', 'htmlz', 'txtz'] };
 const MORE_EXT = Object.fromEntries(Object.entries(MORE_GROUPS).flatMap(([g, list]) => list.map((e) => [e, g])));
+Object.assign(MORE_EXT, require('./diagramtools').EXT);
 function palmBook(p) {
   try { const fd = U.fs.openSync(p, 'r'), b = Buffer.alloc(8); U.fs.readSync(fd, b, 0, 8, 60); U.fs.closeSync(fd); return /^(BOOKMOBI|TEXtREAd)$/.test(b.toString('latin1')); } catch (_) { return false; }
 }
@@ -147,7 +149,7 @@ const TOOLS = [
     options: [choice('mode', 'Split', [['ranges', 'Ranges'], ['every', 'Fixed size'], ['all', 'Every page'], ['select', 'Pick pages']]), text('ranges', 'Ranges (each becomes a PDF)', '1-3, 4-6', { when: { mode: 'ranges' }, placeholder: '1-3, 4-6, 7-' }), toggle('mergeRanges', 'Combine the ranges into one PDF', false, { when: { mode: 'ranges' } }), num('every', 'Pages in each PDF', 2, { when: { mode: 'every' }, min: 1 }), pages('pages', 'Pages to extract', '1', { when: { mode: 'select' } }), toggle('mergeSelected', 'Save them as one PDF', true, { when: { mode: 'select' } })],
     run: each((f, o, c) => pdf().split(f, o, c)) },
   { id: 'compress-pdf', cat: 'pdf', name: 'Compress PDF', desc: 'Recompress images and rebuild the file.', accepts: ['pdf'], ext: 'pdf', suffix: '-compressed',
-    options: [level(), pdfPassword], run: each((f, o, c) => pdf().compress(f, o, outFile('-compressed', 'pdf')(f, c), c)) },
+    options: [level(), pdfPassword], run: each((f, o, c) => plus().compress(f, o, outFile('-compressed', 'pdf')(f, c), c)) },
   { id: 'optimize-pdf', cat: 'pdf', name: 'Repair PDF', desc: 'Fix a damaged or bloated PDF: PdfCraft rebuilds and slims it.', tags: 'optimize broken corrupt fix rebuild', accepts: ['pdf'], ext: 'pdf', suffix: '-optimized', craft: 'pdfcraft', prio: 10, petal: ['Repair', 'Fix & slim'],
     options: [range('quality', 'Image quality', 60, 20, 95, { unit: '%', advanced: true })], run: each((f, o, c) => craft().optimizePdf(f, o, c)) },
   { id: 'pdf-to-word', cat: 'pdf', name: 'PDF to Word', desc: 'Editable DOCX with paragraphs and images.', accepts: ['pdf'], ext: 'docx',
@@ -214,7 +216,7 @@ const TOOLS = [
     options: [select('lang', 'Language', LANGS), toggle('skipText', 'Skip pages that already have text', true), choice('dpi', 'Quality', [['200', 'Fast'], ['300', 'Accurate']], '300'), pdfPassword],
     run: each((f, o, c) => pdf().ocr(f, o, outFile('-searchable', 'pdf')(f, c), c)) },
   { id: 'pdf-to-pdfa', cat: 'pdf', name: 'Save for archiving', desc: 'A PDF/A copy that opens the same in decades, as courts and archives ask.', tags: 'pdf/a pdfa archive long term', accepts: ['pdf'], ext: 'pdf', suffix: '-pdfa', craft: 'pdfcraft', prio: 14, petal: ['Archive', 'Long-term'],
-    options: [choice('level', 'Standard', [['2b', 'PDF/A-2b'], ['3b', 'PDF/A-3b']]), pdfPassword], run: each((f, o, c) => craft().toPdfA(f, o, c)) },
+    options: [choice('level', 'Standard', [['2b', 'PDF/A-2b'], ['3b', 'PDF/A-3b']]), pdfPassword], run: each((f, o, c) => plus().toPdfA(f, o, c)) },
   { id: 'compare-pdf', cat: 'pdf', name: 'Compare PDF', desc: 'Show what changed between two versions. Put the older one first.', accepts: ['pdf'], min: 2, max: 2, ordered: true, ext: 'pdf', suffix: ' - compared', craft: 'pdfcraft', prio: 32, petal: ['Compare', '2 versions'],
     options: [choice('output', 'Result', [['marked', 'Marked-up copy'], ['report', 'List of changes']])], run: async (files, o, c) => [await craft().comparePdf(files, o, c)] },
   { id: 'make-fillable', cat: 'pdf', name: 'Make a fill-in form', desc: 'Blank lines and boxes become fields people can type into.', tags: 'fillable form fields', accepts: ['pdf'], ext: 'pdf', suffix: '-fillable', craft: 'pdfcraft', prio: 16, petal: ['Form', 'Fill-in'], options: [pdfPassword], run: each((f, o, c) => craft().makeFillable(f, o, c)) },
@@ -228,7 +230,7 @@ const TOOLS = [
       if (o.ocr) await pdf().ocr(tmp, { lang: o.lang || 'eng', dpi: '300', skipText: false }, out, c); else await fsp.copyFile(tmp, out);
       return [{ path: out, note: `${straight} of ${files.length} page${files.length === 1 ? '' : 's'} straightened${o.ocr ? ', text recognised' : ''}` }];
     } },
-  { id: 'repair-pdf', cat: 'pdf', name: 'Repair PDF', desc: 'Rebuild damaged PDFs.', accepts: ['pdf'], ext: 'pdf', suffix: '-repaired', run: each((f, o, c) => pdf().repair(f, outFile('-repaired', 'pdf')(f, c))) },
+  { id: 'repair-pdf', cat: 'pdf', name: 'Repair PDF', desc: 'Rebuild damaged PDFs.', accepts: ['pdf'], ext: 'pdf', suffix: '-repaired', options: [pdfPassword], run: each((f, o, c) => plus().repair(f, outFile('-repaired', 'pdf')(f, c), o, c)) },
   { id: 'flatten-pdf', cat: 'pdf', name: 'Flatten PDF', desc: 'Lock forms and annotations into the page.', accepts: ['pdf'], ext: 'pdf', suffix: '-flattened', run: each((f, o, c) => pdf().flatten(f, outFile('-flattened', 'pdf')(f, c))) },
   { id: 'extract-images-pdf', cat: 'pdf', name: 'Extract images', desc: 'Every embedded picture at full quality.', accepts: ['pdf'], save: 'folder', suffix: ' - embedded images',
     options: [choice('format', 'Save as', [['png', 'PNG'], ['jpg', 'JPG']]), pdfPassword], run: each((f, o, c) => pdf().extractImages(f, o, c)) },
@@ -264,6 +266,8 @@ const TOOLS = [
     run: each((f, o, c) => img().removeBackground(f, o, c)) },
   { id: 'upscale-image', cat: 'image', name: 'Upscale image', desc: 'Enlarge 2×, 3× or 4× with sharp detail.', accepts: IMAGE_IN, suffix: '-upscaled', ext: (o, files) => (keepExt(files[0]) === 'gif' ? 'png' : keepExt(files[0])),
     options: [choice('factor', 'Enlarge', [['2', '2×'], ['3', '3×'], ['4', '4×']], '2')], run: each((f, o, c) => img().upscale(f, { ...o, method: 'classic' }, c)) },
+  { id: 'upscale-ai', cat: 'image', name: 'Upscale with AI', model: 'upscale', desc: 'Enlarge 2× or 4× and draw in fine detail, on this computer.', tags: 'ai enlarge bigger super resolution sharpen hd restore esrgan', accepts: IMAGE_IN, suffix: '-upscaled', ext: (o, files) => (keepExt(files[0]) === 'gif' ? 'png' : keepExt(files[0])),
+    options: [choice('factor', 'Enlarge', [['2', '2×'], ['4', '4×']], '2'), choice('kind', 'Picture', [['photo', 'Photo'], ['drawing', 'Drawing']])], run: each((f, o, c) => lazy('ai')().upscale(f, o, c)) },
   { id: 'rotate-image', cat: 'image', name: 'Rotate & flip', desc: 'Rotate or mirror.', accepts: IMAGE_IN, suffix: '-rotated', ext: (o, files) => keepExt(files[0]),
     options: [choice('angle', 'Rotate', [['0', 'None'], ['90', '90° right'], ['180', '180°'], ['270', '90° left']], '90'), choice('flip', 'Flip', [['none', 'None'], ['horizontal', 'Mirror'], ['vertical', 'Upside down']])], run: each((f, o, c) => img().rotate(f, o, c)) },
   { id: 'adjust-image', cat: 'image', name: 'Adjust photo', desc: 'Brightness, contrast, colour and filters.', accepts: IMAGE_IN, suffix: '-edited', ext: (o, files) => keepExt(files[0]),
@@ -281,12 +285,12 @@ const TOOLS = [
     options: [choice('mode', 'Effect', [['blur', 'Blur'], ['pixelate', 'Pixelate']]), range('strength', 'Strength', 60, 10, 100, { unit: '%' })], run: each((f, o, c) => img().blurFaces(f, o, c)) },
   { id: 'animation-speed', cat: 'image', name: 'Animation speed', desc: 'Play an animated GIF, WebP or APNG faster, slower or backwards.', accepts: [], extAccept: ['gif', 'webp', 'apng'], suffix: '-speed', ext: (o, files) => U.ext(files[0] || '') || 'gif',
     options: [select('speed', 'Speed', [['0.25', '0.25×'], ['0.5', '0.5×'], ['0.75', '0.75×'], ['1', 'Unchanged'], ['1.5', '1.5×'], ['2', '2×'], ['4', '4×']], '2'), toggle('reverse', 'Play backwards', false)], run: each((f, o, c) => img().animationSpeed(f, o, c)) },
-  { id: 'strip-metadata', cat: 'image', name: 'Remove photo info', desc: 'Strip EXIF, GPS and camera data.', accepts: IMAGE_IN, suffix: '-clean', ext: (o, files) => keepExt(files[0]), run: each((f, o, c) => img().strip(f, o, c)) },
+  { id: 'strip-metadata', cat: 'image', name: 'Remove photo info', desc: 'Strip EXIF, GPS and camera data.', accepts: IMAGE_IN, suffix: '-clean', ext: (o, files) => keepExt(files[0]), run: each((f, o, c) => require('./engines/photoinfo').stripTool(f, c, () => img().strip(f, o, c))) },
   { id: 'collage', cat: 'image', name: 'Collage', desc: 'Photos in a neat grid.', accepts: IMAGE_IN, min: 2, ordered: true, ext: 'jpg', stem: 'Collage',
     options: [num('columns', 'Columns', '', { placeholder: 'Auto' }), range('gap', 'Spacing', 12, 0, 60, { unit: 'px' }), color('background', 'Background', '#ffffff')],
     run: async (files, o, c) => [await img().collage(files, o, c.out.file(files[0], 'Collage.jpg'))] },
   { id: 'images-to-gif', cat: 'image', name: 'Make GIF', desc: 'Animate images into a looping GIF.', accepts: IMAGE_IN, min: 2, ordered: true, ext: 'gif', stem: 'Animation',
-    options: [range('seconds', 'Seconds each', 1, 1, 10, { unit: 's' }), num('width', 'Width (px)', 600)], run: async (files, o, c) => [await media().imagesToGif(files, o, c)] },
+    options: [range('seconds', 'Seconds each', 1, 1, 10, { unit: 's' }), num('width', 'Width (px)', 600)], run: async (files, o, c) => [await gif().fromImages(files, o, c)] },
   { id: 'image-to-text', cat: 'image', name: 'Image to text', desc: 'Copy the text out of screenshots, photos and scans.', accepts: IMAGE_IN, ext: 'txt',
     options: [select('lang', 'Language', LANGS)],
     run: each(async (f, o, c) => {
@@ -304,7 +308,7 @@ const TOOLS = [
 
   { id: 'convert-video', cat: 'media', name: 'Convert video', desc: 'MP4, HEVC, MOV, WebM, MKV, AVI, WMV, MPG, GIF, APNG and audio.', accepts: ['video'], ext: mediaExt,
     options: [select('to', 'Convert to', [...VIDEO_OUT, ['mp3', 'MP3 audio'], ['m4a', 'M4A audio'], ['wav', 'WAV audio']]), choice('quality', 'Quality', [['high', 'High'], ['balanced', 'Balanced'], ['small', 'Small']], 'balanced'), select('height', 'Resolution', [['', 'Original'], ['2160', '4K'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']], '', { when: { to: VIDEO_OUT.map(([v]) => v).filter((v) => !['vob', 'dv'].includes(v)) } })],
-    run: each((f, o, c) => media().convertVideo(f, o, c)) },
+    run: each((f, o, c) => (o.to === 'gif' ? gif().fromVideo(f, o, c) : media().convertVideo(f, o, c))) },
   { id: 'compress-video', cat: 'media', name: 'Compress video', desc: 'Shrink for email, chat and uploads.', accepts: ['video'], ext: 'mp4', suffix: '-compressed',
     options: [choice('mode', 'Target', [['level', 'Quality'], ['size', 'File size']]), { ...level(), when: { mode: 'level' } }, num('targetMB', 'Target size (MB)', 25, { when: { mode: 'size' } }), select('height', 'Resolution', [['', 'Original'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']])],
     run: each((f, o, c) => media().compressVideo(f, o, c)) },
@@ -322,7 +326,7 @@ const TOOLS = [
   { id: 'compress-audio', cat: 'media', name: 'Compress audio', desc: 'Lower bitrate, smaller file.', accepts: ['audio'], suffix: '-compressed', ext: (o, files) => (['mp3', 'm4a', 'ogg', 'opus', 'aac'].includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'mp3'), options: [level()], run: each((f, o, c) => media().compressAudio(f, o, c)) },
   { id: 'video-to-gif', cat: 'media', name: 'Video to GIF', desc: 'A moment as a crisp GIF.', accepts: ['video'], ext: 'gif',
     options: [{ key: 'start', type: 'time', label: 'Start', default: '0:00' }, num('duration', 'Seconds', 5), range('fps', 'Frames per second', 12, 5, 30), num('width', 'Width (px)', 480)],
-    run: each((f, o, c) => media().toGif(f, o, c)) },
+    run: each((f, o, c) => gif().fromVideo(f, o, c)) },
   { id: 'gif-to-video', cat: 'media', name: 'GIF to video', desc: 'Turn an animated GIF into a much smaller MP4, WebM or MOV.', accepts: [], extAccept: ['gif'], ext: (o) => o.to,
     options: [choice('to', 'Convert to', [['mp4', 'MP4'], ['webm', 'WebM'], ['mov', 'MOV']]), choice('quality', 'Quality', [['high', 'High'], ['balanced', 'Balanced'], ['small', 'Small']], 'balanced')],
     run: each((f, o, c) => media().convertVideo(f, o, c)) },
@@ -689,7 +693,7 @@ const TOOLS = [
   { id: 'make-slides', cat: 'docs', name: 'Make slides', desc: 'Slides from notes: each heading becomes a slide and the list under it its points.', tags: 'outline markdown presentation', accepts: [], extAccept: ['md', 'markdown', 'txt'], craft: 'deckcraft', prio: 8, petal: ['Slides', 'From notes'],
     ext: 'pptx', suffix: '', options: [select('theme', 'Look', craft().DECK_THEMES.map((t) => [t, t]))], run: each((f, o, c) => craft().deckOutline(f, o, c)) },
   { id: 'slides-gif', cat: 'docs', name: 'Slides to GIF', desc: 'An animated GIF that shows each slide in turn, for chats and web pages.', accepts: [], extAccept: DECK_IN, craft: 'deckcraft', prio: 10, petal: ['GIF', 'Animated'], ext: 'gif', suffix: '',
-    options: [range('seconds', 'Seconds per slide', 3, 1, 20, { unit: 's' }), choice('width', 'Size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], 'medium')], run: each((f, o, c) => craft().deckGif(f, o, c)) },
+    options: [range('seconds', 'Seconds per slide', 3, 1, 20, { unit: 's' }), choice('width', 'Size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], 'medium')], run: each((f, o, c) => gif().fromSlides(f, o, c)) },
   { id: 'slide-graphics', cat: 'docs', name: 'Slide graphics', desc: 'Each slide as a picture with a see-through background, for videos and overlays.', tags: 'transparent png', accepts: [], extAccept: DECK_IN, craft: 'deckcraft', prio: 12, petal: ['Graphics', 'See-through'], save: 'folder', suffix: ' - slide graphics', run: each((f, o, c) => craft().deckGraphics(f, o, c)) },
 
   { id: 'format-html', cat: 'docs', name: 'Format HTML', desc: 'Indent a page, stylesheet or script neatly, one element per line.', tags: 'prettify beautify tidy indent', accepts: [], extAccept: WEB_CODE, craft: 'webcraft', prio: 10, petal: ['Format', 'Tidy'], suffix: '-formatted', ext: (o, files) => U.ext(files?.[0] || 'x.html'),
@@ -719,6 +723,7 @@ const TOOLS = [
     options: [select('voice', 'Voice', VOICE_LIST), choice('to', 'Format', [['mp3', 'MP3'], ['wav', 'WAV']]), choice('speed', 'Speed', [['0.85', 'Slower'], ['1', 'Normal'], ['1.2', 'Faster']], '1')],
     run: each((f, o, c) => voice().readAloud(f, o, c)) },
 ];
+TOOLS.push(...require('./codectools')({ each, choice, select, text, toggle, color, range, pdfPassword, IMAGE_IN }));
 function keepExt(f) { const e = U.ext(f || ''); return ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif', 'tiff', 'tif'].includes(e) ? (e === 'jpeg' ? 'jpg' : e === 'tif' ? 'tiff' : e) : 'png'; }
 
 const W = (tool, label, hint, opts = {}, extra = {}) => ({ tool, label, hint, opts, ...extra });
@@ -731,7 +736,7 @@ const WHEELS = {
     tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Reorder'), W('split-pdf', 'Split', 'Pages'), W('protect-pdf', 'Protect', 'Password'), W('page-numbers', 'Numbers', 'Pages'), W('watermark-pdf', 'Watermark', 'Text'), W('ocr-pdf', 'Searchable', 'Read scans'), W('rotate-pdf', 'Rotate', '90°'), W('read-aloud', 'Read aloud', 'To MP3')],
   },
   image: {
-    tools: [W('remove-background', 'Remove BG', 'Background'), W('compress-image', 'Compress', 'Smaller'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('edit-image', 'Edit', 'Crop & adjust'), W('enhance-photo', 'Enhance', 'Auto'), W('upscale-image', 'Upscale', 'Sharper 2×', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('image-to-text', 'Text', 'Copy text'), W('strip-metadata', 'Private', 'No location'), W('scan-to-pdf', 'Scan', 'Clean PDF')],
+    tools: [W('remove-background', 'Remove BG', 'Background'), W('compress-image', 'Compress', 'Smaller'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('edit-image', 'Edit', 'Crop & adjust'), W('enhance-photo', 'Enhance', 'Auto'), W('upscale-image', 'Upscale', 'Sharper 2×', { factor: '2' }), W('upscale-ai', 'Upscale 2×', 'AI', { factor: '2' }), W('crop-image', 'Square', 'Smart', { aspect: '1:1' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('image-to-text', 'Text', 'Copy text'), W('strip-metadata', 'Private', 'No location'), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('upscale-ai', 'Upscale 4×', 'AI', { factor: '4' }), W('photo-info', 'Info', 'Camera & place')],
   },
   raw: {
     convert: [W('develop-raw', 'JPG', 'Develop', { to: 'jpg', auto: false }), W('develop-raw', 'TIFF', '16-bit', { to: 'tif', auto: false }), W('develop-raw', 'PNG', 'Lossless', { to: 'png', auto: false }), W('develop-raw', 'AVIF', 'Small', { to: 'avif', auto: false }), W('develop-raw', 'DNG', 'Raw', { to: 'dng', auto: false }), W('convert-image', 'Preview', 'Built-in', { to: 'jpg', develop: false })],
@@ -847,6 +852,7 @@ const SINGLE_OUTPUT = new Set(['mix-tracks', 'compare-docs', 'merge-slides', 'hd
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
 const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js', web: 'vendor/weblibs.js' };
+require('./diagramtools').register({ TOOLS, WHEELS, EDITOR_FILE, W, each });
 const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
 if (unshipped.size) {
   TOOLS.splice(0, TOOLS.length, ...TOOLS.filter((t) => !unshipped.has(t.id)));

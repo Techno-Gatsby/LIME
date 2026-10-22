@@ -3,7 +3,7 @@ import { api, $, nameOf, toast, applyTheme } from './ui.js';
 
 let settings = await applyTheme();
 api.on('settings', (s) => { settings = s; });
-const MODULES = { image: './imgedit.js', media: './mediaedit.js', studio: './studio.js', web: './webedit.js' };
+const MODULES = { image: './imgedit.js', media: './mediaedit.js', studio: './studio.js', web: './webedit.js', board: './board.js', drawio: './drawio.js' };
 let askClose = null, closing = false, dispose = null, next = null;
 const go = () => { closing = true; if (next) { const d = next; next = null; show(d); } else api.invoke('editor:closeNow'); };
 async function show(d) {

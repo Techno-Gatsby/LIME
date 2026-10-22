@@ -2,6 +2,7 @@ import { $, $$, esc, h, nameOf, dirOf, sep, clean } from './ui.js';
 import * as L from './vendor/weblibs.js';
 import { indexBody, parseDoc, fmtCss, withManaged, decode, MANAGED } from './websource.js';
 import { designTools } from './webdesign.js';
+import { diagramType, editDiagram, drawInto } from './webdiagram.js';
 
 const VIEWS = [['split', 'Split', 'split', 'Design above, code below, kept in step'], ['design', 'Design', 'web', 'The page as it looks; click to select, double-click to type'], ['code', 'Code', 'code', 'The HTML, with colours, folding and search (Ctrl+F)'], ['preview', 'Preview', 'eye', 'The finished page, without its scripts']];
 const DEVICES = [['desktop', 'Desktop', 'desktop', ''], ['tablet', 'Tablet', 'tablet', '768px'], ['phone', 'Phone', 'phone', '375px']];
@@ -75,6 +76,7 @@ const BLOCKS = (icon) => [
   ['table', 'Table', 'grid', '<table style="border-collapse:collapse;width:100%"><thead><tr><th style="border:1px solid #ccc;padding:6px;text-align:left">Name</th><th style="border:1px solid #ccc;padding:6px;text-align:left">Value</th></tr></thead><tbody><tr><td style="border:1px solid #ccc;padding:6px">One</td><td style="border:1px solid #ccc;padding:6px">1</td></tr><tr><td style="border:1px solid #ccc;padding:6px">Two</td><td style="border:1px solid #ccc;padding:6px">2</td></tr></tbody></table>'],
   ['form', 'Form', 'field', '<form style="display:grid;gap:10px;max-width:420px"><label>Name <input type="text" name="name"></label><label>E-mail <input type="email" name="email"></label><label>Message <textarea name="message" rows="4"></textarea></label><button type="submit">Send</button></form>'],
   ['video', 'Video', 'video', { type: 'video', src: '', style: { width: '100%', height: '320px' } }],
+  ['diagram', 'Diagram', 'shapes', { type: 'lime-diagram' }],
 ].map(([id, label, ic, content]) => ({ id, label, media: icon(ic, 'lg'), content, category: 'Basic' }));
 
 export function openEditor(view, { file }, ctx) {
@@ -511,13 +513,13 @@ export function openEditor(view, { file }, ctx) {
       deviceManager: { devices: DEVICES.map(([id, name, , width]) => ({ id, name, width, widthMedia: width ? `${parseInt(width, 10) + (id === 'tablet' ? 224 : 105)}px` : '' })) },
       assetManager: { upload: false },
       richTextEditor: { actions: [] },
-      plugins: [keep],
+      plugins: [keep, diagramType((c) => editDiagram(c).then((ok) => { if (ok) { st.why = 'Changed the diagram'; onDesignEdit(); } }))],
     });
     gjs.Commands.add('core:open-assets', { run: (ed, s, o = {}) => { if (o.target) pickInto(o.target, 'image'); } });
     for (const k of ['core:undo', 'core:redo']) gjs.Keymaps.remove(k);
     gjs.on('component:remove', (c) => { if (!st.loading) st.why = `Removed ${nameOfComp(c).toLowerCase()}`; });
     gjs.on('component:input', (c) => { st.why = `Typed in ${nameOfComp(c).toLowerCase()}`; });
-    gjs.on('component:add', (c) => { if (st.loading) return; nameAll(c); st.why = st.why || `Added ${nameOfComp(c).toLowerCase()}`; const t = c.get('type'); if ((t === 'image' || t === 'video') && !c.get('src') && !c.getAttributes().src) setTimeout(() => pickInto(c, t).then((ok) => { if (ok) onDesignEdit(); }), 50); });
+    gjs.on('component:add', (c) => { if (st.loading) return; nameAll(c); st.why = st.why || `Added ${nameOfComp(c).toLowerCase()}`; const t = c.get('type'); if (t === 'lime-diagram' && !c.components().length) { drawInto(c, c.getAttributes()['data-mermaid']).then(() => { st.why = 'Added a diagram'; onDesignEdit(); tip('Double-click the diagram to change it.'); }).catch((e) => toast(clean(e), { type: 'error' })); } if ((t === 'image' || t === 'video') && !c.get('src') && !c.getAttributes().src) setTimeout(() => pickInto(c, t).then((ok) => { if (ok) onDesignEdit(); }), 50); });
     gjs.on('rte:enable', () => { D.makeBar(gjs.RichTextEditor.getToolbarEl()); });
     gjs.on('rte:disable', () => { const t = gjs.RichTextEditor.getToolbarEl(); if (t) t.innerHTML = ''; onDesignEdit(); });
     gjs.on('component:deselected', (c) => { if (c?.view?.rteEnabled) c.view.disableEditing?.(); });
