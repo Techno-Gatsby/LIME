@@ -19,7 +19,8 @@ const CSS = `.prefs-search { position: sticky; top: 0; z-index: 5; padding: 6px 
   .prefs-search .clear { border: 0; background: none; color: var(--ink-3); padding: 2px; cursor: pointer; display: grid; place-items: center; border-radius: 4px; }
   .prefs-empty { text-align: center; color: var(--ink-2); padding: 28px 0; }
   #app .row.lead-shown::before { display: none; }
-  #app [hidden] { display: none !important; }`;
+  #app [hidden] { display: none !important; }
+  #app > section { scroll-margin-top: 52px; }`;
 
 const norm = (t) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[’']/g, '');
 const textOf = (el) => { const t = norm(el.querySelector('.t b, .n')?.textContent || el.textContent); return `${t} ${norm(el.querySelector('.t small')?.textContent || '')} ${ALSO[t.trim()] || ''}`; };

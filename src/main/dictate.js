@@ -60,12 +60,13 @@ function fail(message) {
   clearInterval(cur.feedT);
   send('dictate:state', { state: 'error', message });
 }
-function done(m) {
+async function done(m) {
   const c = conf();
   const text = c.tidy ? tidy(m.raw, { lang: m.lang, replace: c.replace }) : replaceAll(m.raw, c.replace);
   Object.assign(cur, { done: true, raw: m.raw, text, lang: m.lang, ms: m.ms, secs: m.secs });
   const copied = !!text && c.autoCopy;
-  if (copied) clipboard.writeText(text);
+  // Electron's clipboard is asynchronous: the text is on it before the panel says “Copied”.
+  if (copied) await clipboard.writeText(text).catch(() => {});
   send('dictate:done', { id: cur.id, raw: m.raw, text, lang: m.lang, ms: m.ms, secs: m.secs, copied });
   cur.onDone?.(cur);
 }
@@ -217,9 +218,9 @@ function registerIpc() {
   h('dictate:audio', (id, pcm) => { if (cur && id === cur.id && !cur.stopping && !cur.done) worker?.send({ type: 'audio', id, pcm: pcm instanceof Float32Array ? pcm : Float32Array.from(pcm) }); });
   h('dictate:micError', (id, name) => { if (cur && id === cur.id) fail(name === 'NotAllowedError' || name === 'SecurityError' ? (isWin ? 'Windows is blocking the microphone. Turn on “Let desktop apps access your microphone” in Settings › Privacy & security › Microphone.' : isMac ? 'Lime can’t hear you. Allow the microphone for Lime in System Settings › Privacy & Security › Microphone.' : 'The microphone is blocked.') : name === 'NotFoundError' ? 'No microphone was found. Plug one in and try again.' : 'The microphone couldn’t start. Try again.'); });
   h('dictate:micSettings', () => shell.openExternal(isWin ? 'ms-settings:privacy-microphone' : 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'));
-  h('dictate:copy', (text) => { clipboard.writeText(String(text || '')); return true; });
+  h('dictate:copy', async (text) => { await clipboard.writeText(String(text || '')); return true; });
   h('dictate:paste', async (text) => {
-    clipboard.writeText(String(text || ''));
+    await clipboard.writeText(String(text || ''));
     win?.hide();
     try { await native.paste(cur?.prev); return { ok: true }; } catch (e) { win?.showInactive(); return { ok: false, message: e.message }; }
   });

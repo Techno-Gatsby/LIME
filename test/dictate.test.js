@@ -114,7 +114,7 @@ module.exports = async ({ dir }) => {
   await check('copy puts the text on the clipboard', async () => {
     needs('en10.wav');
     ok(base, 'no dictation yet');
-    const got = String(clipboard.readText() || '');
+    const got = String((await clipboard.readText()) || '');
     ok(got === base.text, `clipboard has ${JSON.stringify(got.slice(0, 60))}`);
     return 'auto-copied on done';
   });

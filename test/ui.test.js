@@ -2457,11 +2457,11 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
     ok(!c.error, c.error);
     ok(c.text.length > 20, `final text: ${JSON.stringify(c.text)}`);
     ok(await pjs('document.querySelector(".state").textContent') === 'Copied', 'state is not Copied');
-    ok(require('electron').clipboard.readText() === c.text, 'the clipboard does not hold the text');
+    ok((await require('electron').clipboard.readText()) === c.text, 'the clipboard does not hold the text');
     ok(!(await pjs('document.querySelector(".copy").hidden')), 'no Copy button');
     await pjs('document.querySelector(".text").textContent = "Edited words here."; document.querySelector(".copy").click(); 1');
     await sleep(300);
-    ok(require('electron').clipboard.readText() === 'Edited words here.', 'edited text was not copied');
+    ok((await require('electron').clipboard.readText()) === 'Edited words here.', 'edited text was not copied');
     dictate.close();
     return `live: ${JSON.stringify(live.slice(0, 50))} · final: ${JSON.stringify(c.text)}`;
   });
