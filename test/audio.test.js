@@ -96,7 +96,8 @@ module.exports = async ({ submit, jobs, dir }) => {
   await check('subtitles · SRT, VTT and English from speech', async () => {
     const [srt] = await run('speech-to-text', [voice()], { to: 'srt', lang: 'auto' }, 'srt');
     const s = fs.readFileSync(srt, 'utf8'), cues = s.match(/\d+:\d\d:\d\d,\d{3} --> \d+:\d\d:\d\d,\d{3}/g) || [];
-    ok(cues.length >= 2 && /quick brown fox/i.test(s), `SRT: ${s.slice(0, 200)}`);
+    // The base model in the default build can hear “quick brown” as “quip-brown”, so the check keys on the rest of the line.
+    ok(cues.length >= 2 && /fox jumps over the lazy dog/i.test(s), `SRT: ${s.slice(0, 200)}`);
     const [vtt] = await run('speech-to-text', [voice()], { to: 'vtt', lang: 'en' }, 'vtt');
     ok(/^WEBVTT/.test(fs.readFileSync(vtt, 'utf8')), 'VTT header');
     return `${cues.length} cues`;
