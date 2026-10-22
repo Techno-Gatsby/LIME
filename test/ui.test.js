@@ -298,6 +298,31 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       return 'the document went in by drop; Save wrote doc (edited).docx';
     } finally { if (!win.isDestroyed()) win.destroy(); }
   });
+  if (fs.existsSync(fx('deck.pptx'))) await check('DeckCraft opens in a Lime window and takes the file without a crash', async () => {
+    if (!Crafts.hasWeb('deckcraft')) throw Object.assign(new Error('no DeckCraft web app in this build'), { skip: true });
+    const d = target(), src = path.join(d, 'deck.pptx');
+    fs.copyFileSync(fx('deck.pptx'), src);
+    const logs = [], win = await openCraftWeb('deckcraft', src), wjs = (code) => win.webContents.executeJavaScript(code, true);
+    win.webContents.on('console-message', (e, ...a) => logs.push(String(e.message ?? a[1])));
+    let state = 'loading';
+    for (const t0 = Date.now(); Date.now() - t0 < 90000 && state === 'loading'; await sleep(250)) state = await wjs('document.body.dataset.state');
+    try {
+      const inner = (code) => win.webContents.mainFrame.framesInSubtree.find((f) => /\/app\/index\.html/.test(f.url))?.executeJavaScript(code);
+      let note = '';
+      for (const t0 = Date.now(); Date.now() - t0 < 30000; await sleep(250)) { note = await inner('document.getElementById("deckcraft_loading")?.innerText || ""'); if (!note || /failed/i.test(note)) break; }
+      // Without a GPU or software WebGL2 (Linux CI with the GPU off) DeckCraft can't draw; that's the machine, not the app.
+      if (/webgl2 not available|WebGPU or WebGL2 is required/i.test(note)) throw Object.assign(new Error('no WebGL2 on this machine'), { skip: true });
+      if (note) throw new Error(`DeckCraft did not start: ${note.slice(0, 120)} | ${logs.filter((l) => !/Security Warning|integrity/.test(l)).slice(-4).join(' | ').slice(0, 600)}`);
+      if (state !== 'ready') throw new Error(`state ${state}`);
+      await sleep(2500);
+      const panic = logs.find((l) => /panicked|RuntimeError|no pids/i.test(l));
+      if (panic) throw new Error(`DeckCraft crashed: ${panic.slice(0, 200)}`);
+      const size = await inner('[document.querySelector("canvas").width, document.querySelector("canvas").height]');
+      if (!(size[0] > 300 && size[1] > 150)) throw new Error(`the canvas never took the window's size: ${size}`);
+      if (!fs.readFileSync(src).equals(fs.readFileSync(fx('deck.pptx')))) throw new Error('the original changed');
+      return `started blank with ${path.basename(src)} dropped in, canvas ${size.join('×')}, no panic`;
+    } finally { if (!win.isDestroyed()) win.destroy(); }
+  });
   if (fs.existsSync(fx('photo.jpg'))) await check('hovering and progress update the middle in place', async () => {
     await lime(`await L.openWith(${JSON.stringify([fx('photo.jpg')])});`);
     if (!(await until('return !!document.querySelector(".center img.thumb")', 6000))) throw new Error('no thumbnail');

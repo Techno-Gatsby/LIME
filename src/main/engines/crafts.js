@@ -945,7 +945,7 @@ async function openApp(id, files = []) {
   if (why) throw new Error(`${APPS[id].name} didn’t start (${why}).`);
   return app;
 }
-const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true } };
+const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true }, deckcraft: { empty: 'blank' } };
 let webs = null;
 const webManifest = () => { if (!webs) { try { webs = JSON.parse(fs.readFileSync(path.join(U.cfg.web, 'manifest.json'), 'utf8')); } catch (_) { webs = {}; } } return webs; };
 const webSource = (id) => path.join(U.cfg.web || '', `${id}.tar.br`);

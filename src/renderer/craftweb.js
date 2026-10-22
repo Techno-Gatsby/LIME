@@ -18,7 +18,8 @@ toast.querySelector('button').addEventListener('click', () => { if (shown) api.s
 api.onSaved(tell);
 
 const fileBytes = async () => { const b = await api.read(); return b ? new Uint8Array(b) : null; };
-const query = info.bridge ? '?host=parent' : info.empty && info.file ? '?empty' : '';
+// A file opens into an empty app rather than beside its sample document (SoundCraft's flag is ?empty, DeckCraft's ?blank).
+const query = info.bridge ? '?host=parent' : info.empty && info.file ? `?${info.empty === true ? 'empty' : info.empty}` : '';
 frame.src = `app/index.html${query}`;
 
 window.addEventListener('message', async (e) => {
@@ -39,7 +40,7 @@ if (!info.bridge) {
   const t0 = Date.now();
   const drop = async () => {
     const w = frame.contentWindow, canvas = w?.document?.querySelector('canvas');
-    if (!canvas || !w.wasmBindings || Date.now() - t0 < 1500) { if (Date.now() - t0 < 60000) setTimeout(drop, 250); else document.body.dataset.state = 'failed'; return; }
+    if (!canvas || !w.wasmBindings || w.document.querySelector('[id$="_loading"]') || Date.now() - t0 < 1500) { if (Date.now() - t0 < 60000) setTimeout(drop, 250); else document.body.dataset.state = 'failed'; return; }
     document.body.dataset.state = 'ready';
     const bytes = info.file && (await fileBytes());
     if (!bytes) return;

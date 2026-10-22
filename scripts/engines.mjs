@@ -6,6 +6,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
+import { patchDeckcraft } from './patch-deckcraft.mjs';
 
 const require = createRequire(import.meta.url);
 const { unzipSync } = require('fflate');
@@ -20,7 +21,7 @@ const WEBS = path.join(V, 'web'), BIN = path.join(V, 'bin', TARGET), CRAFTS = pa
 const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0', cadcraft: '0.10.0', soundcraft: '0.10.0', wordcraft: '0.9.0', gridcraft: '0.9.0', deckcraft: '0.9.0' };
 const REPO = { gridcraft: 'sheetcraft', deckcraft: 'slidecraft' };
 const release = (id, v) => `https://github.com/storytold/${REPO[id] || id}/releases/download/v${v}`;
-const WEB = ['cadcraft', 'gridcraft', 'wordcraft', 'soundcraft'];
+const WEB = ['cadcraft', 'gridcraft', 'wordcraft', 'soundcraft', 'deckcraft'];
 const FF = 'https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1';
 const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
 const NOTO = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts';
@@ -198,17 +199,19 @@ async function webs() {
   const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   await pool(WEB, async (id) => {
     const v = CRAFT[id], dest = path.join(WEBS, `${id}.tar.br`);
-    if (has(dest) && manifest[id]?.version === v) return;
+    const ver = id === 'deckcraft' ? `${v}-p1` : v;
+    if (has(dest) && manifest[id]?.version === ver) return;
     const zip = unzipSync(fs.readFileSync(await get(`${release(id, v)}/${id}-web-${v}.zip`)), { filter: (f) => !f.name.endsWith('/') });
     const tmp = path.join(CACHE, `${id}-web`);
     fs.rmSync(tmp, { recursive: true, force: true });
     for (const [name, buf] of Object.entries(zip)) { const out = path.join(tmp, 'site', ...name.split('/').slice(1)); mk(path.dirname(out)); fs.writeFileSync(out, buf); }
+    if (id === 'deckcraft' && patchDeckcraft(path.join(tmp, 'site'))) console.log('◎', 'deckcraft web: patched the start-up panic (instance_id)');
     const tar = path.join(CACHE, `${id}-web.tar`);
     sh(TAR, ['-cf', tar, '-C', tmp, 'site']);
     await brotli(fs.readFileSync(tar), dest);
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(tar, { force: true });
-    manifest[id] = { version: v };
+    manifest[id] = { version: ver };
     console.log('◎', `${id} web`, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   });
