@@ -2,7 +2,7 @@
 // Speech tools on the bundled models, all offline: subtitles and transcripts from speech, subtitles added
 // to a video, voice clean-up, vocals and backing split apart, and documents read aloud.
 const U = require('./util');
-const ai = require('./speech');
+const ai = require('./speech-ai');
 const whisper = require('./whisper');
 const { fsp, path } = U;
 const media = () => require('./media');

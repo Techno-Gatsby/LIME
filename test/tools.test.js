@@ -1570,7 +1570,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   fs.mkdirSync(SPOKEN, { recursive: true });
   fs.writeFileSync(path.join(SPOKEN, 'spoken.txt'), 'The quick brown fox jumps over the lazy dog. Our meeting has moved to Thursday afternoon, so please bring the updated figures.');
   Object.assign(SWEEP, { 'speech-to-text': [[spokenWav]], 'subtitle-video': [[spokenMp4]] });
-  const spokenCase = { name: 'sweep spoken clip', tool: 'read-aloud', inputs: [path.join(SPOKEN, 'spoken.txt')], opts: { voice: 'en-GB', to: 'wav', speed: '1' }, save: true, skip: ['espeak', 'voice-en-GB'].every((m) => E('speech').have(m)) ? undefined : 'the speech models are not in this build',
+  const spokenCase = { name: 'sweep spoken clip', tool: 'read-aloud', inputs: [path.join(SPOKEN, 'spoken.txt')], opts: { voice: 'en-GB', to: 'wav', speed: '1' }, save: true, skip: ['espeak', 'voice-en-GB'].every((m) => E('speech-ai').have(m)) ? undefined : 'the speech models are not in this build',
     check: async ([o]) => {
       fs.copyFileSync(o, spokenWav);
       await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24', '-i', spokenWav, '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', spokenMp4]);
@@ -1697,7 +1697,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       }
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
-    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech').have(t.ai) ? 'the speech models are not in this build' : undefined;
+    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : undefined;
     for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine, limit: t.ai ? 900000 : undefined });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {

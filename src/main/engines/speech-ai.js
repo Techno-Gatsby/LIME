@@ -1,7 +1,7 @@
 'use strict';
 // The speech and music models ship inside Lime as brotli tarballs (vendor/ai/<target>, resources/ai when
 // packaged). The first use unpacks one into userData/helpers with helpers.ensure — never the network.
-// Inference runs in one long-lived child process (speech/host.js) so a model loads once per session.
+// Inference runs in one long-lived child process (ai/host.js) so a model loads once per session.
 const U = require('./util');
 const { fs, fsp, path } = U;
 
@@ -21,7 +21,7 @@ const waiting = new Map();
 function host() {
   clearTimeout(idle);
   if (child && child.connected) return child;
-  child = require('child_process').fork(path.join(__dirname, 'speech', 'host.js'), [], { execPath: process.execPath, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced' });
+  child = require('child_process').fork(path.join(__dirname, 'ai', 'host.js'), [], { execPath: process.execPath, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced' });
   let err = '';
   const me = child;
   child.stderr.on('data', (d) => { err = (err + d).slice(-4000); });

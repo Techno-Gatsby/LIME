@@ -15,7 +15,7 @@ module.exports = async ({ submit, jobs, dir }) => {
   const ok = (c, m) => { if (!c) throw new Error(m); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const results = [];
-  const have = (id) => E('speech').have(id);
+  const have = (id) => E('speech-ai').have(id);
   const check = async (name, fn, need = 'whisper') => {
     name = `audio: ${name}`;
     if (only && !only.test(name)) return;
