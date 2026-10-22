@@ -372,7 +372,7 @@ async function drawCaption() {
     if (t) { capName.textContent = t.name; capMeta.textContent = t.desc || ''; }
     else if (it) { capName.textContent = it.action === 'craft' ? `Open ${appName(it.app)}` : it.label; capMeta.textContent = it.desc || it.hint || ''; }
     else if (app) { capName.textContent = app.name; capMeta.textContent = `${app.role} · pick an action, or drop files`; }
-    else { capName.textContent = 'Drop files here'; capMeta.textContent = 'or click the lime to choose'; }
+    else { capName.textContent = 'Drop files here'; capMeta.textContent = 'or click the lime to choose · hold it to dictate'; }
   } else if (S.state === 'ready') {
     capName.textContent = 'Drop files here';
     capMeta.textContent = 'or click the lime to choose';
@@ -853,12 +853,15 @@ stage.addEventListener('pointerdown', (e) => {
   const i = petalAt(e);
   downAt = { x: e.clientX, y: e.clientY, id: e.pointerId, i, onPetal: i >= 0, onBtn: e.target.classList?.contains('btn') || inCenter(e.clientX, e.clientY), onPill: !!e.target.closest('.pill') };
   if (i >= 0) $(`.petal[data-i="${i}"]`)?.classList.add('press');
+  // Holding the lime starts dictation; a click still opens files or the app as before.
+  if (downAt.onBtn && ['ready', 'open', 'done', 'failed'].includes(S.state)) { const d = downAt; d.holdT = setTimeout(() => { if (downAt === d && !moving) { d.held = true; sfx('tick'); api.invoke('dictate:start'); } }, 550); }
 });
 window.addEventListener('pointermove', (e) => {
   if (!downAt) return;
   if (!moving) {
     if (Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) <= 5) return;
     if (S.state === 'done' && downAt.onBtn && S.result?.outs?.length) return;
+    clearTimeout(downAt.holdT);
     moving = true;
     $$('.petal.press').forEach((g) => g.classList.remove('press'));
     setHot(-1);
@@ -904,7 +907,8 @@ window.addEventListener('pointerup', async (e) => {
   const d = downAt;
   downAt = null;
   $$('.petal.press').forEach((g) => g.classList.remove('press'));
-  if (!d || endMove() || d.onPill) return;
+  clearTimeout(d?.holdT);
+  if (!d || endMove() || d.onPill || d.held) return;
   if (d.onPetal) { const i = petalAt(e); if (i === d.i) pick(S.ring[i], { options: e.altKey }); return; }
   if (S.state === 'idle' && e.target.closest('.tab')) { expand('click'); return; }
   if (d.onBtn || e.target.closest('.center')) {

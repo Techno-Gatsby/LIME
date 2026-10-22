@@ -81,3 +81,10 @@ MIT OR Apache-2.0):
   mesh repair follow FreeCAD's Mesh workbench; drawings follow the layout of TechDraw's projection groups and title blocks.
   The STEP and IGES 5.3 file structure and the AutoCAD 2000 DXF writer follow SolidCraft's step_out, iges_out and dxf_out:
   Copyright (c) 2026 SolidCraft contributors.
+Dictation listens with Whisper by OpenAI (https://github.com/openai/whisper, MIT License), as the int8 ONNX export made by
+k2-fsa/sherpa-onnx (https://github.com/k2-fsa/sherpa-onnx, Apache License 2.0), and finds speech with Silero VAD
+(https://github.com/snakers4/silero-vad, MIT License). Live partials keep the words two readings agree on, the LocalAgreement
+idea from whisper_streaming by ÚFAL (https://github.com/ufal/whisper_streaming, MIT License). Pasting into the app that had
+focus (clipboard, then Ctrl+V or ⌘V) and hold-to-talk follow Handy by CJ Pais (https://github.com/cjpais/Handy, MIT License);
+offering a corrected word for the dictionary follows OpenWhispr (https://github.com/OpenWhispr/openwhispr, MIT License).
+No code is copied from Handy, OpenWhispr or whisper_streaming.

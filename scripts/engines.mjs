@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
 
 const require = createRequire(import.meta.url);
 const { unzipSync } = require('fflate');
@@ -12,7 +13,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const TARGET = process.argv[2] || `${process.platform}-${process.arch}`;
 const [PLAT, ARCH] = TARGET.split('-');
 const WIN = PLAT === 'win32';
-const V = path.join(ROOT, 'vendor');
+const V = process.env.LIME_VENDOR || path.join(ROOT, 'vendor');
 const CACHE = path.join(V, '.cache');
 const WEBS = path.join(V, 'web'), BIN = path.join(V, 'bin', TARGET), CRAFTS = path.join(V, 'crafts', TARGET), APPS = path.join(V, 'apps', TARGET), HELPERS = path.join(V, 'helpers', TARGET), DATA = path.join(V, 'data'), NPM = path.join(V, 'npm', TARGET);
 const CRAFT = { photocraft: '0.10.0', vectorcraft: '0.13.1', filmcraft: '0.9.0', lightcraft: '0.9.1', pdfcraft: '0.9.0', effectcraft: '0.11.1', designcraft: '0.9.0', cadcraft: '0.10.0', soundcraft: '0.10.0', wordcraft: '0.9.0', gridcraft: '0.9.0', deckcraft: '0.9.0' };
@@ -24,6 +25,14 @@ const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
 const NOTO = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts';
 const GF = 'https://raw.githubusercontent.com/google/fonts/main/ofl';
 const TESS = 'https://raw.githubusercontent.com/tesseract-ocr';
+// Speech: Whisper (MIT) as int8 ONNX exported by k2-fsa/sherpa-onnx (Apache-2.0), and Silero VAD (MIT).
+const SHERPA = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models';
+const WHISPER = {
+  whisper: { name: 'base', sha: '911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de' },
+  // Small reads Hindi and translates to English far better than base, at about 200 MB more; opt in with LIME_WHISPER_SMALL=1.
+  'whisper-small': { name: 'small', sha: '486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6', optional: 'LIME_WHISPER_SMALL' },
+};
+const VAD = { url: `${SHERPA}/silero_vad.onnx`, sha: '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6' };
 const LANGS = ['spa', 'fra', 'deu', 'ita', 'por', 'nld', 'rus', 'ara', 'hin', 'jpn', 'chi_sim', 'kor'];
 const FONTS = {
   'NotoSans-Regular.ttf': `${NOTO}/NotoSans/hinted/ttf/NotoSans-Regular.ttf`, 'NotoSans-Bold.ttf': `${NOTO}/NotoSans/hinted/ttf/NotoSans-Bold.ttf`,
@@ -217,6 +226,81 @@ async function natives() {
   }
 }
 
+const sha256 = (f) => new Promise((ok, no) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', (d) => h.update(d)).on('end', () => ok(h.digest('hex'))).on('error', no); });
+async function pinned(url, sha) {
+  const f = await get(url);
+  const got = await sha256(f);
+  if (got !== sha) { fs.rmSync(f, { force: true }); throw new Error(`${path.basename(f)}: SHA-256 ${got} isn't the pinned ${sha}`); }
+  return f;
+}
+// ONNX metadata (ModelProto field 14) as a plain object, read straight from the protobuf.
+function onnxMeta(file) {
+  const b = fs.readFileSync(file), out = {};
+  const varint = (st) => { let v = 0, m = 1, c; do { c = b[st.i++]; v += (c & 127) * m; m *= 128; } while (c & 128); return v; };
+  const st = { i: 0 };
+  while (st.i < b.length) {
+    const tag = varint(st), field = Math.floor(tag / 8), wire = tag & 7;
+    if (wire === 0) { varint(st); continue; }
+    if (wire === 1) { st.i += 8; continue; }
+    if (wire === 5) { st.i += 4; continue; }
+    const len = varint(st), end = st.i + len;
+    if (field === 14) {
+      const e = { i: st.i }, kv = {};
+      while (e.i < end) { const t = varint(e), l = varint(e); kv[t >> 3] = b.toString('utf8', e.i, e.i + l); e.i += l; }
+      out[kv[1]] = kv[2];
+    }
+    st.i = end;
+  }
+  return out;
+}
+const packDir = async (dir, dest) => {
+  const tar = `${dest}.tar`;
+  sh(TAR, ['-cf', tar, '-C', dir, '.']);
+  await new Promise((ok, no) => fs.createReadStream(tar).pipe(zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 } })).pipe(fs.createWriteStream(dest)).on('finish', ok).on('error', no));
+  fs.rmSync(tar, { force: true });
+};
+async function speech() {
+  const AI = path.join(V, 'ai', TARGET), DICT = path.join(V, 'dictate', TARGET);
+  mk(AI); mk(DICT);
+  const read = (d) => { try { return JSON.parse(fs.readFileSync(path.join(d, 'manifest.json'), 'utf8')); } catch { return {}; } };
+  const ai = read(AI), dict = read(DICT);
+  for (const [id, w] of Object.entries(WHISPER)) {
+    const dest = path.join(AI, `${id}.tar.br`), version = `${w.name}-int8-${w.sha.slice(0, 8)}`;
+    if (w.optional && !process.env[w.optional]) continue;
+    if (has(dest) && ai[id]?.version === version) continue;
+    const src = await pinned(`${SHERPA}/sherpa-onnx-whisper-${w.name}.tar.bz2`, w.sha);
+    const tmp = path.join(CACHE, `${id}-x`), out = path.join(CACHE, id);
+    for (const d of [tmp, out]) { fs.rmSync(d, { recursive: true, force: true }); mk(d); }
+    const top = `sherpa-onnx-whisper-${w.name}`;
+    sh(TAR, ['-xjf', src, '-C', tmp, `${top}/${w.name}-encoder.int8.onnx`, `${top}/${w.name}-decoder.int8.onnx`, `${top}/${w.name}-tokens.txt`]);
+    const x = (n) => path.join(tmp, top, `${w.name}-${n}`);
+    fs.renameSync(x('encoder.int8.onnx'), path.join(out, 'encoder.onnx'));
+    fs.renameSync(x('tokens.txt'), path.join(out, 'tokens.txt'));
+    fs.writeFileSync(path.join(out, 'meta.json'), JSON.stringify(onnxMeta(path.join(out, 'encoder.onnx'))));
+    const py = which('python3', 'python');
+    try { execFileSync(py, [path.join(ROOT, 'scripts', 'whisper-shrink.py'), x('decoder.int8.onnx'), path.join(out, 'decoder.onnx')], { stdio: 'inherit' }); } catch {
+      console.warn(`! python with onnx isn't installed, so the ${w.name} decoder ships with its fp32 token table (bigger)`);
+      fs.renameSync(x('decoder.int8.onnx'), path.join(out, 'decoder.onnx'));
+    }
+    await packDir(out, dest);
+    for (const d of [tmp, out]) fs.rmSync(d, { recursive: true, force: true });
+    ai[id] = { version, file: 'encoder.onnx' };
+    fs.writeFileSync(path.join(AI, 'manifest.json'), JSON.stringify(ai));
+    console.log('◉', `whisper ${w.name}`, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
+  }
+  const vadDest = path.join(DICT, 'vad.tar.br');
+  if (!has(vadDest) || dict.vad?.version !== VAD.sha.slice(0, 8)) {
+    const out = path.join(CACHE, 'vad');
+    fs.rmSync(out, { recursive: true, force: true });
+    fs.copyFileSync(await pinned(VAD.url, VAD.sha), path.join(mk(out), 'silero_vad.onnx'));
+    await packDir(out, vadDest);
+    fs.rmSync(out, { recursive: true, force: true });
+    dict.vad = { version: VAD.sha.slice(0, 8), file: 'silero_vad.onnx' };
+    fs.writeFileSync(path.join(DICT, 'manifest.json'), JSON.stringify(dict));
+    console.log('◉', 'silero vad', `${(fs.statSync(vadDest).size / 1024).toFixed(0)} KB`);
+  }
+}
+
 async function helpers() {
   const H = createRequire(import.meta.url)('../src/main/helpers.js');
   mk(HELPERS);
@@ -248,5 +332,6 @@ if (!only || only === 'crafts') await crafts();
 if (!only || only === 'apps') await apps();
 if (!only || only === 'web') await webs();
 if (!only || only === 'helpers') await helpers();
+if (!only || only === 'speech') await speech();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);

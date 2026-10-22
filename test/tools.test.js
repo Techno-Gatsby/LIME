@@ -1903,6 +1903,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./accuracy.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./apps2.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./web.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./dictate.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));

@@ -89,6 +89,8 @@ for (const [id, name] of Object.entries(CRAFT_NAMES)) HELPERS[id] = {
   },
 };
 
+// Packed inside Lime (vendor/ai, vendor/dictate); only ever unpacked, never fetched.
+Object.assign(HELPERS, { whisper: { name: 'Speech recognition' }, 'whisper-small': { name: 'Speech recognition (small)' }, vad: { name: 'Voice detection' } });
 const tarExe = isWin ? sys32('tar.exe') : '/usr/bin/tar';
 const manifestOf = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 const bundled = (id, vendor) => { const m = manifestOf(vendor)[id]; return m && fs.existsSync(path.join(vendor, `${id}.tar.br`)) ? m : null; };
@@ -109,7 +111,7 @@ async function ensure(id, vendor, root, progress = () => {}) {
       tar.stderr.on('data', (d) => { err += d; });
       tar.on('error', no);
       tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch(no);
+      pipeline(fs.createReadStream(path.join(vendor, `${id}.tar.br`)), require('zlib').createBrotliDecompress(), tar.stdin).catch((e) => { if (e.code !== 'ERR_STREAM_PREMATURE_CLOSE') no(e); });
     });
     if (!fs.existsSync(path.join(part, m.file))) throw new Error(`${HELPERS[id].name} was not in its archive`);
     if (fs.existsSync(exe)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return exe; }

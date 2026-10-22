@@ -30,8 +30,12 @@ function logMel(samples) {
   pad.set(samples);
   const n = pad.length, frames = Math.floor(n / HOP), F = melFilters(), win = hann(NFFT), frame = new Float64Array(NFFT);
   const mel = Array.from({ length: 80 }, () => new Float32Array(frames));
-  let max = -Infinity;
-  for (let t = 0; t < frames; t++) {
+  // Frames that only see the silent padding are all log10(1e-10); filling them in keeps short clips quick.
+  const live = Math.min(frames, Math.ceil((samples.length + NFFT / 2) / HOP) + 1);
+  for (const row of mel) row.fill(-10, live);
+  const span = F.map((w) => { let a = 0, b = w.length; while (a < b && !w[a]) a++; while (b > a && !w[b - 1]) b--; return [a, b]; });
+  let max = -10;
+  for (let t = 0; t < live; t++) {
     for (let i = 0; i < NFFT; i++) {
       let j = t * HOP + i - NFFT / 2;
       if (j < 0) j = -j; else if (j >= n) j = 2 * n - 2 - j;
@@ -39,9 +43,9 @@ function logMel(samples) {
     }
     const { re, im } = rfft(frame);
     for (let m = 0; m < 80; m++) {
-      const w = F[m];
+      const w = F[m], [a, b] = span[m];
       let s = 0;
-      for (let k = 0; k < re.length; k++) if (w[k]) s += w[k] * (re[k] * re[k] + im[k] * im[k]);
+      for (let k = a; k < b; k++) s += w[k] * (re[k] * re[k] + im[k] * im[k]);
       const v = Math.log10(Math.max(s, 1e-10));
       mel[m][t] = v;
       if (v > max) max = v;
@@ -98,10 +102,11 @@ async function load(ort, dir) {
   return m;
 }
 
-async function encode(m, mel, seek) {
-  const x = new Float32Array(80 * WIN);
-  for (let r = 0; r < 80; r++) x.set(mel[r].subarray(seek, seek + WIN), r * WIN);
-  const out = await m.encoder.run({ mel: new m.ort.Tensor('float32', x, [1, 80, WIN]) });
+// win < WIN encodes only the start of the window (whisper.cpp's audio_ctx): a short clip costs a fraction.
+async function encode(m, mel, seek, win = WIN) {
+  const x = new Float32Array(80 * win);
+  for (let r = 0; r < 80; r++) x.set(mel[r].subarray(seek, seek + win), r * win);
+  const out = await m.encoder.run({ mel: new m.ort.Tensor('float32', x, [1, 80, win]) });
   return { k: out.n_layer_cross_k, v: out.n_layer_cross_v };
 }
 function cache(m) {
@@ -156,6 +161,15 @@ function rules(m, logits, seq, initial) {
   if (tsMass > textMax) for (let t = 0; t < m.tsBegin; t++) logits[t] = NEG;
   return logits;
 }
+// A decoder stuck in a loop ("send the revives. Please send the revives. …") is cut at the first repeat.
+function looped(seq) {
+  for (let n = 3; n <= 12; n++) {
+    if (seq.length < 3 * n) continue;
+    const a = seq.slice(-n).join(), b = seq.slice(-2 * n, -n).join(), c = seq.slice(-3 * n, -2 * n).join();
+    if (a === b && b === c) return seq.length - 2 * n;
+  }
+  return -1;
+}
 const pick = (logits, temp) => {
   if (!temp) { let b = 0; for (let i = 1; i < logits.length; i++) if (logits[i] > logits[b]) b = i; return b; }
   const lp = logSoftmax(logits.map((v) => v / temp));
@@ -178,6 +192,8 @@ async function decodeWindow(m, cross, init, temp, beam) {
     sum += logSoftmax(logits)[t];
     seq.push(t);
     if (t === m.eot || st.offset >= m.ctx - 1) break;
+    const cut = looped(seq);
+    if (cut > 0) { seq.length = cut; break; }
     ({ last } = await step(m, [t], st, cross));
   }
   if (seq[seq.length - 1] === m.eot) seq.pop();
@@ -223,7 +239,7 @@ async function transcribe(ort, dir, samples, opts = {}, progress = () => {}) {
   let seek = 0;
   while (seek < frames) {
     const size = Math.min(WIN, frames - seek), offset = (seek * HOP) / SR;
-    const cross = await encode(m, mel, seek);
+    const cross = await encode(m, mel, seek, opts.fit && frames - seek < WIN ? Math.min(WIN, Math.max(600, Math.ceil((frames - seek + 150) / 100) * 100)) : WIN);
     if (!lang) lang = await detect(m, cross);
     const init = [...(prompt.length ? [m.prev, ...prompt.slice(-(Math.floor(m.ctx / 2) - 1))] : []), m.sot, m.langs[lang] ?? m.langs.en, opts.translate ? m.translate : m.transcribe];
     let r;

@@ -9,12 +9,15 @@ const LANGS = [['auto', 'Detect'], ['en', 'English'], ['hi', 'Hindi'], ['ar', 'A
   ['ur', 'Urdu'], ['bn', 'Bengali'], ['ta', 'Tamil'], ['zh', 'Chinese'], ['ja', 'Japanese'], ['ko', 'Korean'], ['id', 'Indonesian'], ['vi', 'Vietnamese'], ['th', 'Thai'], ['fa', 'Persian'], ['he', 'Hebrew'], ['el', 'Greek'], ['sv', 'Swedish']];
 const ready = () => ai.have('whisper');
 const model = (o) => (o.model === 'small' && ai.have('whisper-small') ? 'whisper-small' : 'whisper');
-const args = (o = {}) => ({ lang: o.lang || 'auto', translate: !!o.translate, prompt: o.prompt || '', accurate: o.accurate === true || o.accuracy === 'high' });
+const args = (o = {}) => ({ lang: o.lang || 'auto', translate: !!o.translate, prompt: o.prompt || '', accurate: o.accurate === true || o.accuracy === 'high', fit: !!o.fit });
 
 async function transcribePcm(samples, opts = {}, ctx = {}) {
   const dir = await ai.payload(model(opts));
   return ai.call('asr', { dir, samples, opts: args(opts) }, { signal: ctx.signal, progress: ctx.progress });
 }
+// Loads the model ahead of time (a second of silence). opts.fit encodes only as much as the clip needs,
+// which makes live partials of a few seconds quick.
+const warm = (opts = {}) => transcribePcm(new Float32Array(16000), { ...opts, lang: 'en', fit: true });
 async function transcribeFile(file, opts = {}, ctx = {}) {
   const say = (f, l) => ctx.progress?.(f, l);
   say(0.01, 'Getting ready');
@@ -47,4 +50,4 @@ const toSrt = (segments) => cues(segments).map((c, i) => `${i + 1}\n${clock(c.st
 const toVtt = (segments) => `WEBVTT\n\n${cues(segments).map((c) => `${clock(c.start, '.')} --> ${clock(c.end, '.')}\n${c.text}\n`).join('\n')}`;
 const toText = (segments) => segments.map((s) => s.text).join('\n');
 
-module.exports = { LANGS, ready, transcribeFile, transcribePcm, toSrt, toVtt, toText, cues };
+module.exports = { LANGS, ready, transcribeFile, transcribePcm, warm, hasSmall: () => ai.have('whisper-small'), toSrt, toVtt, toText, cues };

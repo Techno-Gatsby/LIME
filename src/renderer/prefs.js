@@ -1,6 +1,7 @@
 import { icon } from './icons.js';
 import { limeSvg, setIcon } from './petal.js';
 import { api, $, h, esc, nameOf, applyTheme } from './ui.js';
+import * as dictation from './prefs-dictate.js';
 
 let s = await applyTheme();
 const info = await api.invoke('app:info');
@@ -94,6 +95,7 @@ async function render() {
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
   const SIZE = { soffice: 350, pandoc: 40 };
   const dl = (key, what, cls = '') => `<button class="btn ${cls}" data-a="get" data-k="${key}" data-what="${what}" title="About ${SIZE[key] || 90} MB, from the makers of ${what}; no administrator rights needed">Download…</button>`;
+  const dictHtml = await dictation.html();
   const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : dl(key, what, 'primary')}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
   app.innerHTML = `
   <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
@@ -114,6 +116,7 @@ async function render() {
     ${row('cursor', 'Show or hide the wheel', isMac ? 'With files selected in Finder, opens them in the wheel' : '', '<kbd>⌃</kbd><kbd>⌥</kbd><kbd>L</kbd>')}
     ${row('fit', 'Reset position', '', '<button class="btn" data-a="reset">Reset</button>')}
   </div></section>
+  ${dictHtml}
   <section><h2>ArtCraft apps</h2><div class="group apps">
     ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : dl(c.id, c.name))).join('')}
   </div></section>
@@ -180,8 +183,10 @@ app.addEventListener('click', async (e) => {
 });
 app.addEventListener('change', (e) => { const i = e.target.closest('input[type=checkbox][data-k]'); if (i) set({ [i.dataset.k]: i.checked }); });
 api.on('settings', (n) => { s = n; render(); });
+dictation.wire(app, render);
+api.on('prefs:tab', (t) => document.getElementById(t)?.scrollIntoView());
 api.on('helpers:progress', (p) => {
   const sub = $(`.row [data-k="${p.id}"]`)?.closest('.row')?.querySelector('.t small');
   if (sub) sub.textContent = p.phase === 'download' ? `Downloading… ${p.pct}% of ${Math.round(p.total / 1048576)} MB` : p.phase === 'unpack' ? 'Unpacking…' : 'Starting…';
 });
-render();
+render().then(() => { if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView(); });

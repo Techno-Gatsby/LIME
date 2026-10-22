@@ -100,6 +100,8 @@ const P = {
   blocks: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM16.5 13v7M13 16.5h7',
   format: 'M4 6h16M8 10h12M8 14h12M4 18h16',
   help: 'M12 21a9 9 0 100-18 9 9 0 000 18zM9.6 9.4a2.5 2.5 0 014.8.9c0 1.7-2.4 2.2-2.4 3.7M12 17h.01',
+  mic: 'M12 3a3 3 0 013 3v6a3 3 0 01-6 0V6a3 3 0 013-3zM5.5 11a6.5 6.5 0 0013 0M12 17.5V21M9 21h6',
+  paste: 'M9 4h6v3H9zM15 5.5h3V20H6V5.5h3M12 10v6M9.5 13.5L12 16l2.5-2.5',
 };
 export function icon(name, size = '') {
   const d = P[name] || P.doc;
