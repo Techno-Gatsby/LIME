@@ -69,6 +69,8 @@ function homeRings(r = settings.rings) {
   const first = take(src.first, RING_MAX.first), second = take(src.second, RING_MAX.second);
   for (const id of [...def.second, ...def.first, ...known]) {
     if (seen.has(id) || !known.includes(id)) continue;
+    // Apps with a bucket of their own (the engineering apps) fill spare room only; they never crowd the first ring.
+    if (second.length >= RING_MAX.second && crafts.APPS[id].bucket) continue;
     seen.add(id);
     (second.length < RING_MAX.second ? second : first).push(id);
   }
