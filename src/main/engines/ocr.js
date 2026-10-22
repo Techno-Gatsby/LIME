@@ -162,12 +162,15 @@ async function layer(r, png) {
   const chars = [], ops = [op(Ops.BeginText), op(Ops.SetTextRenderingMode, num(3))];
   for (const l of r.lines) {
     const size = Math.max(1, l.box[3] * k), base = H - (l.box[1] + l.box[3]) * k + size * 0.18;
-    for (const w of l.words) {
-      const cps = [...w.text], width = Math.round(((w.box[2] * k) / cps.length / size) * 1000);
-      if (!cps.length) continue;
-      const codes = cps.map((c) => { chars.push({ c, width }); return hex(((chars.length - 1) % PER_FONT) + 1); });
+    l.words.forEach((w, j) => {
+      const cps = [...w.text], width = Math.round(((w.box[2] * k) / cps.length / size) * 1000), next = l.words[j + 1];
+      if (!cps.length) return;
+      const glyphs = cps.map((c) => ({ c, width }));
+      // A real space after each word: readers that only infer spaces from gaps run words together when boxes touch.
+      if (next) glyphs.push({ c: ' ', width: Math.max(0, Math.round(((next.box[0] - w.box[0] - w.box[2]) * k / size) * 1000)) });
+      const codes = glyphs.map((g) => { chars.push(g); return hex(((chars.length - 1) % PER_FONT) + 1); });
       ops.push(op(Ops.SetFontAndSize, PDFName.of(`F${Math.floor((chars.length - 1) / PER_FONT)}`), num(size)), op(Ops.SetTextMatrix, num(1), num(0), num(0), num(1), num(w.box[0] * k), num(base)), op(Ops.ShowText, PDFHexString.of(codes.join(''))));
-    }
+    });
   }
   ops.push(op(Ops.EndText));
   const ttf = await glyphlessFont(), map = Buffer.alloc(2 * (PER_FONT + 1));

@@ -921,8 +921,11 @@ async function bundledApp(id) {
       await untar(appSource(id), part);
       if (!U.isWin) await new Promise((r) => { const x = spawn('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', part], { stdio: 'ignore' }); x.on('error', r); x.on('close', r); });
       if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
-      await settle(() => fsp.rm(dir, { recursive: true, force: true }));
-      await settle(() => fsp.rename(part, dir));
+      // Another Lime process can finish the same unpack meanwhile; its result is as good as ours.
+      try {
+        await settle(async () => { if (fs.existsSync(target)) return; await fsp.rm(dir, { recursive: true, force: true }); await fsp.rename(part, dir); });
+      } catch (e) { if (!fs.existsSync(target)) throw e; }
+      if (fs.existsSync(part)) fsp.rm(part, { recursive: true, force: true }).catch(() => {});
       await sweepOld(root, id, dir);
       return target;
     })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingApps.delete(id)));
@@ -961,8 +964,11 @@ async function webApp(id) {
       await fsp.mkdir(part, { recursive: true });
       await untar(webSource(id), part);
       if (fs.existsSync(path.join(site, 'index.html'))) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return site; }
-      await settle(() => fsp.rm(dir, { recursive: true, force: true }));
-      await settle(() => fsp.rename(part, dir));
+      const done = () => fs.existsSync(path.join(site, 'index.html'));
+      try {
+        await settle(async () => { if (done()) return; await fsp.rm(dir, { recursive: true, force: true }); await fsp.rename(part, dir); });
+      } catch (e) { if (!done()) throw e; }
+      if (fs.existsSync(part)) fsp.rm(part, { recursive: true, force: true }).catch(() => {});
       await sweepOld(root, id, dir);
       return site;
     })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingWeb.delete(id)));
