@@ -94,6 +94,8 @@ function finish(t, lang) {
   if (latin(t)) {
     t = t.replace(/\bi\b(?=['’]?\w*)/g, 'I').replace(/(^|[.!?]\s+|\n)(\p{Ll})/gu, (m, a, c, i, s) => (/\b(?:\p{L}\.\p{L}|etc|Mr|Mrs|Ms|Dr|St|vs)\.\s+$/u.test(s.slice(0, i + a.length)) ? m : a + c.toUpperCase()));
   }
+  // Whisper small ends Hindi sentences with a full stop; Devanagari takes a danda.
+  t = t.replace(/([\u0900-\u0963\u0966-\u097f])\.(?=\s|$)/g, '$1।');
   if (!/[.!?।؟…:"'”)]$/.test(t)) t += lang === 'hi' || /[ऀ-ॿ]$/.test(t) ? '।' : lang === 'ar' && /[؀-ۿ]$/.test(t) ? '.' : '.';
   return t;
 }

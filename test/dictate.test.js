@@ -70,6 +70,7 @@ module.exports = async ({ dir }) => {
   });
   await check('tidy: Hindi and Arabic keep their script and ending', () => {
     ok(tidy('नमस्ते आज की बैठक तीन बजे होगी', { lang: 'hi' }) === 'नमस्ते आज की बैठक तीन बजे होगी।', 'Hindi');
+    ok(tidy('नमस्ते. आज की बैठक तीन बजे होगी.', { lang: 'hi' }) === 'नमस्ते। आज की बैठक तीन बजे होगी।', 'Hindi full stops');
     ok(tidy('مرحبا الاجتماع في الساعة الثالثة', { lang: 'ar' }) === 'مرحبا الاجتماع في الساعة الثالثة.', 'Arabic');
     return 'danda and full stop';
   });
