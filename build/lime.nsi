@@ -54,7 +54,14 @@ Section "Lime"
   !insertmacro CloseApp
   SetOutPath "$INSTDIR"
   RMDir /r "$INSTDIR\resources\app"
+!ifdef SPLIT
+  ; NSIS can't hold more than 2 GB, so the largest app archives sit in Lime-data beside the installer.
+  File /r /x blender.tar.br /x code.tar.br "${SRC}\*.*"
+  IfFileExists "$EXEDIR\Lime-data\apps\*.*" 0 +2
+  CopyFiles /SILENT "$EXEDIR\Lime-data\*.*" "$INSTDIR\resources"
+!else
   File /r "${SRC}\*.*"
+!endif
   WriteUninstaller "$INSTDIR\Uninstall Lime.exe"
   CreateShortCut "$SMPROGRAMS\${APP}.lnk" "$INSTDIR\${EXE}"
   CreateShortCut "$DESKTOP\${APP}.lnk" "$INSTDIR\${EXE}"

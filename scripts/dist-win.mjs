@@ -42,5 +42,11 @@ const installed = path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Fil
 const makensis = which('MAKENSIS', 'makensis') || (process.platform === 'win32' && (fs.existsSync(installed) ? installed : await nsis()));
 if (!makensis) throw new Error('Install NSIS (makensis) to build the Windows installer.');
 const kb = (d) => fs.readdirSync(d, { withFileTypes: true }).reduce((s, e) => s + (e.isDirectory() ? kb(path.join(d, e.name)) : fs.statSync(path.join(d, e.name)).size / 1024), 0);
-sh(makensis, ['-V2', '-INPUTCHARSET', 'UTF8', `-DSRC=${dir}`, `-DOUT=${setup}`, `-DVERSION=${pkg.version}`, `-DSIZE=${Math.round(kb(dir))}`, path.join(ROOT, 'build/lime.nsi')], { stdio: 'inherit' });
-console.log('✓', path.relative(ROOT, setup), `${(fs.statSync(setup).size / 1048576).toFixed(0)} MB`);
+// Over NSIS's 2 GB limit, Blender and Code go beside the installer in Lime-data (both ship in the same download).
+const side = ['blender.tar.br', 'code.tar.br'].filter((f) => fs.existsSync(path.join(dir, 'resources', 'apps', f)));
+const data = path.join(OUT, 'Lime-data');
+rm(data);
+const split = kb(dir) > 1900 * 1024 && side.length > 0;
+if (split) { fs.mkdirSync(path.join(data, 'apps'), { recursive: true }); for (const f of side) fs.copyFileSync(path.join(dir, 'resources', 'apps', f), path.join(data, 'apps', f)); }
+sh(makensis, ['-V2', '-INPUTCHARSET', 'UTF8', ...(split ? ['-DSPLIT'] : []), `-DSRC=${dir}`, `-DOUT=${setup}`, `-DVERSION=${pkg.version}`, `-DSIZE=${Math.round(kb(dir))}`, path.join(ROOT, 'build/lime.nsi')], { stdio: 'inherit' });
+console.log('✓', path.relative(ROOT, setup), `${(fs.statSync(setup).size / 1048576).toFixed(0)} MB`, split ? `+ Lime-data ${(kb(data) / 1024).toFixed(0)} MB` : '');
