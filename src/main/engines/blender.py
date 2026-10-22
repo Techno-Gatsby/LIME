@@ -154,6 +154,7 @@ elif op == 'turntable':
     engine(scene, job, turntable=True)
     rig = bpy.data.objects['Lime turntable']
     frames = int(job.get('frames') or 72)
+    scene.render.use_persistent_data = True  # Cycles keeps the scene between frames instead of rebuilding it
     scene.frame_start, scene.frame_end = 1, frames
     for f in range(1, frames + 1):
         scene.frame_set(f)

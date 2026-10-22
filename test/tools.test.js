@@ -1480,13 +1480,13 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(data[0] === 0 && data.some((a) => a === 255), 'the background isn’t see-through around a solid model');
   }, noBlender);
   A('studio render of a SolidCraft design', 'blender-render', [block], { quality: 'draft', size: 'small' }, ([o]) => rendered(o, 1024, 768), noBlender || noSolid);
-  A('turntable gif turns', 'blender-turntable', [blend], { to: 'gif', seconds: 1 }, async ([o]) => {
+  A('turntable gif turns', 'blender-turntable', [blend], { to: 'gif', seconds: 1, width: 320, height: 320 }, async ([o]) => {
     const m = await sharp(o, { animated: true }).metadata();
     ok(m.pages === 20, `${m.pages} frames, not 20`);
     const frame = async (i) => sharp(await sharp(o, { page: i }).png().toBuffer());
     ok((await diff(await frame(0), await frame(5))) > 1, 'frames 1 and 6 are the same: nothing turned');
   }, noBlender);
-  A('turntable mp4', 'blender-turntable', [fx('box.stl')], { to: 'mp4', seconds: 1 }, async ([o]) => { await dur(o, 1, 0.2); ok(of(await ffp(o), 'video')[0]?.codec_name === 'h264', 'not H.264'); }, noBlender);
+  A('turntable mp4', 'blender-turntable', [fx('box.stl')], { to: 'mp4', seconds: 1, width: 320, height: 180 }, async ([o]) => { await dur(o, 1, 0.2); ok(of(await ffp(o), 'video')[0]?.codec_name === 'h264', 'not H.264'); }, noBlender);
   A('blender opens a model: the import script reads it', 'cad-info', [fx('box.stl')], { save: false }, async () => {
     const [, expr] = CR.blenderArgs([fx('box.stl'), fx('box.glb')]);
     const probeOut = path.join(THIRD, 'opened.json');
@@ -1657,8 +1657,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() && !E('office').status().bundled.soffice ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
   const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html', solidcraft: block };
-  // Turntables are rendered frame by frame on the processor: one-second turns keep the sweep short.
-  Object.assign(SWEEP, { 'solid-change': [0, { params: 'width = 60 mm' }], 'blender-render': [0, { quality: 'draft', size: 'small' }], 'blender-turntable': [0, { seconds: 1, to: 'gif' }] });
+  // Turntables are rendered frame by frame on the processor: one-second turns of small frames keep the sweep short.
+  Object.assign(SWEEP, { 'solid-change': [0, { params: 'width = 60 mm' }], 'blender-render': [0, { quality: 'draft', size: 'small' }], 'blender-turntable': [0, { seconds: 1, to: 'gif', width: 240, height: 240 }] });
   const SWEEP_SKIP = [[/^blender-turntable seconds=20$/, 'twenty seconds of frames; one second covers the range'],
     ...(process.platform === 'linux' ? [[/^blender-(render|turntable) engine=eevee$/, 'Eevee needs a graphics card, and this test machine renders without one']] : [])];
   { const d = require('./diagrams.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }

@@ -237,9 +237,12 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
     await lime('L.expand("click"); await L.loadHome();');
     await until('return L.S.ring.some((x) => x.homeMore)', 3000);
     await js('window.lime.invoke("settings:set", { rings: { first: ["wordcraft", "pdfcraft", "photocraft", "nosuchapp"], second: ["vectorcraft"] } })');
-    if (!(await until('return L.S.ring[0]?.label === "WordCraft" && L.S.ring[1]?.label === "PdfCraft" && L.S.ring.length === 4', 4000))) throw new Error(`first ring did not follow: ${await labels()}`);
+    // Apps that don't fit on the second ring (SolidCraft and Blender, when the build has them) spill onto the first.
+    const spill = JSON.stringify(require(path.join(__dirname, "..", "src", "main", "engines", "crafts")).status().filter((a) => a.optional).map((a) => a.name));
+    if (!(await until(`return L.S.ring[0]?.label === "WordCraft" && L.S.ring[1]?.label === "PdfCraft" && L.S.ring.filter((x) => !${spill}.includes(x.label)).length === 4`, 4000))) throw new Error(`first ring did not follow: ${await labels()}`);
     const saved = await js('window.lime.invoke("settings:get")');
-    if (saved.rings.first.join() !== 'wordcraft,pdfcraft,photocraft' || saved.rings.second[0] !== 'vectorcraft' || saved.rings.second.length < 9) throw new Error(`stored ${JSON.stringify(saved.rings)}`);
+    const optional = new Set(Object.entries(require(path.join(__dirname, '..', 'src', 'main', 'engines', 'crafts')).APPS).filter(([, a]) => a.optional).map(([id]) => id));
+    if (saved.rings.first.filter((id) => !optional.has(id)).join() !== 'wordcraft,pdfcraft,photocraft' || saved.rings.second[0] !== 'vectorcraft' || saved.rings.second.length < 9) throw new Error(`stored ${JSON.stringify(saved.rings)}`);
     await lime('L.pick(L.S.ring.find((x) => x.homeMore));');
     const more = await labels();
     if (more[0] !== 'VectorCraft' || more.includes('WordCraft') || more.includes('PhotoCraft')) throw new Error(`second ring ${more}`);
@@ -343,7 +346,7 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       let note = '', state = 'loading';
       for (const t0 = Date.now(); Date.now() - t0 < 90000 && state === 'loading'; await sleep(250)) {
         state = await wjs('document.body.dataset.state');
-        note = (await inner('document.getElementById("solidcraft_loading")?.innerText || ""').catch(() => '')) || '';
+        note = (await Promise.resolve(inner('document.getElementById("solidcraft_loading")?.innerText || ""')).catch(() => '')) || '';
         if (/failed to start/i.test(note)) break;
       }
       // Without a GPU or software WebGL2 (Linux CI with the GPU off) SolidCraft can't draw; that's the machine, not the app.

@@ -999,7 +999,7 @@ async function turntable(p, opts, ctx) {
   const to = opts.to === 'gif' ? 'gif' : 'mp4';
   const secs = Math.max(1, Math.min(20, Number(opts.seconds) || 4)), fps = to === 'gif' ? 20 : 30, frames = Math.round(secs * fps);
   const job = { ...renderJob({ size: 'small', quality: 'draft', ...opts }), op: 'turntable', frames };
-  if (!opts.size) [job.width, job.height] = to === 'gif' ? [600, 600] : [1280, 720];
+  if (!opts.size && !opts.width) [job.width, job.height] = to === 'gif' ? [600, 600] : [1280, 720];
   const dir = await U.tmpDir('turntable');
   try {
     await forBlender(p, ctx, (src) => blender({ ...job, in: src, out: dir }, ctx, 'Rendering the turntable', { frames: true, timeout: 3600000 }));
@@ -1089,7 +1089,9 @@ async function untar(src, dest) {
     tar.stderr.on('data', (d) => { err += d; });
     tar.on('error', (e) => no(e.code === 'ENOENT' ? new Error('tar.exe is missing: Windows 10 (1803) or later is needed') : e));
     tar.on('close', (c) => (c === 0 ? ok() : no(new Error(err.trim() || `tar exited with ${c}`))));
-    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress({ params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch(no);
+    // tar may stop reading at the end-of-archive blocks and close its input before the padding after them is sent:
+    // that isn't a failure, and its exit code says whether the unpack worked.
+    pipeline(fs.createReadStream(src), zlib.createBrotliDecompress({ params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } }), tar.stdin).catch((e) => { if (!['EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(e.code)) no(e); });
   });
 }
 async function bundledApp(id) {

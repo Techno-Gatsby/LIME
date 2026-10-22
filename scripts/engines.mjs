@@ -144,7 +144,8 @@ async function crafts() {
   mk(CRAFTS);
   const manifest = { ...CRAFT };
   // On Mac and Windows the CLI ships inside its app's archive (see apps), so only the versions are written here.
-  if (PLAT === 'darwin' || WIN) for (const f of ls(CRAFTS)) if (f !== 'manifest.json') fs.rmSync(path.join(CRAFTS, f), { force: true });
+  // (Braced: the else used to pair with the inner if, so Linux never built its engines here.)
+  if (PLAT === 'darwin' || WIN) { for (const f of ls(CRAFTS)) if (f !== 'manifest.json') fs.rmSync(path.join(CRAFTS, f), { force: true }); }
   else await Promise.all(Object.entries(CRAFT).map(async ([id, v]) => {
     const exe = `${id}-cli`, dest = path.join(CRAFTS, `${exe}.br`);
     if (has(dest) || has(path.join(CRAFTS, exe))) return;
