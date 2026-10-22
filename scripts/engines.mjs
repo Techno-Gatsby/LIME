@@ -26,6 +26,9 @@ const SEVEN = 'https://github.com/ip7z/7zip/releases/download/26.04';
 const NOTO = 'https://raw.githubusercontent.com/notofonts/notofonts.github.io/main/fonts';
 const GF = 'https://raw.githubusercontent.com/google/fonts/main/ofl';
 const TESS = 'https://raw.githubusercontent.com/tesseract-ocr';
+// Speech models come from k2-fsa/sherpa-onnx's releases (see ai() below); dictation adds Silero VAD (MIT).
+const SHERPA = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
+const VAD = { url: `${SHERPA}/asr-models/silero_vad.onnx`, sha: '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6' };
 const LANGS = ['spa', 'fra', 'deu', 'ita', 'por', 'nld', 'rus', 'ara', 'hin', 'jpn', 'chi_sim', 'kor'];
 const FONTS = {
   'NotoSans-Regular.ttf': `${NOTO}/NotoSans/hinted/ttf/NotoSans-Regular.ttf`, 'NotoSans-Bold.ttf': `${NOTO}/NotoSans/hinted/ttf/NotoSans-Bold.ttf`,
@@ -230,6 +233,38 @@ async function natives() {
   }
 }
 
+const sha256 = (f) => new Promise((ok, no) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', (d) => h.update(d)).on('end', () => ok(h.digest('hex'))).on('error', no); });
+async function pinned(url, sha) {
+  const f = await get(url);
+  const got = await sha256(f);
+  if (got !== sha) { fs.rmSync(f, { force: true }); throw new Error(`${path.basename(f)}: SHA-256 ${got} isn't the pinned ${sha}`); }
+  return f;
+}
+const packDir = async (dir, dest) => {
+  const tar = `${dest}.tar`;
+  sh(TAR, ['-cf', tar, '-C', dir, '.']);
+  await new Promise((ok, no) => fs.createReadStream(tar).pipe(zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 } })).pipe(fs.createWriteStream(dest)).on('finish', ok).on('error', no));
+  fs.rmSync(tar, { force: true });
+};
+// Dictation's voice-activity model; Whisper itself is in vendor/ai, built by ai().
+async function speech() {
+  const DICT = path.join(V, 'dictate', TARGET);
+  mk(DICT);
+  const read = (d) => { try { return JSON.parse(fs.readFileSync(path.join(d, 'manifest.json'), 'utf8')); } catch { return {}; } };
+  const dict = read(DICT);
+  const vadDest = path.join(DICT, 'vad.tar.br');
+  if (!has(vadDest) || dict.vad?.version !== VAD.sha.slice(0, 8)) {
+    const out = path.join(CACHE, 'vad');
+    fs.rmSync(out, { recursive: true, force: true });
+    fs.copyFileSync(await pinned(VAD.url, VAD.sha), path.join(mk(out), 'silero_vad.onnx'));
+    await packDir(out, vadDest);
+    fs.rmSync(out, { recursive: true, force: true });
+    dict.vad = { version: VAD.sha.slice(0, 8), file: 'silero_vad.onnx' };
+    fs.writeFileSync(path.join(DICT, 'manifest.json'), JSON.stringify(dict));
+    console.log('◉', 'silero vad', `${(fs.statSync(vadDest).size / 1024).toFixed(0)} KB`);
+  }
+}
+
 async function helpers() {
   const H = createRequire(import.meta.url)('../src/main/helpers.js');
   mk(HELPERS);
@@ -257,7 +292,6 @@ async function helpers() {
 
 // The speech and music models: the same bytes on every platform, packed per target so an installer carries one
 // copy. Each becomes <id>.tar.br, unpacked into userData on first use. SHA-256 pins every download.
-const SHERPA = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
 const PIPER = { 'en-GB': 'en_GB-alba-medium', 'en-US': 'en_US-lessac-medium', ar: 'ar_JO-kareem-medium', hi: 'hi_IN-rohan-medium', fr: 'fr_FR-siwis-medium', de: 'de_DE-thorsten-medium', es: 'es_ES-davefx-medium' };
 const PIPER_SHA = { 'en-GB': 'f7581d123ae977f64f3032bb247d4deeac8440e881d918d36fdd36d8f1030fb7', 'en-US': 'f1c6d0295cf16087b05f80fdca5b44daca5cd78e2c425d419a42ba34929805f9', ar: '215910431bbe8236b77242b19d869a4eda6073e9cd424bec45b6d4a59a790d82', hi: 'b306822fe16516d3c882e070a7205d781524bd9e8f2d121c3da3e504afe20e05',
   fr: '3909cff9b3cfd4820c66aa13bf554315c82e34899c161f0b446ece372bc4b5ec', de: '07e240b7b9c1fc9211d5a69512f8cbe11b3286c2ed79c15c076ac6ed427fdf13', es: '8bb8ac1cefb727caec9bd9c6c3185c673c8b42c53bd29bb25d5a7715dac37125' };
@@ -269,16 +303,16 @@ const AI_MODELS = {
   espeak: { version: '0.3.5', url: 'https://registry.npmjs.org/@echogarden/espeak-ng-emscripten/-/espeak-ng-emscripten-0.3.5.tgz', sha: '6b0bac048e123de9a690e3fe79346ed377c18797e9b09c3e0d8761a3ac00abe6', pick: { 'espeak-ng.js': 'espeak-ng.js', 'espeak-ng.data': 'espeak-ng.data', COPYING: 'COPYING' } },
   ...Object.fromEntries(Object.entries(PIPER).map(([lang, v]) => [`voice-${lang}`, { version: v, url: `${SHERPA}/tts-models/vits-piper-${v}-int8.tar.bz2`, sha: PIPER_SHA[lang], pick: { 'voice.onnx': `${v}.onnx`, 'voice.onnx.json': `${v}.onnx.json`, MODEL_CARD: 'MODEL_CARD' } }])),
 };
-const sha256 = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 async function ai() {
   mk(AI);
   const file = path.join(AI, 'manifest.json');
   const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
-  const want = process.env.LIME_AI_ONLY ? process.env.LIME_AI_ONLY.split(',') : Object.keys(AI_MODELS);
+  // Small reads Hindi and other languages far better than base, at about 200 MB more: opt in with LIME_WHISPER_SMALL=1.
+  const want = process.env.LIME_AI_ONLY ? process.env.LIME_AI_ONLY.split(',') : Object.keys(AI_MODELS).filter((id) => id !== 'whisper-small' || process.env.LIME_WHISPER_SMALL);
   for (const id of want) {
     const M = AI_MODELS[id], dest = path.join(AI, `${id}.tar.br`);
     if (has(dest) && manifest[id]?.version === M.version) continue;
-    const archive = await get(M.url), sum = sha256(archive);
+    const archive = await get(M.url), sum = await sha256(archive);
     if (sum !== M.sha) { fs.rmSync(archive, { force: true }); throw new Error(`${id}: ${path.basename(M.url)} does not match its pinned SHA-256 (got ${sum})`); }
     const tmp = path.join(CACHE, `${id}-ai`);
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -384,5 +418,6 @@ if (!only || only === 'ai') await ai();
 if (!only || only === 'models') await models();
 if (!only || only === 'codecs') await codecs();
 if (!only || only === 'diagrams') { const DV = await import('./diagramvendor.mjs'); await DV.buildDrawio(path.join(V, 'diagrams'), CACHE); await DV.buildTranslate(path.join(V, 'translate'), CACHE); }
+if (!only || only === 'speech') await speech();
 fs.rmSync(path.join(CACHE, 'thin'), { recursive: true, force: true });
 console.log('✓ engines ready for', TARGET);

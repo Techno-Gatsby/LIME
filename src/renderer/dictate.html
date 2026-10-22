@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob: mediastream:">
+<title>Lime dictation</title>
+<link rel="stylesheet" href="lime.css">
+<link rel="stylesheet" href="dictate.css">
+</head>
+<body>
+<div class="panel" data-state="idle">
+  <header>
+    <div class="orb" aria-hidden="true"><i></i></div>
+    <div class="status"><b class="state">Ready</b><span class="hint"></span></div>
+    <button class="lang" type="button" title="Language"></button>
+    <button class="x" type="button" title="Close (Esc)" aria-label="Close"></button>
+  </header>
+  <div class="text" spellcheck="false" aria-live="polite"><span class="ghost">Start speaking…</span></div>
+  <p class="heard" hidden></p>
+  <div class="learn" hidden></div>
+  <footer>
+    <div class="wave" aria-hidden="true"></div>
+    <button class="btn subtle stop" type="button">Stop</button>
+    <button class="btn subtle again" type="button" hidden></button>
+    <button class="btn paste" type="button" hidden></button>
+    <button class="btn primary lg copy" type="button" hidden></button>
+  </footer>
+</div>
+<script type="module" src="dictate-page.js"></script>
+</body>
+</html>

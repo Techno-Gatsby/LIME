@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, welcome, BrowserWindow, app, summon, peek, screen, debug, dir }) => {
+module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, welcome, BrowserWindow, app, summon, peek, screen, debug, dictate, dir }) => {
   fs.mkdirSync(dir, { recursive: true });
   const samples = process.env.LIME_SAMPLES || path.join(dir, 'samples');
   const steps = (process.env.LIME_STEPS || 'all').split(',');
@@ -805,6 +805,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         e.destroy();
       }
     }
+    if (want('dictate') && process.env.LIME_DICTATE_WAV) await require('./dictate.shots')({ dictate, shot, js, sleep, dir, BrowserWindow, openPrefs });
     if (want('diagrams')) await require('./diagrams.test').shots({ openEditor, BrowserWindow, shot, dir, samples });
   } catch (e) { console.error('shots failed', e); }
   app.isQuitting = true;

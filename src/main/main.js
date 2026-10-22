@@ -20,8 +20,9 @@ const CRAFTS = app.isPackaged ? path.join(RES, 'crafts') : process.env.LIME_CRAF
 const APPS = app.isPackaged ? path.join(RES, 'apps') : process.env.LIME_APPS || path.join(ROOT, 'vendor', 'apps', `${process.platform}-${process.arch}`);
 const WEB = app.isPackaged ? path.join(RES, 'web') : process.env.LIME_WEB || path.join(ROOT, 'vendor', 'web');
 const HELPERS = app.isPackaged ? path.join(RES, 'helpers') : path.join(ROOT, 'vendor', 'helpers', `${process.platform}-${process.arch}`);
-const AI = app.isPackaged ? path.join(RES, 'ai') : process.env.LIME_AI || path.join(ROOT, 'vendor', 'ai', `${process.platform}-${process.arch}`);
 const helperRoot = () => path.join(app.getPath('userData'), 'helpers');
+const DICTATE = app.isPackaged ? path.join(RES, 'dictate') : process.env.LIME_DICTATE || path.join(ROOT, 'vendor', 'dictate', `${process.platform}-${process.arch}`);
+const dictate = require('./dictate');
 const asset = (n) => path.join(ROOT, 'build', n);
 
 app.setName('Lime');
@@ -80,7 +81,7 @@ function addRecent(paths, kind) {
   buildTray();
 }
 
-const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, ai: AI, codecs: app.isPackaged ? path.join(RES, 'codecs') : path.join(ROOT, 'vendor', 'codecs', `${process.platform}-${process.arch}`), models: process.env.LIME_MODELS || path.join(RES, 'models'), user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
+const engineCfg = () => ({ bin: BIN, data: DATA, crafts: CRAFTS, apps: APPS, web: WEB, helpers: HELPERS, codecs: app.isPackaged ? path.join(RES, 'codecs') : path.join(ROOT, 'vendor', 'codecs', `${process.platform}-${process.arch}`), ...(app.isPackaged ? { ai: path.join(RES, 'ai') } : {}), models: process.env.LIME_MODELS || path.join(RES, 'models'), user: app.getPath('userData'), tmp: path.join(os.tmpdir(), 'lime'), ...Object.fromEntries(['soffice', 'pandoc', ...Object.keys(crafts.APPS)].map((k) => [k, settings[k] || ''])) });
 const POOL = Math.max(1, Math.min(3, os.cpus().length - 1));
 const pool = [];
 let utility = null, seq = 0;
@@ -582,6 +583,7 @@ function buildTray() {
   const recent = settings.recent.filter((r) => r.kind === 'output' && fs.existsSync(r.path)).slice(0, 10);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Wheel', accelerator: 'Control+Alt+L', click: () => showWheel() },
+    { label: 'Dictate', accelerator: dictate.hotkey().accel || undefined, click: () => dictate.start() },
     { label: 'Show Lime at Screen Edge', type: 'checkbox', checked: !settings.hidden, click: (i) => setSettings({ hidden: !i.checked }) },
     { label: 'Choose Files…', click: pickFiles },
     appsMenu(),
@@ -684,6 +686,7 @@ async function setSettings(patch) {
   if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
   if ('rings' in patch) settings.rings = homeRings(patch.rings);
+  if ('dictation' in patch) dictate.apply(before.dictation);
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
   if (['soffice', 'pandoc', ...Object.keys(crafts.APPS)].some((k) => k in patch && patch[k] !== before[k])) { require('./engines/util').configure(engineCfg()); [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() })); }
   buildTray();
@@ -713,6 +716,7 @@ function registerIpc() {
   h('wheel:hide', () => setSettings({ hidden: true }));
   h('wheel:menu', () => Menu.buildFromTemplate([
     { label: 'Choose Files…', click: pickFiles },
+    { label: 'Dictate', click: () => dictate.start() },
     appsMenu(),
     { label: 'New Whiteboard', click: () => openEditor('', 'board') }, ...(require('./diagrams').hasDrawio() ? [{ label: 'New Diagram', click: () => openEditor('', 'drawio') }] : []),
     { label: 'Settings…', click: () => openPrefs() },
@@ -888,6 +892,7 @@ app.whenReady().then(async () => {
   if (isMac && !settings.dock) app.dock.hide();
   registerProtocols();
   registerIpc();
+  dictate.init({ app, settings: () => settings, setSettings, cfg: engineCfg, vendor: DICTATE, helperRoot, log, webPrefs, topLevel: TOP_LEVEL, wheelRect: () => (mode === 'open' && wheel?.isVisible() ? visibleRect() : null) });
   appMenu();
   utility = spawnWorker('utility');
   for (let i = 0; i < POOL; i++) pool.push(spawnWorker('jobs'));
@@ -915,8 +920,8 @@ app.whenReady().then(async () => {
   } });
   const harness = (env, name, api) => { if (!process.env[env] || app.isPackaged) return; try { require(path.join(ROOT, 'test', name))({ ...api, dir: process.env[env] }); } catch (e) { console.error(e); app.exit(1); } };
   harness('LIME_TEST', 'tools.test', { submit, jobs, app, tools });
-  harness('LIME_UI', 'ui.test', { openCraftWeb, wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen });
-  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, openWelcome, welcome: () => welcomeWin, BrowserWindow, app, summon, peek: sendPeek, screen, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
+  harness('LIME_UI', 'ui.test', { openCraftWeb, wheel: () => wheel, sensor: () => sensor, watcher: () => watcher, summon, shiftSummon, setCursor: (fn) => { cursorAt = fn; }, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt, catching }), dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs: () => prefsWin, openWelcome, welcome: () => welcomeWin, peek: sendPeek, screen, dictate });
+  harness('LIME_SHOTS', 'shots', { wheel: () => wheel, showWheel, openPrefs, openEditor, openWelcome, welcome: () => welcomeWin, BrowserWindow, app, summon, peek: sendPeek, screen, dictate, debug: () => ({ mode, placed: visibleRect(), window: placed, tab: tabPoint(), bloomAt }) });
 });
 app.on('activate', () => showWheel());
 app.on('window-all-closed', (e) => { if (app.isQuitting) app.quit(); });

@@ -10,6 +10,7 @@ const { dir, T } = await pack('darwin', ARCH, {
   extendInfo: {
     LSUIElement: true, LSMinimumSystemVersion: '12.0', NSRequiresAquaSystemAppearance: false,
     NSAppleEventsUsageDescription: 'Lime asks Pages, Numbers or Keynote to convert documents when they are installed.',
+    NSMicrophoneUsageDescription: 'Lime listens while you dictate. Your voice stays on this Mac.',
     CFBundleDocumentTypes: [{ CFBundleTypeName: 'Any file', CFBundleTypeRole: 'Viewer', LSHandlerRank: 'Alternate', LSItemContentTypes: ['public.item', 'public.folder'] }],
   },
 });

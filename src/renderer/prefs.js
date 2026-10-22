@@ -1,6 +1,7 @@
 import { icon } from './icons.js';
 import { limeSvg, setIcon } from './petal.js';
 import { api, $, h, esc, nameOf, applyTheme } from './ui.js';
+import * as dictation from './prefs-dictate.js';
 import { aboutRows, wireAbout } from './prefs-about.js';
 import { wireSearch } from './prefs-search.js';
 
@@ -97,6 +98,7 @@ async function render() {
   const found = (ok, label) => `<span class="tag">${ok ? 'Found' : 'Not installed'}</span><span class="dot ${ok ? 'on' : ''}" title="${label}"></span>`;
   const absent = '<span class="tag">Not included</span>';
   const helper = (key, p, what) => `${p ? `<span class="tag" title="${esc(p)}">${eng.bundled?.[key] && !s[key] ? 'Included' : 'Found'}</span>` : eng.bundled?.[key] ? '<span class="tag">Included · getting ready…</span>' : absent}<button class="btn" data-a="locate" data-k="${key}" data-what="${what}">${p ? 'Change…' : 'Locate…'}</button>`;
+  const dictHtml = await dictation.html();
   app.innerHTML = `
   <header>${limeSvg(52)}<div><h1>Lime</h1><p>Version ${esc(info.version)} · Everything runs on this ${isMac ? 'Mac' : 'PC'}</p></div></header>
   <section><h2>Saving</h2><div class="group">
@@ -116,6 +118,7 @@ async function render() {
     ${row('cursor', 'Show or hide the wheel', isMac ? 'With files selected in Finder, opens them in the wheel' : '', '<kbd>⌃</kbd><kbd>⌥</kbd><kbd>L</kbd>')}
     ${row('fit', 'Reset position', '', '<button class="btn" data-a="reset">Reset</button>')}
   </div></section>
+  ${dictHtml}
   <section><h2>ArtCraft apps</h2><div class="group apps">
     ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : absent)).join('')}
   </div></section>
@@ -171,8 +174,9 @@ app.addEventListener('click', async (e) => {
 });
 app.addEventListener('change', (e) => { const i = e.target.closest('input[type=checkbox][data-k]'); if (i) set({ [i.dataset.k]: i.checked }); });
 api.on('settings', (n) => { s = n; render(); });
+dictation.wire(app, render);
 wireAbout(app, api, (u) => { update = u; });
 const search = wireSearch(app);
 await render();
-if (location.hash === '#about') $('#about')?.scrollIntoView();
-api.on('prefs:tab', (t) => { if (t === 'about') $('#about')?.scrollIntoView({ behavior: 'smooth' }); });
+if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+api.on('prefs:tab', (t) => document.getElementById(t)?.scrollIntoView({ behavior: 'smooth' }));

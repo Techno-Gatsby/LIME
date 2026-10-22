@@ -71,7 +71,7 @@ const listed = (dir, kind) => {
   return (f) => ok.has(f);
 };
 export function addResources(res, T) {
-  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], [`helpers/${T}`, 'helpers'], ['models', 'models'], [`ai/${T}`, 'ai'], [`codecs/${T}`, 'codecs'], ['web', 'web'], ['data', 'data'], ['diagrams', 'diagrams'], ['translate', 'translate']]) {
+  for (const [from, to] of [[`bin/${T}`, 'bin'], [`crafts/${T}`, 'crafts'], [`apps/${T}`, 'apps'], [`helpers/${T}`, 'helpers'], [`ai/${T}`, 'ai'], [`dictate/${T}`, 'dictate'], ['models', 'models'], [`codecs/${T}`, 'codecs'], ['web', 'web'], ['data', 'data'], ['diagrams', 'diagrams'], ['translate', 'translate']]) {
     const src = path.join(V, from);
     if (!fs.existsSync(src)) continue;
     const keep = listed(src, to);

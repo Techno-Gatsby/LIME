@@ -101,3 +101,11 @@ Speech and music models, unpacked from the installer's ai folder on first use (a
   (alba, lessac, kareem, rohan, siwis, thorsten, davefx), int8, from sherpa-onnx's releases; phoneme ids follow piper-phonemize.
   eSpeak NG, GPL-3.0-or-later (https://github.com/espeak-ng/espeak-ng), as the WebAssembly build @echogarden/espeak-ng-emscripten
   (https://github.com/echogarden-project/espeak-ng-emscripten), used unchanged to turn text into phonemes.
+
+Dictation listens with Whisper by OpenAI (https://github.com/openai/whisper, MIT License), as the int8 ONNX export made by
+k2-fsa/sherpa-onnx (https://github.com/k2-fsa/sherpa-onnx, Apache License 2.0), and finds speech with Silero VAD
+(https://github.com/snakers4/silero-vad, MIT License). Live partials keep the words two readings agree on, the LocalAgreement
+idea from whisper_streaming by ÚFAL (https://github.com/ufal/whisper_streaming, MIT License). Pasting into the app that had
+focus (clipboard, then Ctrl+V or ⌘V) and hold-to-talk follow Handy by CJ Pais (https://github.com/cjpais/Handy, MIT License);
+offering a corrected word for the dictionary follows OpenWhispr (https://github.com/OpenWhispr/openwhispr, MIT License).
+No code is copied from Handy, OpenWhispr or whisper_streaming.

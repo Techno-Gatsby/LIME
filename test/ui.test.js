@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, openWelcome, welcome, peek, screen, dir }) => {
+module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSummon, setCursor, debug, dialog, BrowserWindow, app, openEditor, editors, openPrefs, prefs, openWelcome, welcome, peek, screen, dictate, dir }) => {
   const FX = process.env.LIME_FX;
   const OUT = path.join(dir, 'ui-out');
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -2436,6 +2436,35 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   pw.close();
   results.push(...(await require('./diagrams.test').ui({ openEditor, editors, dir })));
   await require('./settings-search.ui')({ check, js, openPrefs, prefs, app, dir });
+
+  // Dictation through the real microphone path: Chromium plays LIME_FAKE_MIC as the capture device.
+  await check('dictate: the panel listens, shows partials and copies', async () => {
+    const skip = (m) => { throw Object.assign(new Error(m), { skip: true }); }, ok = (c, m) => { if (!c) throw new Error(m); };
+    if (!process.env.LIME_FAKE_MIC) skip('set LIME_FAKE_MIC to a 16 kHz WAV');
+    if (!dictate.vendorOk() || !require('../src/main/engines/speech-ai').have('whisper')) skip('the speech payload isn’t vendored (set LIME_AI and LIME_DICTATE)');
+    await dictate.setConf({ lang: 'en', translate: false, tidy: true, autoCopy: true, autoStop: false, words: [], replace: [] });
+    await dictate.start();
+    const pw = () => dictate.window(), pjs = (c) => pw().webContents.executeJavaScript(c, true);
+    const t0 = Date.now(), wait = async (fn, ms) => { while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(200); } return false; };
+    ok(await wait(() => pjs('document.querySelector(".state").textContent === "Listening"'), 5000), 'the panel never said Listening');
+    ok(!pw().isFocused(), 'the panel took focus while listening');
+    ok(await wait(() => pjs('/\\S/.test(document.querySelector(".text").textContent) && !document.querySelector(".text .ghost")'), 60000), `no live words appeared: ${await pjs('document.querySelector(".text").textContent')}`);
+    const live = await pjs('document.querySelector(".text").textContent');
+    await sleep(2500);
+    dictate.stop();
+    ok(await wait(() => dictate.current()?.done, 120000), 'no final text');
+    const c = dictate.current();
+    ok(!c.error, c.error);
+    ok(c.text.length > 20, `final text: ${JSON.stringify(c.text)}`);
+    ok(await pjs('document.querySelector(".state").textContent') === 'Copied', 'state is not Copied');
+    ok((await require('electron').clipboard.readText()) === c.text, 'the clipboard does not hold the text');
+    ok(!(await pjs('document.querySelector(".copy").hidden')), 'no Copy button');
+    await pjs('document.querySelector(".text").textContent = "Edited words here."; document.querySelector(".copy").click(); 1');
+    await sleep(300);
+    ok((await require('electron').clipboard.readText()) === 'Edited words here.', 'edited text was not copied');
+    dictate.close();
+    return `live: ${JSON.stringify(live.slice(0, 50))} · final: ${JSON.stringify(c.text)}`;
+  });
 
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed through the wheel${skip.length ? `, ${skip.length} skipped` : ''}`);

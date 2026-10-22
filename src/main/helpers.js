@@ -74,6 +74,8 @@ const HELPERS = {
     },
   },
 };
+// Packed inside Lime (vendor/ai, vendor/dictate); only ever unpacked, never fetched.
+Object.assign(HELPERS, { whisper: { name: 'Speech recognition' }, 'whisper-small': { name: 'Speech recognition (small)' }, vad: { name: 'Voice detection' } });
 const tarExe = isWin ? sys32('tar.exe') : '/usr/bin/tar';
 const manifestOf = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 const bundled = (id, vendor) => { const m = manifestOf(vendor)[id]; return m && fs.existsSync(path.join(vendor, `${id}.tar.br`)) ? m : null; };

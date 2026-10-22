@@ -7,6 +7,8 @@ const ALSO = {
   'show or hide the wheel': 'shortcut hotkey keyboard', 'ask where to save': 'save as dialog folder', updates: 'update upgrade new version download',
   'check once a day': 'update automatic auto', 'float above windows': 'on top always', sounds: 'audio mute quiet', libreoffice: 'office word excel powerpoint',
   'open-source licences': 'license licenses legal', 'reset position': 'move place corner', icon: 'picture logo avatar',
+  shortcut: 'dictate dictation voice speech hotkey', 'hold to talk': 'dictate push microphone mic', 'give me english': 'translate translation dictate',
+  'tidy up my words': 'dictate punctuation fillers um', 'stop when i stop talking': 'dictate silence auto', 'try it': 'dictate microphone mic test',
 };
 const CSS = `.prefs-search { position: sticky; top: 0; z-index: 5; padding: 6px 22px 12px; background: linear-gradient(var(--bg) 75%, transparent); max-width: 620px; margin: 0 auto; box-sizing: border-box; }
   .prefs-search label { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-sm); color: var(--ink-3); }
@@ -17,7 +19,8 @@ const CSS = `.prefs-search { position: sticky; top: 0; z-index: 5; padding: 6px 
   .prefs-search .clear { border: 0; background: none; color: var(--ink-3); padding: 2px; cursor: pointer; display: grid; place-items: center; border-radius: 4px; }
   .prefs-empty { text-align: center; color: var(--ink-2); padding: 28px 0; }
   #app .row.lead-shown::before { display: none; }
-  #app [hidden] { display: none !important; }`;
+  #app [hidden] { display: none !important; }
+  #app > section { scroll-margin-top: 52px; }`;
 
 const norm = (t) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[’']/g, '');
 const textOf = (el) => { const t = norm(el.querySelector('.t b, .n')?.textContent || el.textContent); return `${t} ${norm(el.querySelector('.t small')?.textContent || '')} ${ALSO[t.trim()] || ''}`; };
