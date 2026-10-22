@@ -2,7 +2,7 @@
 // Speech to text with Whisper, bundled and offline. transcribeFile and transcribePcm return
 // { text, lang, segments: [{ start, end, text, conf }] } (seconds); the model stays loaded between calls.
 const U = require('./util');
-const ai = require('./ai');
+const ai = require('./speech-ai');
 const { fsp, path } = U;
 
 const LANGS = [['auto', 'Detect'], ['en', 'English'], ['hi', 'Hindi'], ['ar', 'Arabic'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['nl', 'Dutch'], ['ru', 'Russian'], ['uk', 'Ukrainian'], ['pl', 'Polish'], ['tr', 'Turkish'],

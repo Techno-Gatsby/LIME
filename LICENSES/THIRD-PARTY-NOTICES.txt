@@ -11,6 +11,8 @@ Bundled engines
   IMG.LY background removal  AGPL-3.0        IMG.LY                 https://github.com/imgly/background-removal-js
   ONNX Runtime ............. MIT             Microsoft
   Face detector model ...... MIT             Linzaer                https://github.com/Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB  (version-RFB-320)
+  Real-ESRGAN models ....... BSD-3-Clause    Xintao Wang            https://github.com/xinntao/Real-ESRGAN  (realesr-general-x4v3, realesr-animevideov3)
+  LaMa inpainting model .... Apache-2.0      Samsung Research (advimman), scripted by IOPaint (Sanster)  https://github.com/advimman/lama  (big-lama)
   heic-decode / libheif .... ISC / LGPL-3.0
   LibreDWG (libredwg-web) .. GPL-3.0         Free Software Foundation, mlightcad
   Open CASCADE (occt-import-js) LGPL-2.1     Open Cascade SAS, kovacsv
@@ -31,6 +33,12 @@ Bundled engines
   js-beautify .............. MIT             Einar Lielmanis and contributors https://github.com/beautifier/js-beautify
   html-minifier-terser ..... MIT ; terser ... BSD-2-Clause ; clean-css ... MIT
   Juice .................... MIT             Automattic                       https://github.com/Automattic/juice  (with cheerio, MIT)
+  Excalidraw ............... MIT             Excalidraw contributors          https://github.com/excalidraw/excalidraw  (the whiteboard; with its fonts: Excalifont, Virgil, Nunito, Lilita One, Comic Shanns, Cascadia Code, Liberation Sans, Assistant, SIL OFL 1.1 / MIT / Apache-2.0 as published in the package)
+  React, React DOM ......... MIT             Meta Platforms, Inc.             https://react.dev
+  Mermaid .................. MIT             Knut Sveidqvist and contributors https://github.com/mermaid-js/mermaid  (with d3, dagre, cytoscape, KaTeX, DOMPurify and their MIT/ISC/BSD/Apache-2.0 dependencies)
+  draw.io .................. Apache-2.0      JGraph Ltd                       https://github.com/jgraph/drawio  (the web app, unchanged but trimmed; its notices are inside it)
+  Bergamot translator ...... MPL-2.0         The Bergamot Project             https://github.com/browsermt/bergamot-translator  (WebAssembly build from npm, unchanged; source at that address)
+  Firefox Translations models MPL-2.0        Mozilla                          https://github.com/mozilla/firefox-translations-models  (English with German, French, Spanish, Hindi and Arabic)
   Build only (not shipped as a package): esbuild ... MIT
   Electron / Chromium ...... MIT / BSD
   Noto Sans/Serif/Mono, Caveat, Dancing Script, Carlito fonts ... SIL Open Font License 1.1

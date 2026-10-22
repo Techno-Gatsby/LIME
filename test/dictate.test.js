@@ -83,7 +83,7 @@ module.exports = async ({ dir }) => {
 
   const CLIPS = process.env.LIME_DICTATE_CLIPS;
   const have = (f) => CLIPS && fs.existsSync(path.join(CLIPS, f));
-  const ready = () => { try { return require('../src/main/engines/ai').have('whisper') && !!dictate.vendorOk(); } catch (_) { return false; } };
+  const ready = () => { try { return require('../src/main/engines/speech-ai').have('whisper') && !!dictate.vendorOk(); } catch (_) { return false; } };
   const needs = (f) => { if (!ready()) skip('the speech payload isn’t vendored (set LIME_AI and LIME_DICTATE)'); if (!have(f)) skip(`no ${f} in LIME_DICTATE_CLIPS`); };
   const setDict = async (patch) => dictate.setConf(patch);
   const run = async (file, { speed = 2, autoEnd = true } = {}) => {
