@@ -260,6 +260,8 @@ function fitLabels(n) {
       if (inside(l, glassOf(l)) && Math.max(...[...l.children].map((sp) => sp.getComputedTextLength())) <= max) continue;
       l.textContent = words.join(' '); l.setAttribute('y', cy.toFixed(1));
     }
+    // A whole word reads better a little smaller than cut.
+    for (let g = f - 0.5; g >= 9 && !fits(l); g -= 0.5) l.style.fontSize = `${g}px`;
     const s = l.textContent;
     for (let k = 1; k < s.length - 1 && !fits(l); k++) l.textContent = mid(s, k);
   }
