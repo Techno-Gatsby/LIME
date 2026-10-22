@@ -48,7 +48,7 @@ export function openEditor(view, { file }, ctx) {
     </header>
     <div class="mv-body">
       <aside class="mv-side"><div class="mv-h">Layers</div><ul class="mv-layers"></ul>
-        <div class="mv-base"><label><input type="checkbox" data-a="basemap" checked> Basemap <small>Natural Earth</small></label></div></aside>
+        <div class="mv-base"><label>Basemap <select data-a="basemap" aria-label="Basemap"><option value="ne">Natural Earth · offline</option><option value="osm">OpenStreetMap · online</option><option value="none">None</option></select></label><small class="mv-credit" hidden>© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors</small></div></aside>
       <div class="mv-main"><div class="mv-map"></div><div class="mv-table" hidden></div></div>
     </div>
     <footer class="mv-status"><span class="mv-coord">–</span><select class="mv-readout" title="Coordinates shown">${READOUTS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select><span class="grow mv-msg"></span><span class="mv-scale"></span></footer>
@@ -77,7 +77,7 @@ export function openEditor(view, { file }, ctx) {
 
   async function basemap() {
     const text = await call('basemap');
-    if (!text) { $('.mv-base', root).innerHTML = '<small>No basemap in this build</small>'; return; }
+    if (!text) { $('[data-a=basemap] option[value=ne]', root)?.remove(); setBase(localStorage.getItem('lime.map.base') === 'osm' ? 'osm' : 'none'); return; }
     const bm = JSON.parse(text), fmt = new L.GeoJSON(), { Style, Fill, Stroke, CircleStyle, Text } = L;
     const read = (k) => new L.VectorSource({ features: fmt.readFeatures(bm.layers[k], { featureProjection: 'EPSG:3857' }) });
     const dark = () => document.documentElement.dataset.theme === 'dark';
@@ -91,6 +91,20 @@ export function openEditor(view, { file }, ctx) {
     const places = {}, place = (f, res) => { const r = f.get('r') ?? 10; if (r > Math.max(0, 11 - Math.log2(160000 / res) * 1.1)) return null; const k = `${f.get('name')}|${f.get('cap')}`; return (places[k] ||= new Style({ image: new CircleStyle({ radius: f.get('cap') ? 4 : 2.5, fill: new Fill({ color: '#555' }), stroke: new Stroke({ color: '#fff', width: 1 }) }), text: new Text({ text: f.get('name'), font: `${f.get('cap') ? '600 ' : ''}11px system-ui, sans-serif`, offsetY: -10, fill: new Fill({ color: dark() ? '#ddd' : '#333' }), stroke: new Stroke({ color: dark() ? '#222' : '#fff', width: 3 }) }) })); };
     base = [mk('countries', () => (dark() ? landDark : land)), mk('urban', urban, { minZoom: 6 }), mk('lakes', water), mk('rivers', new Style({ stroke: new Stroke({ color: '#9cc3e4', width: 1 }) }), { minZoom: 4 }), mk('regions', region, { minZoom: 4 }), mk('roads', road, { minZoom: 5 }), mk('places', place, { minZoom: 3 })];
     base.forEach((l, i) => { l.setZIndex(i - 100); map.addLayer(l); });
+    setBase(localStorage.getItem('lime.map.base') || 'ne');
+  }
+
+  // OpenStreetMap's standard tiles, drawn only while chosen and online; Natural Earth needs no connection.
+  let osm = null;
+  function setBase(v) {
+    if (v === 'osm' && !osm) { osm = new L.TileLayer({ source: new L.OSM({ attributions: [] }), zIndex: -200, properties: { base: true, name: 'osm' } }); map.addLayer(osm); }
+    osm?.setVisible(v === 'osm');
+    base.forEach((l) => l.setVisible(v === 'ne'));
+    $('.mv-credit', root).hidden = v !== 'osm';
+    const sel = $('[data-a=basemap]', root);
+    if (sel) sel.value = v;
+    try { localStorage.setItem('lime.map.base', v); } catch (_) {}
+    if (v === 'osm' && !navigator.onLine) toast('OpenStreetMap needs an internet connection. Natural Earth works offline.');
   }
 
   // --- Layers ------------------------------------------------------------------------------------------------------
@@ -311,7 +325,7 @@ export function openEditor(view, { file }, ctx) {
     });
   }
   async function addDialog() {
-    const files = await api.invoke('dialog:open', { title: 'Add map layers', filters: [{ name: 'Map data', extensions: ['geojson', 'json', 'shp', 'zip', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'csv', 'tif', 'tiff', 'asc', 'hgt', 'dxf', 'topojson', 'tab', 'mif'] }] });
+    const files = await api.invoke('dialog:open', { title: 'Add map layers', filters: [{ name: 'Map data', extensions: ['geojson', 'json', 'shp', 'zip', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'csv', 'tsv', 'tif', 'tiff', 'asc', 'hgt', 'dxf', 'topojson', 'tab', 'mif', 'osm', 'pbf', 'dgn', 'e00', 'gmt', 'geojsonl', 'geojsons', 'mvt', 'pmtiles', 'mbtiles', 'sxf', 'jml', 'mapml', 'dem', 'dt0', 'dt1', 'dt2', 'bil', 'bip', 'bsq', 'grd', 'adf', 'kap', 'sdat', 'ers', 'ntf', 'img', 'jpg', 'jpeg', 'png'] }] });
     for (const f of files) await addFile(f);
   }
   function close() { go(); }
@@ -328,7 +342,7 @@ export function openEditor(view, { file }, ctx) {
     else if (a === 'table') table(st.table ? null : (st.layers.find((l) => l.id === st.table) || st.layers.find((l) => l.kind === 'vector'))?.id);
     else if (a === 'export') exportMenu();
   });
-  root.addEventListener('change', (e) => { if (e.target.dataset.a === 'basemap') base.forEach((l) => l.setVisible(e.target.checked)); if (e.target.matches('.mv-readout')) { st.readout = e.target.value; readout(); } });
+  root.addEventListener('change', (e) => { if (e.target.dataset.a === 'basemap') setBase(e.target.value); if (e.target.matches('.mv-readout')) { st.readout = e.target.value; readout(); } });
   $('.mv-layers', root).addEventListener('input', onList);
   $('.mv-layers', root).addEventListener('click', (e) => { if (e.target.closest('button[data-k]')) onList(e); else { const li = e.target.closest('li[data-id]'); if (li && !e.target.closest('input,select,label') && st.table) table(li.dataset.id); } });
   // Files dropped on the map are added as layers rather than replacing it.

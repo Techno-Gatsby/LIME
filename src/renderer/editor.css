@@ -4,6 +4,12 @@ html, body, #view { height: 100%; overflow: hidden; }
 .topbar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px; -webkit-app-region: drag; }
 .os-darwin .topbar { padding-left: 84px; }
 .topbar > *, .toolbar > * { -webkit-app-region: no-drag; }
+/* Narrow windows give way from the least needed end; Save and Save as always keep their room at the right. */
+.topbar > .btn { flex: none; }
+.topbar .doc { flex: 0 1 auto; }
+@media (max-width: 1180px) { .topbar .appname { display: none; } }
+@media (max-width: 980px) { .topbar .search { width: 130px; } .topbar .zoombar select { display: none; } }
+@media (max-width: 860px) { .topbar .search { display: none; } .topbar .btn[data-a="saveas"] { padding: 0 10px; } }
 .topbar .doc { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 320px; -webkit-app-region: drag; }
 .topbar .doc .ic { color: var(--green); flex: none; }
 .topbar .doc b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 620; }
@@ -16,7 +22,7 @@ html, body, #view { height: 100%; overflow: hidden; }
 .seg .tb[aria-pressed="true"] { background: var(--surface); color: var(--accent-strong); box-shadow: 0 0 0 .5px var(--line-2), 0 1px 2px rgba(0, 0, 0, .12); }
 .tb.icon { width: 30px; padding: 0; justify-content: center; }
 .seg .tb.icon { width: 28px; }
-.toolbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 12px 8px; flex-wrap: wrap; }
+.toolbar { display: flex; align-items: center; justify-content: safe center; gap: 10px; padding: 0 12px 8px; flex-wrap: wrap; }
 .tgroup { display: inline-flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--surface-3); }
 .tool { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--ink-2); white-space: nowrap; font-size: 12.5px; font-weight: 520; transition: background .12s, color .12s, box-shadow .12s; }
 .tool:hover { background: var(--hover); color: var(--ink); }

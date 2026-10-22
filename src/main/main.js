@@ -494,6 +494,9 @@ function openEditor(file, mode) {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2', icon: asset('icon.png'), webPreferences: webPrefs,
   });
   win.editorData = { file, mode };
+  // Links (a map's credits) open in the browser, never in place of the editor.
+  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://local/')) { e.preventDefault(); if (/^https?:/i.test(url)) shell.openExternal(url); } });
   win.loadURL('app://local/editor.html');
   win.once('ready-to-show', () => win.show());
   editors.add(win);
@@ -542,6 +545,20 @@ function craftSession() {
     item.once('done', (ev, state) => { if (!wc.isDestroyed()) wc.send('craftweb:saved', state === 'completed' ? { path: to } : { error: `Couldn’t save ${path.basename(to)}` }); });
   });
   return craftSes;
+}
+// Lime's own apps (Maps, Hydrology, WebCraft, SQLite) open in a Lime window; Maps starts empty, the others ask for a file.
+const EMPTY_OK = { maps: 'map' };
+async function openBuiltin(id, files = []) {
+  if (crafts.hasWeb(id)) return openCraftWeb(id, files[0]);
+  const t = (EDIT_IN[id] || []).map((x) => tools.get(x)).find(Boolean);
+  if (!t) throw new Error(`${crafts.APPS[id].name} can’t be opened on its own.`);
+  if (!files.length && EMPTY_OK[id]) return openEditor('', EMPTY_OK[id]);
+  if (!files.length) {
+    const r = await dialog.showOpenDialog({ title: `Open in ${crafts.APPS[id].name}`, properties: ['openFile'], filters: [{ name: crafts.APPS[id].name, extensions: tools.extsFor(t) }] });
+    if (r.canceled || !r.filePaths.length) return null;
+    files = r.filePaths;
+  }
+  return openEditor(files[0], t.editor);
 }
 async function openCraftWeb(id, file) {
   const a = crafts.APPS[id];
@@ -665,6 +682,10 @@ async function doAction(item, files) {
       crafts.openApp(item.app, files).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
       return `Opening ${crafts.APPS[item.app].name}…`;
     }
+    case 'builtin': {
+      openBuiltin(item.app, files).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
+      return `Opening ${crafts.APPS[item.app]?.name || 'the app'}…`;
+    }
     case 'craftweb': {
       openCraftWeb(item.app, files[0]).catch((e) => { log(e); wheel?.webContents.send('wheel:flash', e.message); });
       return `Opening ${crafts.APPS[item.app]?.name || 'the app'}…`;
@@ -696,6 +717,7 @@ function appRing(id, files) {
     : edit && bare ? [{ ...full, label: 'Open', appOpen: true }, { tool: edit.id, label: 'In Lime', hint: 'Pick a file', desc: `${a.name} in a Lime window: ${edit.desc}`, exts: tools.extsFor(edit) }]
     : edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full]
     : bare ? [{ ...full, label: 'Open', appOpen: true }] : [full];
+  if (!files.length && EMPTY_OK[id]) ring.splice(0, ring.findIndex((r) => r.appOpen) + 1, { action: 'builtin', app: id, label: 'Open', hint: 'New map', appOpen: true, desc: `${a.name}, empty, ready for layers` });
   if (a.builtin && ring.includes(full)) ring.splice(ring.indexOf(full), 1);
   // Lime's own engineering windows open in QGIS, HEC-RAS, HEC-HMS or EPA SWMM as the full app when one is installed.
   for (const x of (a.external || []).filter((x) => crafts.hasExternal(x) && (!files.length || files.every((f) => crafts.EXTERNAL[x].opens(f)))).reverse()) {
@@ -884,7 +906,7 @@ function registerIpc() {
     await setSettings({ [id]: exe });
     return exe;
   });
-  h('apps:open', async (id, files) => { await crafts.openApp(id, Array.isArray(files) ? files : []); return true; });
+  h('apps:open', async (id, files) => { files = Array.isArray(files) ? files : []; if (crafts.APPS[id]?.builtin) await openBuiltin(id, files); else await crafts.openApp(id, files); return true; });
   hE('craftweb:info', (e) => { const cw = craftOf(e.sender); return cw && { id: cw.id, name: cw.name, file: cw.file, fileName: cw.file && path.basename(cw.file), bridge: !!cw.bridge, empty: !!cw.empty, dark: nativeTheme.shouldUseDarkColors }; });
   hE('craftweb:read', async (e) => { const cw = craftOf(e.sender); return cw?.file ? fsp.readFile(cw.file) : null; });
   hE('craftweb:save', async (e, name, bytes) => { const cw = craftOf(e.sender); if (!cw) return null; const to = craftSavePath(cw, name); await fsp.writeFile(to, Buffer.from(bytes)); return { path: to }; });
@@ -935,6 +957,8 @@ app.whenReady().then(async () => {
   loadSettings();
   // Before anything asks which apps ship: the menu below lists them, and an unconfigured path reads as none.
   require('./engines/util').configure(engineCfg());
+  // OpenStreetMap's tile policy asks each app to name itself.
+  require('electron').session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['https://tile.openstreetmap.org/*'] }, (d, done) => done({ requestHeaders: { ...d.requestHeaders, 'User-Agent': `Lime/${app.getVersion()} (+https://github.com/Techno-Gatsby/LIME)` } }));
   nativeTheme.themeSource = settings.theme;
   if (isMac && !settings.dock) app.dock.hide();
   registerProtocols();

@@ -46,6 +46,8 @@ export { default as VectorLayer } from 'ol/layer/Vector.js';
 export { default as ImageLayer } from 'ol/layer/Image.js';
 export { default as VectorSource } from 'ol/source/Vector.js';
 export { default as ImageStatic } from 'ol/source/ImageStatic.js';
+export { default as TileLayer } from 'ol/layer/Tile.js';
+export { default as OSM } from 'ol/source/OSM.js';
 export { default as GeoJSON } from 'ol/format/GeoJSON.js';
 export { Style, Fill, Stroke, Circle as CircleStyle, Text, RegularShape } from 'ol/style.js';
 export { default as Draw } from 'ol/interaction/Draw.js';

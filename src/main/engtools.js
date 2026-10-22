@@ -13,7 +13,7 @@ function groupOf(p, e) {
   if (e === 'xml' && S.msProject(p)) return 'project';
   return null;
 }
-const GEO_EXTRA = ['csv', 'tsv', 'txt', 'zip', 'json', 'dxf', 'tif', 'tiff', 'asc'];
+const GEO_EXTRA = ['csv', 'tsv', 'txt', 'zip', 'json', 'dxf', 'tif', 'tiff', 'asc', 'img', 'jpg', 'jpeg', 'png'];
 const all = (fn) => (files) => files.every(fn);
 const vector = all((f) => S.kind(f) === 'vector'), raster = all((f) => S.kind(f) === 'raster'), anyGeo = all((f) => !!S.kind(f));
 const swmm = all((f) => S.swmmInp(f) || S.swmmOut(f)), swmmIn = all((f) => S.swmmInp(f)), ras = all((f) => S.rasHdf(f) || (S.hdf5(f) && /\.hdf$/i.test(f))), dss = all((f) => S.dss(f));

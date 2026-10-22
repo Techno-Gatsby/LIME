@@ -42,7 +42,7 @@ const GROUPS = {
   archive: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz', 'zst', 'lz', 'lzma', 'z', 'iso', 'img', 'cab', 'wim', 'dmg', 'arj', 'lzh', 'cpio', 'rpm', 'deb', 'jar', 'apk', 'xpi', 'msi', 'vhd', 'vhdx', 'chm', 'udf', 'squashfs'],
   subtitle: ['srt', 'vtt', 'ass', 'ssa', 'sub'],
   data: ['json', 'yaml', 'yml'],
-  gis: ['shp', 'geojson', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'topojson', 'tab', 'mif', 'hgt'],
+  gis: ['shp', 'geojson', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'topojson', 'tab', 'mif', 'hgt', 'osm', 'pbf', 'dgn', 'e00', 'gmt', 'geojsonl', 'geojsons', 'mvt', 'pmtiles', 'mbtiles', 'sxf', 'jml', 'mapml', 'dem', 'dt0', 'dt1', 'dt2', 'bil', 'bip', 'bsq', 'grd', 'adf', 'kap', 'sdat', 'ers', 'ntf'],
   hydro: ['inp', 'dss', 'hdf', 'h5'],
   project: ['mpp', 'mpt', 'mpx', 'pod', 'xer', 'gan'],
   // Source code no other group claims (a .ts is a video unless it reads as text: see groupOf).

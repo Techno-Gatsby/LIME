@@ -69,7 +69,16 @@ function zipNames(p) {
 const zipShapefile = (p) => cached('zip', p, () => zipNames(p).some((n) => /\.shp$/i.test(n) && !/(^|\/)__MACOSX\//.test(n)));
 const geojson = (p) => cached('json', p, () => /"type"\s*:\s*"(FeatureCollection|Feature)"/.test(head(p, 16384).toString('utf8')) || /"type"\s*:\s*"Topology"/.test(head(p, 2048).toString('utf8')));
 
-const VECTOR = ['shp', 'geojson', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'topojson', 'tab', 'mif'], RASTER = ['hgt'];
+// Everything the bundled GDAL reads that is map data by its extension alone: OpenStreetMap extracts, MicroStation and
+// ArcInfo exchange files, vector and raster tile packages, elevation (DTED, USGS DEM, SRTM), band-interleaved grids,
+// Surfer and SAGA grids, ERS and NITF imagery and BSB nautical charts.
+const VECTOR = ['shp', 'geojson', 'kml', 'kmz', 'gpx', 'gpkg', 'fgb', 'gml', 'topojson', 'tab', 'mif', 'osm', 'pbf', 'dgn', 'e00', 'gmt', 'geojsonl', 'geojsons', 'mvt', 'pmtiles', 'mbtiles', 'sxf', 'jml', 'mapml'];
+const RASTER = ['hgt', 'dem', 'dt0', 'dt1', 'dt2', 'bil', 'bip', 'bsq', 'grd', 'adf', 'kap', 'sdat', 'ers', 'ntf'];
+// A picture placed by a world file beside it (photo.tif + photo.tfw), which GDAL reads as a georeferenced raster.
+const WORLD = { tif: ['tfw', 'tifw', 'wld'], tiff: ['tfw', 'tiffw', 'wld'], jpg: ['jgw', 'jpgw', 'wld'], jpeg: ['jgw', 'wld'], png: ['pgw', 'pngw', 'wld'] };
+const worldFile = (p) => (WORLD[ext(p)] || []).some((w) => fs.existsSync(p.replace(/\.[^.\\/]+$/, `.${w}`)) || fs.existsSync(p.replace(/\.[^.\\/]+$/, `.${w.toUpperCase()}`)));
+// ERDAS Imagine (.img is also a disk image, so the header decides).
+const erdas = (p) => cached('img', p, () => head(p, 16).toString('latin1').startsWith('EHFA_HEADER_TAG'));
 // An ESRI ASCII grid (.asc is also used for signed text, so the header decides).
 const ascGrid = (p) => cached('asc', p, () => /^\s*ncols\s+\d+/i.test(head(p, 256).toString('latin1')));
 // 'vector', 'raster' or null.
@@ -78,6 +87,8 @@ function kind(p) {
   if (VECTOR.includes(e)) return 'vector';
   if (RASTER.includes(e) || (e === 'asc' && ascGrid(p))) return 'raster';
   if ((e === 'tif' || e === 'tiff') && geotiff(p)) return 'raster';
+  if (WORLD[e] && worldFile(p)) return 'raster';
+  if (e === 'img' && erdas(p)) return 'raster';
   if ((e === 'csv' || e === 'tsv' || e === 'txt') && csvColumns(p)) return 'vector';
   if (e === 'zip' && zipShapefile(p)) return 'vector';
   if (e === 'json' && geojson(p)) return 'vector';

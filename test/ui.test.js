@@ -2556,7 +2556,8 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   const pw = prefs();
   while (pw.webContents.isLoading()) await sleep(200);
   await sleep(800);
-  for (const { id, name } of crafts.status()) {
+  // Hydrology and SQLite ask for a file before they open, which a test can't answer.
+  for (const { id, name } of crafts.status().filter((c) => !c.builtin || ['maps', 'webcraft'].includes(c.id))) {
     await check(`settings · open ${name}`, async () => {
       const btn = `[data-a="app"][data-id="${id}"]`;
       if (!(await js(`!!document.querySelector('${btn}')`, pw.webContents))) {
@@ -2568,6 +2569,14 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
       let label = '';
       while (Date.now() - t < 120000) { label = await js(`document.querySelector('${btn}').textContent`, pw.webContents); if (label !== 'Opening…') break; await sleep(250); }
       if (label !== 'Open') throw new Error(`${label}: ${await js(`document.querySelector('${btn}').title`, pw.webContents)}`);
+      if (crafts.APPS[id].builtin) {
+        if (id === 'webcraft' && !crafts.hasWeb(id)) throw Object.assign(new Error('WebCraft’s window isn’t in this build'), { skip: true });
+        await sleep(1500);
+        const { BrowserWindow } = require('electron'), wins = BrowserWindow.getAllWindows().filter((w) => w !== pw && !w.isDestroyed() && w.isVisible() && /editor\.html|^craft:\/\//.test(w.webContents.getURL()));
+        if (!wins.length) throw new Error(`no ${name} window opened`);
+        wins.forEach((w) => w.destroy());
+        return `${name} opened in a Lime window`;
+      }
       const exe = await crafts.bundledApp(crafts.APPS[id].needs?.[0] || id);
       await sleep(8000);
       const pids = running(exe);

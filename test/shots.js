@@ -408,6 +408,8 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       for (let t = 0; t < 120 && !(await ejs('!!document.querySelector(".studio .props h3") && !document.querySelector(".studio.working")')); t++) await sleep(250);
       await sleep(2500);
       await shot(`${step}-0`, e);
+      // At the narrowest the window allows, Save keeps its margin and nothing runs off the edge.
+      { const [w0, h0] = e.getSize(); e.setSize(720, Math.max(520, h0)); await sleep(700); await shot(`${step}-narrow`, e); e.setSize(w0, h0); await sleep(500); }
       for (const [i, p] of panels.entries()) {
         await ejs(`document.querySelector('[data-tool="${p}"]').click()`);
         for (let t = 0; t < 60 && (await ejs('!!document.querySelector(".studio.working")')); t++) await sleep(250);

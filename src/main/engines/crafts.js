@@ -1281,7 +1281,8 @@ async function webApp(id) {
 const versions = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg.crafts, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 function status() {
   const manifest = versions(), apps = bundledApps();
-  return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version?.split('+')[0] || null,
+  // Lime's own apps (Maps, Hydrology, WebCraft, SQLite) are listed too: they always open, in a Lime window.
+  return Object.entries(APPS).map(([id, a]) => (a.builtin ? { id, ...a, version: null, bundled: false, web: hasWeb(id), app: true, artcraft: false } : { id, ...a, version: manifest[id] || apps[id]?.version?.split('+')[0] || null,
     bundled: a.bundledOnly ? shipped(id) && (a.needs || []).every(shipped) : hasEngine(id),
     web: hasWeb(id), app: hasApp(id), artcraft: !a.bundledOnly }));
 }
