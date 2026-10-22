@@ -227,6 +227,8 @@ function drawRing(list, { dim = false } = {}) {
     return `<g class="petal${it.danger ? ' danger' : ''}${it.off ? ' off' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 5.5 : 0)).toFixed(1)}" data-cy="${y.toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
   }).join('');
   fitLabels(count);
+  // Measured before the display font arrived, the fit is off: draw once more when it has.
+  if (document.fonts.status !== 'loaded') document.fonts.ready.then(() => { if (S.ring === list) drawRing(list, { dim }); });
   setHot(S.hot >= n ? -1 : S.hot, true);
 }
 // One readable size per ring: labels never go below 10.5px and hints below 7px. A hint that still doesn't fit is left
@@ -234,7 +236,8 @@ function drawRing(list, { dim = false } = {}) {
 function fitLabels(n) {
   const rl = R_MID, max = Math.max(36, Math.min(R_OUT - R_IN - 8, 2 * rl * Math.sin(Math.PI / Math.max(n, 2)) - 6));
   const glassOf = (t) => t.parentNode.querySelector('path.glass');
-  const fits = (t) => t.getComputedTextLength() <= max && inside(t, glassOf(t));
+  // A hint must clear its slice by a pixel: small caps near the narrow inner edge read as touching it.
+  const fits = (t) => t.getComputedTextLength() <= max && inside(t, glassOf(t), t.classList.contains('h') ? -1 : 0.6);
   for (const [cls, floor] of [['l', 10.5], ['h', 7]]) {
     const ts = $$(`.petal text.${cls}`, petalsG);
     if (!ts.length) continue;
@@ -244,11 +247,18 @@ function fitLabels(n) {
     if (size < base) set();
     // The chord is only an estimate: shrink the whole ring a step at a time until every label sits inside its slice.
     while (cls === 'l' && size > floor && ts.some((t) => !inside(t, glassOf(t)))) { size = Math.max(floor, size - 0.5); set(); }
+    // A whole word reads better a little smaller than cut, so a ring with one that won't fit goes down to 9.5px.
+    while (cls === 'l' && size > 9.5 && ts.some((t) => !t.textContent.includes(' ') && !fits(t))) { size -= 0.5; set(); }
   }
   const mid = (s, k) => { const keep = s.length - k, head = Math.ceil(keep / 2); return `${s.slice(0, head).trimEnd()}…${s.slice(s.length - (keep - head)).trimStart()}`; };
   for (const l of $$('.petal text.l', petalsG)) {
     const h = l.parentNode.querySelector('text.h');
-    if (h && !fits(h)) h.remove();
+    if (h) {
+      // Keep a clear gap between label and hint at whatever size they ended up.
+      const a = l.getBBox(), c = h.getBBox(), push = (a.y + a.height + 1 - c.y) / 2;
+      if (push > 0) { l.setAttribute('y', (Number(l.getAttribute('y')) - push).toFixed(1)); h.setAttribute('y', (Number(h.getAttribute('y')) + push).toFixed(1)); }
+      if (!fits(h)) { h.remove(); l.setAttribute('y', l.dataset.cy); }
+    }
     if (fits(l)) continue;
     const words = l.textContent.split(' '), x = l.getAttribute('x'), cy = Number(l.dataset.cy), f = parseFloat(getComputedStyle(l).fontSize);
     if (words.length > 1) {
@@ -260,14 +270,12 @@ function fitLabels(n) {
       if (inside(l, glassOf(l)) && Math.max(...[...l.children].map((sp) => sp.getComputedTextLength())) <= max) continue;
       l.textContent = words.join(' '); l.setAttribute('y', cy.toFixed(1));
     }
-    // A whole word reads better a little smaller than cut.
-    for (let g = f - 0.5; g >= 9 && !fits(l); g -= 0.5) l.style.fontSize = `${g}px`;
     const s = l.textContent;
     for (let k = 1; k < s.length - 1 && !fits(l); k++) l.textContent = mid(s, k);
   }
 }
-function inside(t, glass) {
-  const b = t.getBBox(), i = 0.6;
+function inside(t, glass, i = 0.6) {
+  const b = t.getBBox();
   return !b.width || [[b.x + i, b.y + i], [b.x + b.width - i, b.y + i], [b.x + i, b.y + b.height - i], [b.x + b.width - i, b.y + b.height - i]].every(([x, y]) => glass.isPointInFill(new DOMPoint(x, y)));
 }
 function setHot(i, force) {
@@ -281,7 +289,7 @@ function setHot(i, force) {
 }
 
 const thumbUrl = (p) => {
-  if (!S.thumbs.has(p)) S.thumbs.set(p, api.invoke('files:thumb', p, 160).then((r) => (r?.png ? URL.createObjectURL(new Blob([r.png], { type: 'image/png' })) : null)).catch(() => null));
+  if (!S.thumbs.has(p)) S.thumbs.set(p, api.invoke('files:thumb', p, 320).then((r) => (r?.png ? URL.createObjectURL(new Blob([r.png], { type: 'image/png' })) : null)).catch(() => null));
   return S.thumbs.get(p);
 };
 function groupOfFile(p) {
@@ -936,6 +944,7 @@ function hitTest(x, y) {
   return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) <= r.width / 2 + 24 * k || [pill, card, $('.close')].some((el) => within(el, 8));
 }
 function setCaught(on) { if (on === caught) return; caught = on; api.catch(on); }
+api.on('wheel:released', () => { caught = false; });
 window.addEventListener('pointermove', (e) => setCaught(moving || hitTest(e.clientX, e.clientY)), true);
 document.addEventListener('pointerleave', () => { if (!moving) setCaught(false); });
 api.on('wheel:moveEnd', () => { downAt = null; endMove(); });

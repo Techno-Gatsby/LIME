@@ -53,6 +53,7 @@ let custom = null;
 export const setIcon = (url) => { custom = url || null; };
 export function limeSvg(size = 52, cls = '', scale = 1) {
   if (custom) return `<img class="lime custom${cls ? ` ${cls}` : ''}" src="${custom}" width="${size}" height="${size}" alt="" draggable="false">`;
-  const f = (k) => `assets/lime-${size}${k > 1 ? `@${k}x` : ''}.png`;
-  return `<img class="lime${cls ? ` ${cls}` : ''}" src="${f(1)}" srcset="${[1, 2, 3, 4].map((k) => `${f(k)} ${size * k}w`).join(', ')}" sizes="${Math.ceil(size * scale)}px" width="${size}" height="${size}" alt="" draggable="false">`;
+  // Drawn at 52 and 96px in four densities; any size picks whichever stays sharp on this screen.
+  const srcs = [52, 96].flatMap((b) => [1, 2, 3, 4].map((k) => [`assets/lime-${b}${k > 1 ? `@${k}x` : ''}.png`, b * k]));
+  return `<img class="lime${cls ? ` ${cls}` : ''}" src="${srcs.find(([, w]) => w >= size)[0]}" srcset="${srcs.map(([f, w]) => `${f} ${w}w`).join(', ')}" sizes="${Math.ceil(size * scale)}px" width="${size}" height="${size}" alt="" draggable="false">`;
 }

@@ -92,6 +92,8 @@ async function openExternal(id, files = []) {
   return app;
 }
 const exe = (id) => `${id}-cli${U.isWin ? '.exe' : ''}`;
+// Listed in the build but its archive is absent: on Windows, the installer was run without Lime-data beside it.
+const unshipped = (id) => `${APPS[id].name}’s files didn’t install. ${U.isWin ? 'Extract the whole Lime download and run Lime-Setup.exe again from that folder, with Lime-data beside it.' : 'Drag Lime from its disk image to Applications again.'}`;
 const unpacking = new Map();
 
 async function cli(id) {
@@ -100,7 +102,7 @@ async function cli(id) {
   const br = `${raw}.br`;
   // On Mac and Windows the engine ships inside its app's archive.
   if (!fs.existsSync(br) && bundledApps()[id]?.cli && fs.existsSync(appSource(id))) { await bundledApp(id); return path.join(appDir(id), bundledApps()[id].cli); }
-  if (!fs.existsSync(br)) throw Object.assign(new Error(`The ${APPS[id].name} engine isn’t in this build of Lime.`), { code: 'ENGINE_MISSING' });
+  if (!fs.existsSync(br)) throw Object.assign(new Error(bundledApps()[id] ? unshipped(id) : `The ${APPS[id].name} engine isn’t in this build of Lime.`), { code: 'ENGINE_MISSING' });
   const dest = path.join(U.cfg.user, 'crafts', `${id}-${fs.statSync(br).size}`, exe(id));
   if (fs.existsSync(dest)) return dest;
   if (!unpacking.has(id)) {
@@ -1236,7 +1238,7 @@ async function openApp(id, files = []) {
     return jar;
   }
   const app = own || (await bundledApp(id));
-  if (!app) throw new Error(`${APPS[id].name} isn’t included in this build of Lime.`);
+  if (!app) throw new Error(bundledApps()[id] ? unshipped(id) : `${APPS[id].name} isn’t included in this build of Lime.`);
   if (id === 'blender') {
     // Blender opens .blend files itself; any other model is imported into a new scene as it starts.
     const bin = app.endsWith('.app') ? path.join(app, 'Contents', 'MacOS', 'Blender') : app;

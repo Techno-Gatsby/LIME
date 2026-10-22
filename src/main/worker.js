@@ -28,7 +28,7 @@ const CALLS = {
     const g = U.groupOf(p);
     if (g === 'pdf') { const t = await require('./engines/pdf').thumbnail(p, size); return { png: t.png, pages: t.pages }; }
     if (g === 'image' || g === 'raw') return { png: await require('./engines/image').thumbnail(p, size) };
-    if (g === 'video') { const b = await require('./engines/media').thumbnail(p); return b ? { png: b } : null; }
+    if (g === 'video') { const b = await require('./engines/media').thumbnail(p, size); return b ? { png: b } : null; }
     if (g === 'cad2d' || g === 'cad3d') return { png: await require('./engines/cad').thumbnail(p, size) };
     if (g === 'vector' || g === 'layout') {
       const tmp = await U.tmpDir('vthumb');

@@ -52,12 +52,17 @@ VIAddVersionKey "LegalCopyright" "AGPL-3.0-or-later"
 Section "Lime"
   SectionIn RO
   !insertmacro CloseApp
+!ifdef SPLIT
+  ; Run from inside the zip, Windows extracts only the installer and the apps would silently be left out.
+  IfFileExists "$EXEDIR\Lime-data\*.*" +3 0
+  MessageBox MB_ICONSTOP|MB_OK "The Lime-data folder isn't next to Lime-Setup.exe, so the apps can't be installed.$\r$\n$\r$\nRight-click the Lime download, choose Extract All, then run Lime-Setup.exe from the extracted folder."
+  Abort
+!endif
   SetOutPath "$INSTDIR"
   RMDir /r "$INSTDIR\resources\app"
 !ifdef SPLIT
   ; The large archives sit in Lime-data beside the installer (see dist-win.mjs).
   !include "${SPLIT}"
-  IfFileExists "$EXEDIR\Lime-data\*.*" 0 +2
   CopyFiles /SILENT "$EXEDIR\Lime-data\*.*" "$INSTDIR\resources"
 !else
   File /r "${SRC}\*.*"

@@ -696,12 +696,12 @@ async function convertSubtitles(p, opts, ctx) {
   await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-y', '-i', p, out], { errorMessage: 'Couldn’t convert these subtitles' });
   return out;
 }
-async function thumbnail(p) {
+async function thumbnail(p, size = 320) {
   const info = await probe(p);
   if (!info.video) return null;
   const dir = await U.tmpDir('thumb');
   const out = path.join(dir, 't.jpg');
-  await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-y', '-ss', String(Math.min(1, info.duration / 3)), '-i', p, '-frames:v', '1', '-vf', 'scale=320:-2', out]);
+  await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-y', '-ss', String(Math.min(1, info.duration / 3)), '-i', p, '-frames:v', '1', '-vf', `scale=w='if(gt(iw,ih),-2,${size})':h='if(gt(iw,ih),${size},-2)'`, '-q:v', '2', out]);
   const b = await fsp.readFile(out);
   fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
   return b;

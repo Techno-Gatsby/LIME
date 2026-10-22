@@ -276,11 +276,15 @@ function placeWindow() {
 function visibleRect() {
   const k = sizeK();
   if (mode !== 'open' || !bloomAt) { const t = tabPoint(); return { x: Math.round(t.x - TAB.ax * k), y: Math.round(t.y - TAB.ay * k), width: Math.round(TAB.w * k), height: Math.round(TAB.h * k) }; }
-  return { x: Math.round(bloomAt.x - OPEN.ax * k), y: Math.round(bloomAt.y - OPEN.ay * k), width: Math.round(OPEN.w * k), height: Math.round(openH * k) };
+  // The wheel window slides up to keep an open card on screen, as place() does in the wheel.
+  const wa = workArea(bloomAt), y = wa.y + Math.max(0, Math.min(bloomAt.y - wa.y - OPEN.ay * k, wa.height - openH * k));
+  return { x: Math.round(bloomAt.x - OPEN.ax * k), y: Math.round(y), width: Math.round(OPEN.w * k), height: Math.round(openH * k) };
 }
 function setCatch(on) {
   if (!wheel || wheel.isDestroyed() || on === catching) return;
   catching = on;
+  // Let the wheel ask again the next time the pointer is over it.
+  if (!on) wheel.webContents.send('wheel:released');
   if (process.platform !== 'linux') wheel.setIgnoreMouseEvents(!on, { forward: true });
 }
 const near = (p, r, m) => p.x >= r.x - m && p.x <= r.x + r.width + m && p.y >= r.y - m && p.y <= r.y + r.height + m;
@@ -686,7 +690,12 @@ function appRing(id, files) {
   const full = { action: 'craft', app: id, label: 'Full app', hint: 'Own window', desc: ok ? `${files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} in ` : ''}${a.name}, with every tool` : `${a.name} isn’t in this build of Lime`, ...(ok ? {} : { off: true }) };
   const edit = (EDIT_IN[id] || []).map((t) => tools.get(t)).find((t) => t && (!files.length || tools.accepts(t, files)));
   const web = crafts.hasWeb(id) && files.length <= 1;
-  const ring = web ? [{ action: 'craftweb', app: id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${files.length ? `${path.basename(files[0])} in ` : ''}${a.name}, in a Lime window` }, full] : edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
+  // With no file in hand, the full app opens straight away; the Lime window, which edits a file, asks for one after it.
+  const bare = !files.length && ok && !a.builtin;
+  const ring = web ? [{ action: 'craftweb', app: id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${files.length ? `${path.basename(files[0])} in ` : ''}${a.name}, in a Lime window` }, full]
+    : edit && bare ? [{ ...full, label: 'Open', appOpen: true }, { tool: edit.id, label: 'In Lime', hint: 'Pick a file', desc: `${a.name} in a Lime window: ${edit.desc}`, exts: tools.extsFor(edit) }]
+    : edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full]
+    : bare ? [{ ...full, label: 'Open', appOpen: true }] : [full];
   if (a.builtin && ring.includes(full)) ring.splice(ring.indexOf(full), 1);
   // Lime's own engineering windows open in QGIS, HEC-RAS, HEC-HMS or EPA SWMM as the full app when one is installed.
   for (const x of (a.external || []).filter((x) => crafts.hasExternal(x) && (!files.length || files.every((f) => crafts.EXTERNAL[x].opens(f)))).reverse()) {
