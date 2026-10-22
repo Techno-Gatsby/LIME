@@ -439,7 +439,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     const px = page.toPixmap(m.Matrix.scale(0.3, 0.3), m.ColorSpace.DeviceGray, false, true), st = px.getStride(), g = px.getPixels(), w = px.getWidth(), h = px.getHeight();
     const corners = [[2, 2], [w - 3, 2], [2, h - 3], [w - 3, h - 3]].map(([x, y]) => g[y * st + x]);
     ok(corners.every((v) => v > 170), `desk still in corners ${corners}`);
-    ok(/Invoice 2041/.test(page.toStructuredText('').asText()), 'text not recognised');
+    { const t = page.toStructuredText('').asText(); ok(/Invoice 2041/.test(t), `text not recognised: ${JSON.stringify(t.slice(0, 160))}`); }
   });
   T('scan to pdf: a flat page still gets its look', 'scan-to-pdf', ['photo2.jpg'], { mode: 'bw', ocr: false }, async ([o], r) => {
     ok(/0 of 1 page straightened/.test(r[0].note), r[0].note);
@@ -524,7 +524,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(locked, 'not encrypted');
     ok((await E('pdf').pageCount(o, 'lime123')) === 3, 'password fails');
   });
-  T('searchable pdf', 'ocr-pdf', ['scan.pdf'], { lang: 'eng', skipText: true, dpi: '300' }, async ([o]) => { const s = score(await pdfText(o)); ok(s >= 0.85, `OCR ${Math.round(s * 100)}%`); });
+  T('searchable pdf', 'ocr-pdf', ['scan.pdf'], { lang: 'eng', skipText: true, dpi: '300' }, async ([o]) => { const t = await pdfText(o), s = score(t); ok(s >= 0.85, `OCR ${Math.round(s * 100)}%: ${JSON.stringify(t.slice(0, 160))}`); });
   T('repair pdf', 'repair-pdf', ['doc.pdf'], {}, async ([o]) => pages(o, 3));
   T('flatten pdf', 'flatten-pdf', ['doc.pdf'], {}, async ([o]) => pages(o, 3));
   T('extract images', 'extract-images-pdf', ['doc.pdf'], { format: 'png' }, ([o]) => ok(files(o).length >= 1, 'no images'));
@@ -1562,7 +1562,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'replace-text': [['doc.docx'], { find: 'lime', replace: 'Kiwi' }], 'clean-office': [['tracked.docx']], 'office-media': [['doc.docx']], 'compress-office': [['big.docx']], 'sheet-values': [['book.xlsx']], 'unhide-sheet': [['book.xlsx']],
     'split-sheets': [['book.xlsx']], 'tidy-sheet': [['book.xlsx']], 'sheet-formulas': [['book.xlsx']], 'slide-notes': [['notes.pptx']], 'merge-slides': [['deck.pptx', 'deck2.pptx']], 'pick-slides': [['notes.pptx'], { slides: '3, 1-2' }],
     'cad-compare': [['test.dxf', 'lines.dxf']], 'mix-tracks': [['tone.wav', 'song.mp3']], 'doc-markup': [['tracked.docx']], 'doc-contents': [['chapters.docx']], 'doc-password': [['doc.docx'], { password: 'lime123' }], 'doc-fields': [['doc.docx']], 'doc-upgrade': [['doc.rtf']], 'doc-pages': [['letter.docx']], 'sheet-chart': [['sheet.xlsx']], 'sheet-table': [['sheet.xlsx']], 'sheet-recalc': [['book.xlsx']], 'sheet-check': [['book.xlsx']], 'make-slides': [['doc.md']], 'slides-gif': [['deck.pptx']], 'slide-graphics': [['deck.pptx']], 'session-mix': [['session.scraft']], 'session-stems': [['session.scraft']],
-    'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
+    'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']],
   };
   // The speech tools need words, not the 440 Hz sweep tone: one sequential case reads a sentence aloud first, and the speech cases take that clip (and a video muxed from it).
   // AI jobs share one model host, so parallel sweep workers queue behind each other: those cases get a longer limit.

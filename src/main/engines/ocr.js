@@ -102,13 +102,15 @@ async function readOs(png, lang) {
     return null;
   } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }
-// Apple Vision's accurate mode often answers a word's box with the whole line's box. Words placed that way pile up at
-// the line's start and read back from the PDF as one jumble, so they are laid along the line by their share of letters.
+// Apple Vision's accurate mode often answers a word's box with the whole line's box, with a box running from the line's
+// start to the word's end, or with one outside the line altogether. Words placed that way pile up or fall off the page,
+// and read back from the PDF as a jumble or not at all, so they are laid along the line by their share of letters.
 function spread(l) {
   const ws = l.words, lb = l.box || (ws.length ? union(ws.map((w) => w.box)) : null);
-  if (ws.length < 2 || !lb) return ws;
-  const same = ws.every((w) => Math.abs(w.box[0] - ws[0].box[0]) < 2 && Math.abs(w.box[2] - ws[0].box[2]) < 2);
-  if (!same) return ws;
+  if (!ws.length || !lb) return ws;
+  const slack = lb[3], fine = (b) => b && b.every(Number.isFinite) && b[2] > 0 && b[0] >= lb[0] - slack && b[0] + b[2] <= lb[0] + lb[2] + slack && b[1] + b[3] >= lb[1] - slack && b[1] <= lb[1] + lb[3] + slack;
+  const piled = ws.some((w, i) => i && w.box[0] < ws[i - 1].box[0] + ws[i - 1].box[2] / 2);
+  if (!piled && ws.every((w) => fine(w.box))) return ws;
   const units = ws.map((w) => [...w.text].length), total = units.reduce((a, b) => a + b, 0) + (ws.length - 1);
   const per = lb[2] / total;
   let x = lb[0];

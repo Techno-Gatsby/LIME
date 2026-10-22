@@ -91,18 +91,36 @@ module.exports = async ({ submit, jobs, tools, dir }) => {
     ok(ink > a.length * 0.002 && diff / a.length < 2, `the scanned page changed: mean difference ${(diff / a.length).toFixed(2)} over ${ink} dark samples`);
     return `the page still shows the scan (mean difference ${(diff / a.length).toFixed(2)}) with the words over it`;
   });
-  await check('OCR words that all carry their line’s box (Apple Vision) are laid along the line', async () => {
+  await check('OCR words whose boxes pile up (Apple Vision) are laid along the line', async () => {
     // Vision's accurate mode often gives each word the box of its whole line; words left that way read back as one per line.
-    const lineOnly = (m) => { const w = m.width, h = m.height, line = (y, t) => { const box = [0.1 * w, y * h, t.length * 0.018 * w, 0.03 * h]; return { text: t, box, words: t.split(' ').map((x) => ({ text: x, box })) }; };
+    // It can also answer with a box from the line's start to the word's end, or one off the page. All must come back as whole lines.
+    const vision = (kind) => (m) => { const w = m.width, h = m.height, ch = 0.018 * w, line = (y, t) => { const box = [0.1 * w, y * h, t.length * ch, 0.03 * h]; let end = 0;
+      return { text: t, box, words: t.split(' ').map((x) => { end += x.length; const b = kind === 'line' ? box : kind === 'to-end' ? [box[0], box[1], end * ch, box[3]] : [box[0] + end * ch * w, box[1], x.length * ch * w, box[3]]; end += 1; return { text: x, box: b }; }) }; };
       return { width: w, height: h, lines: [line(0.2, 'The quick brown fox jumps over the lazy dog.'), line(0.3, 'Invoice 2041 total due by October 31.')] }; };
-    ocr.engines.os = fake(['en-US'], lineOnly);
     const png = await sharp({ create: { width: PAGE.width, height: PAGE.height, channels: 3, background: '#ffffff' } }).png().toBuffer();
-    const { pdf } = await ocr.imageToTextPdf(png, 'eng');
-    const file = path.join(OUT, 'vision-lines.pdf');
-    fs.writeFileSync(file, pdf);
-    const lines = (await pdfLines(file)).map((l) => l.text.trim());
-    ok(lines.length === 2 && lines[0] === 'The quick brown fox jumps over the lazy dog.' && lines[1] === 'Invoice 2041 total due by October 31.', `lines ${JSON.stringify(lines)}`);
+    let lines;
+    for (const kind of ['line', 'to-end', 'off-page']) {
+      ocr.engines.os = fake(['en-US'], vision(kind));
+      const { pdf } = await ocr.imageToTextPdf(png, 'eng');
+      const file = path.join(OUT, `vision-${kind}.pdf`);
+      fs.writeFileSync(file, pdf);
+      lines = (await pdfLines(file)).map((l) => l.text.trim());
+      ok(lines.length === 2 && lines[0] === 'The quick brown fox jumps over the lazy dog.' && lines[1] === 'Invoice 2041 total due by October 31.', `${kind} boxes: lines ${JSON.stringify(lines)}`);
+    }
     return lines.join(' | ');
+  });
+  await check('A searchable PDF made with the OS engine reads back through the whole ocr-pdf path', async () => {
+    // The same path as Searchable PDF on Mac and Windows: render each page, read it with the OS engine, lay the words over
+    // the scan and copy that page into the result. Words get the boxes they would have on the 300 dpi render.
+    const sentLines = (m) => { const w = m.width, h = m.height, line = (y, t) => { let x = 0.08 * w; const ch = 0.011 * w; return { text: t, box: [x, y * h, t.length * ch, 0.018 * h], words: t.split(' ').map((s) => { const box = [x, y * h, s.length * ch, 0.018 * h]; x += (s.length + 1) * ch; return { text: s, box }; }) }; };
+      const half = SENT.trim().split(' '), cut = Math.ceil(half.length / 2);
+      return { width: w, height: h, lines: [line(0.1, half.slice(0, cut).join(' ')), line(0.14, half.slice(cut).join(' '))] }; };
+    ocr.engines.os = fake(['en-US'], sentLines);
+    const out = path.join(OUT, 'os-searchable.pdf');
+    await E('pdf').ocr(fx('scan.pdf'), { lang: 'eng', skipText: true, dpi: '300' }, out);
+    const t = await pdfText(out), s = score(t);
+    ok(s >= 0.95, `read back ${Math.round(s * 100)}%: ${JSON.stringify(t.slice(0, 160))}`);
+    return `${Math.round(s * 100)}% of the sentence reads back`;
   });
   await check('OCR falls back to tesseract and says so', async () => {
     notes.length = 0;
