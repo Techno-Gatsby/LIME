@@ -1563,6 +1563,18 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'cad-compare': [['test.dxf', 'lines.dxf']], 'mix-tracks': [['tone.wav', 'song.mp3']], 'doc-markup': [['tracked.docx']], 'doc-contents': [['chapters.docx']], 'doc-password': [['doc.docx'], { password: 'lime123' }], 'doc-fields': [['doc.docx']], 'doc-upgrade': [['doc.rtf']], 'doc-pages': [['letter.docx']], 'sheet-chart': [['sheet.xlsx']], 'sheet-table': [['sheet.xlsx']], 'sheet-recalc': [['book.xlsx']], 'sheet-check': [['book.xlsx']], 'make-slides': [['doc.md']], 'slides-gif': [['deck.pptx']], 'slide-graphics': [['deck.pptx']], 'session-mix': [['session.scraft']], 'session-stems': [['session.scraft']],
     'simplify-model': [['part.stp']], 'merge-models': [['box.stl', 'cube.stl']], 'model-drawing': [['step.stl']], 'repair-model': [['broken.stl']], 'trace-image': [['photo2.jpg']], 'hdr-batch': [['hdr/bracket-0.dng', 'hdr/bracket-1.dng', 'hdr/bracket-2.dng']], 'split-scenes': [['scenes.mp4']], 'split-chapters': [['chapters.pdf']], 'comment-summary': [['comments.pdf']],
   };
+  // The speech tools need words, not the 440 Hz sweep tone: one sequential case reads a sentence aloud first, and the speech cases take that clip (and a video muxed from it).
+  // AI jobs share one model host, so parallel sweep workers queue behind each other: those cases get a longer limit.
+  const SPOKEN = path.join(OUT, 'spoken'), spokenWav = path.join(SPOKEN, 'spoken.wav'), spokenMp4 = path.join(SPOKEN, 'spoken.mp4');
+  fs.mkdirSync(SPOKEN, { recursive: true });
+  fs.writeFileSync(path.join(SPOKEN, 'spoken.txt'), 'The quick brown fox jumps over the lazy dog. Our meeting has moved to Thursday afternoon, so please bring the updated figures.');
+  Object.assign(SWEEP, { 'speech-to-text': [[spokenWav]], 'subtitle-video': [[spokenMp4]] });
+  const spokenCase = { name: 'sweep spoken clip', tool: 'read-aloud', inputs: [path.join(SPOKEN, 'spoken.txt')], opts: { voice: 'en-GB', to: 'wav', speed: '1' }, save: true, skip: ['espeak', 'voice-en-GB'].every((m) => E('ai').have(m)) ? undefined : 'the speech models are not in this build',
+    check: async ([o]) => {
+      fs.copyFileSync(o, spokenWav);
+      await U.run(U.binPath('ffmpeg'), ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=24', '-i', spokenWav, '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', spokenMp4]);
+      ok(Number((await ffp(spokenMp4)).format.duration) > 3, 'the spoken video is too short');
+    } };
   const SWEEP_REFUSE = { 'replace-text matchCase=true': /found no “lime”/, 'convert-document to=docx': /already DOCX/, 'model-drawing scale=5': /don’t fit on A3/, 'convert-slides to=pptx': /already PPTX/, 'convert-email to=eml': /already EML/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
@@ -1682,7 +1694,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
     const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.ai && !E('ai').have(t.ai) ? 'the speech models are not in this build' : undefined;
-    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map(fx), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine });
+    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine, limit: t.ai ? 900000 : undefined });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
     const opts = { ...defaults(tools.get(id)), ...more }, check = sweepCheck(id, 'batch', opts);
@@ -1707,7 +1719,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     try {
       const id = submit({ tool: c.tool, files: inputs, opts: c.opts, dest });
       let j;
-      for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); if (Date.now() - t0 > 240000) throw new Error('timeout'); }
+      for (;;) { j = jobs.get(id); if (j && !['queued', 'running'].includes(j.status)) break; await sleep(150); if (Date.now() - t0 > (c.limit || 240000)) throw new Error('timeout'); }
       if (c.fail) {
         ok(j.status === 'error', `${j.status} instead of an error`);
         ok(c.fail.test(j.error || ''), `error was: ${j.error}`);
@@ -1727,6 +1739,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     results.push({ name: c.name, status, detail });
   };
   const picked = C.filter((c) => !only || only.test(c.name));
+  if (picked.some((c) => c.inputs.some((f) => f.startsWith(SPOKEN + path.sep)))) picked.unshift(spokenCase);
   for (const c of picked.filter((x) => !x.par)) await runCase(c);
   const par = picked.filter((x) => x.par), t1 = Date.now();
   await Promise.all(Array.from({ length: Math.max(1, Math.min(3, require('os').cpus().length - 1)) }, async () => { while (par.length) await runCase(par.shift()); }));
