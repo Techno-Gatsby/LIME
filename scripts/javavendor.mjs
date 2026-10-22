@@ -35,10 +35,8 @@ async function pinned(url, sha, cache, name = decodeURIComponent(path.basename(n
     for (let i = 1; ; i++) {
       console.log('↓', url);
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(900000) });
-        if (!r.ok) throw new Error(`${r.status} ${url}`);
-        const { pipeline } = await import('node:stream/promises'), { Readable } = await import('node:stream');
-        await pipeline(Readable.fromWeb(r.body), fs.createWriteStream(`${f}.part`));
+        // curl, not fetch: SourceForge's mirror redirects have crashed Node's fetch outright (an uncatchable undici assertion).
+        execFileSync(process.platform === 'win32' ? 'curl.exe' : 'curl', ['-fsSL', '--retry', '3', '--max-time', '900', '-o', `${f}.part`, url], { stdio: ['ignore', 'ignore', 'inherit'] });
         fs.renameSync(`${f}.part`, f);
         break;
       } catch (e) { if (i === 3) throw e; console.warn(`retrying ${url}: ${e.message}`); }

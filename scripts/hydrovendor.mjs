@@ -42,8 +42,12 @@ async function pinned(url, sha, cache, name) {
 }
 const untar = (file, dir) => { mk(dir); execFileSync(TAR, ['-xzf', file, '-C', dir], { stdio: ['ignore', 'ignore', 'inherit'] }); return path.join(dir, fs.readdirSync(dir)[0]); };
 function clang(sdk, args, cwd) {
-  const r = spawnSync(path.join(sdk, 'bin', process.platform === 'win32' ? 'clang.exe' : 'clang'), args, { encoding: 'utf8', maxBuffer: 1 << 26, cwd });
-  if (r.status !== 0) throw new Error(`clang: ${(r.stderr || r.error?.message || '').split('\n').filter((l) => /error/.test(l)).slice(0, 8).join('\n')}`);
+  // The arguments go in a response file: every heclib source on one command line is past Windows' 32K limit.
+  const rsp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'lime-cc-')), 'args.rsp');
+  fs.writeFileSync(rsp, args.map((a) => `"${a.replace(/\\/g, '/').replace(/"/g, '\\"')}"`).join('\n'));
+  const r = spawnSync(path.join(sdk, 'bin', process.platform === 'win32' ? 'clang.exe' : 'clang'), [`@${rsp}`], { encoding: 'utf8', maxBuffer: 1 << 26, cwd });
+  fs.rmSync(path.dirname(rsp), { recursive: true, force: true });
+  if (r.status !== 0) throw new Error(`clang: ${r.error?.message || ''} ${(r.stderr || '').split('\n').filter((l) => /error/.test(l)).slice(0, 8).join('\n')}`);
 }
 const common = (sdk) => ['--target=wasm32-wasip1', `--sysroot=${path.join(sdk, 'share', 'wasi-sysroot')}`, '-O2', '-D_WASI_EMULATED_SIGNAL', '-D_WASI_EMULATED_PROCESS_CLOCKS', '-D_WASI_EMULATED_GETPID', '-include', path.join(HERE, 'lime-wasi.h'), '-w'];
 const libs = ['-lm', '-lwasi-emulated-signal', '-lwasi-emulated-process-clocks', '-lwasi-emulated-getpid'];

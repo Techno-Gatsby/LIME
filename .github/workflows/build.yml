@@ -49,12 +49,16 @@ jobs:
         id: vendor
         with:
           path: vendor
-          key: vendor-${{ runner.os }}-${{ hashFiles('scripts/engines.mjs', 'package-lock.json') }}
+          key: vendor-${{ runner.os }}-${{ hashFiles('scripts/*.mjs', 'package-lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            vendor-${{ runner.os }}-${{ hashFiles('scripts/*.mjs', 'package-lock.json') }}-
+            vendor-${{ runner.os }}-
       - run: npm ci
       - name: Check the drag detection logic
         run: node test/dragwatch.test.js
       - run: node scripts/engines.mjs ${{ matrix.target }}
-      - if: steps.vendor.outputs.cache-hit != 'true'
+      # Saved even when a step fails, so a re-run keeps every payload that was already fetched and built.
+      - if: always()
         uses: actions/cache/save@v4
         with:
           path: vendor
