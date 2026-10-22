@@ -260,7 +260,7 @@ const TOOLS = [
     options: [select('aspect', 'Shape', [['1:1', 'Square'], ['4:5', 'Portrait 4:5'], ['3:2', 'Photo 3:2'], ['16:9', 'Wide 16:9'], ['9:16', 'Story 9:16'], ['custom', 'Exact pixels']]), toggle('smart', 'Keep the subject in frame', true, { when: { aspect: ['1:1', '4:5', '3:2', '16:9', '9:16'] } }), num('left', 'Left', 0, { when: { aspect: 'custom' } }), num('top', 'Top', 0, { when: { aspect: 'custom' } }), num('width', 'Width', 1000, { when: { aspect: 'custom' } }), num('height', 'Height', 1000, { when: { aspect: 'custom' } })],
     run: each((f, o, c) => img().crop(f, o, c)) },
   { id: 'remove-background', cat: 'image', name: 'Remove background', desc: 'Cut out the subject to a transparent PNG, on this computer.', tags: 'bg background cutout cut out transparent erase subject', accepts: IMAGE_IN, ext: 'png', suffix: '-cutout',
-    options: [select('background', 'Background', [['transparent', 'Transparent'], ['#ffffff', 'White'], ['#000000', 'Black']])],
+    options: [choice('quality', 'Quality', [['best', 'Best'], ['fast', 'Fast']]), select('background', 'Background', [['transparent', 'Transparent'], ['#ffffff', 'White'], ['#000000', 'Black']])],
     run: each((f, o, c) => img().removeBackground(f, o, c)) },
   { id: 'upscale-image', cat: 'image', name: 'Upscale image', desc: 'Enlarge 2×, 3× or 4× with sharp detail.', accepts: IMAGE_IN, suffix: '-upscaled', ext: (o, files) => (keepExt(files[0]) === 'gif' ? 'png' : keepExt(files[0])),
     options: [choice('factor', 'Enlarge', [['2', '2×'], ['3', '3×'], ['4', '4×']], '2')], run: each((f, o, c) => img().upscale(f, { ...o, method: 'classic' }, c)) },

@@ -17,7 +17,8 @@ const KEEP = /^\/(src|build|assets|node_modules|package\.json)(\/|$)/;
 const DROP = /^\/build\/(icon\.(icns|ico)|lime\.nsi|.*\.svg)$|\/(tests?|__tests__|docs|examples?|benchmarks?|\.github|@types)\/|\/(?!licen[cs]e|copying|notice)[^/]*\.(md|markdown|map|[mc]?ts|tsbuildinfo|flow)$|\/(yarn\.lock|package-lock\.json|tsconfig[^/]*\.json|\.eslintrc[^/]*|\.npmignore)$/i;
 // Copies of a module that Lime never loads: other module formats, other platforms, GPU providers.
 const UNUSED = [
-  /^\/node_modules\/onnxruntime-node\/bin\/napi-v3\/.*(providers_(cuda|tensorrt|shared)|DirectML\.dll)/,
+  // DirectML.dll stays: the Windows onnxruntime binding links it and won't load without it, even on the CPU provider.
+  /^\/node_modules\/onnxruntime-node\/bin\/napi-v3\/.*providers_(cuda|tensorrt|shared)/,
   /^\/node_modules\/tesseract\.js-core\/tesseract-core(?!-simd-lstm\.(js|wasm)$)[^/]*$/,
   /^\/node_modules\/libheif-js\/(libheif\/|libheif-wasm\/(libheif-bundle\.mjs|libheif\.js|libheif\.wasm)$)/,
   /^\/node_modules\/mupdf\/dist\/[^/]*\.br$/,
@@ -43,16 +44,10 @@ export async function pack(platform, arch, opts) {
     for (const f of ['bunny.drc', 'draco_nodejs_example.js']) rm(nm, 'draco3dgltf', f);
     for (const f of ls(path.join(nm, 'meshoptimizer'))) if (!/^(meshopt_decoder\.cjs|meshopt_encoder\.js|index\.js|package\.json|LICENSE\.md)$/.test(f)) rm(nm, 'meshoptimizer', f);
     for (const d of ['lib', 'bitbybit-dev-occt-64-bit', 'bitbybit-dev-occt-64-bit-mt']) rm(nm, '@bitbybit-dev', 'occt', d);
-    // Background removal ships the quantised (int8) model only; see removeBackground in src/main/engines/image.js.
-    const bg = path.join(nm, '@imgly/background-removal-node/dist'), res = JSON.parse(fs.readFileSync(path.join(bg, 'resources.json'), 'utf8'));
-    const chunkHashes = new Set(Object.entries(res).filter(([k]) => k === '/models/small' || !k.startsWith('/models/')).flatMap(([, r]) => r.chunks.map((c) => c.hash)));
-    for (const k of Object.keys(res)) if (k.startsWith('/models/') && k !== '/models/small') delete res[k];
-    fs.writeFileSync(path.join(bg, 'resources.json'), JSON.stringify(res));
-    for (const f of ls(bg)) if (/^[0-9a-f]{64}$/.test(f) && !chunkHashes.has(f)) rm(bg, f);
     if (!ls(path.join(nm, '@bitbybit-dev', 'occt', 'bitbybit-dev-occt')).some((f) => f.endsWith('.wasm'))) console.warn('! @bitbybit-dev/occt has no kernel, so exact STEP, IGES and BREP saving won’t work in this build');
     const keep = (dir, re) => { for (const f of walkRel(path.join(nm, dir))) if (!re.test(f)) rm(nm, dir, f); };
     keep('bwip-js', /^(package\.json|LICENSE|dist\/bwip-js-node\.js)$/);
-    keep('zxing-wasm', /^(package\.json|LICENSE|dist\/cjs\/(share\.js|reader\/index\.js)|dist\/reader\/zxing_reader\.wasm)$/);
+    keep('zxing-wasm', /^(package\.json|LICENSE|dist\/cjs\/(package\.json|share\.js|reader\/index\.js)|dist\/reader\/zxing_reader\.wasm)$/);
     keep('gifski-wasm', /^(package\.json|LICENSE|dist\/encode\.js|pkg\/gifski_wasm(_bg\.wasm|\.js))$/);
     keep('@jsquash/oxipng', /^(package\.json|LICENSE|codec\/pkg\/squoosh_oxipng(_bg\.wasm|\.js))$/);
     keep('exifr', /^(package\.json|LICENSE|dist\/full\.umd\.js)$/);

@@ -93,7 +93,7 @@ async function readOs(png, lang) {
     if (!r || !Array.isArray(r.lines)) throw new Error('no result');
     const back = (b) => (k < 1 ? b.map((v) => v / k) : b);
     const out = r.lines.map((l) => ({ text: String(l.text || ''), box: l.box ? back(l.box) : null, words: (l.words || []).filter((w) => w.text).map((w) => ({ text: String(w.text), box: back(w.box) })) }));
-    for (const l of out) { l.words = joinMarks(l.words); if (l.words.length) l.text = l.words.map((w) => w.text).join(' '); if (!l.box && l.words.length) l.box = union(l.words.map((w) => w.box)); }
+    for (const l of out) { l.words = joinMarks(spread(l)); if (l.words.length) l.text = l.words.map((w) => w.text).join(' '); if (!l.box && l.words.length) l.box = union(l.words.map((w) => w.box)); }
     const lines = out.filter((l) => l.box && l.text.trim());
     if (!lines.some((l) => l.words.length)) throw new Error('it read nothing');
     return { engine: os.name, width: m.width, height: m.height, lines };
@@ -101,6 +101,18 @@ async function readOs(png, lang) {
     engines.note(`${os.name} failed (${e.message}); using tesseract`);
     return null;
   } finally { fsp.rm(dir, { recursive: true, force: true }).catch(() => {}); }
+}
+// Apple Vision's accurate mode often answers a word's box with the whole line's box. Words placed that way pile up at
+// the line's start and read back from the PDF as one jumble, so they are laid along the line by their share of letters.
+function spread(l) {
+  const ws = l.words, lb = l.box || (ws.length ? union(ws.map((w) => w.box)) : null);
+  if (ws.length < 2 || !lb) return ws;
+  const same = ws.every((w) => Math.abs(w.box[0] - ws[0].box[0]) < 2 && Math.abs(w.box[2] - ws[0].box[2]) < 2);
+  if (!same) return ws;
+  const units = ws.map((w) => [...w.text].length), total = units.reduce((a, b) => a + b, 0) + (ws.length - 1);
+  const per = lb[2] / total;
+  let x = lb[0];
+  return ws.map((w, i) => { const box = [x, lb[1], units[i] * per, lb[3]]; x += (units[i] + 1) * per; return { text: w.text, box }; });
 }
 const MARK = /^[\p{P}\p{S}]+$/u, OPEN = /^[([{«“‘"'¿¡]+$/u;
 function joinMarks(words) {

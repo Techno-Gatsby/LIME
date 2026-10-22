@@ -14,9 +14,24 @@ const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: ['ignore',
 const WIN = process.platform === 'win32', EXE = WIN ? '.exe' : '', PT = `${process.platform}-${process.arch}`;
 const vendored = (n, alt = n) => [path.resolve('vendor/bin', PT, n + EXE)].find((f) => fs.existsSync(f)) || alt;
 const crafts = path.resolve('vendor/crafts', PT), unpacked = fs.mkdtempSync(path.join(os.tmpdir(), 'lime-cli-'));
+const appsDir = path.resolve('vendor/apps', PT);
+// On Mac and Windows the engine ships inside its app's archive (vendor/apps/<target>/<id>.tar.br, listed with its cli path).
+const fromApp = (n) => {
+  let m;
+  try { m = JSON.parse(fs.readFileSync(path.join(appsDir, 'manifest.json'), 'utf8'))[n]; } catch { return null; }
+  if (!m?.cli || !fs.existsSync(path.join(appsDir, `${n}.tar.br`))) return null;
+  const dest = path.join(unpacked, n), exe = path.join(dest, m.cli);
+  if (!fs.existsSync(exe)) {
+    fs.mkdirSync(dest, { recursive: true });
+    const tar = zlib.brotliDecompressSync(fs.readFileSync(path.join(appsDir, `${n}.tar.br`)), { params: { [zlib.constants.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } });
+    execFileSync(TAR, ['-xf', '-', '-C', dest], { input: tar, stdio: ['pipe', 'ignore', 'pipe'], maxBuffer: 1 << 30 });
+  }
+  return exe;
+};
 const cli = (n) => {
   const f = path.join(crafts, `${n}-cli${EXE}`);
-  if (fs.existsSync(f) || !fs.existsSync(`${f}.br`)) return f;
+  if (fs.existsSync(f)) return f;
+  if (!fs.existsSync(`${f}.br`)) return fromApp(n) || f;
   const out = path.join(unpacked, path.basename(f));
   if (!fs.existsSync(out)) fs.writeFileSync(out, zlib.brotliDecompressSync(fs.readFileSync(`${f}.br`)), { mode: 0o755 });
   return out;

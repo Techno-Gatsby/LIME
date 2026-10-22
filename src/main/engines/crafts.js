@@ -881,6 +881,16 @@ function appFor(file) {
   return id && hasApp(id) ? { id, ...APPS[id] } : null;
 }
 const unpackingApps = new Map();
+// Older versions go once a new one is in place. Another process (each tool worker is one) may be unpacking into its own
+// .part- folder right now, so a .part- folder is only removed once it is an hour old: a leftover from a run that stopped.
+async function sweepOld(root, id, keep) {
+  for (const d of await fsp.readdir(root).catch(() => [])) {
+    if (!d.startsWith(`${id}-`) || d === path.basename(keep)) continue;
+    const p = path.join(root, d);
+    if (d.includes('.part-')) { const st = await fsp.stat(p).catch(() => null); if (!st || Date.now() - st.mtimeMs < 3600e3) continue; }
+    fsp.rm(p, { recursive: true, force: true }).catch(() => {});
+  }
+}
 // Windows antivirus holds a freshly written program for a moment, and a running copy can't be replaced: wait and retry.
 const settle = async (fn) => {
   for (let i = 0; ; i++) {
@@ -913,7 +923,7 @@ async function bundledApp(id) {
       if (fs.existsSync(target)) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return target; }
       await settle(() => fsp.rm(dir, { recursive: true, force: true }));
       await settle(() => fsp.rename(part, dir));
-      for (const d of await fsp.readdir(root)) if (d.startsWith(`${id}-`) && d !== path.basename(dir)) fsp.rm(path.join(root, d), { recursive: true, force: true }).catch(() => {});
+      await sweepOld(root, id, dir);
       return target;
     })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingApps.delete(id)));
   }
@@ -953,7 +963,7 @@ async function webApp(id) {
       if (fs.existsSync(path.join(site, 'index.html'))) { fsp.rm(part, { recursive: true, force: true }).catch(() => {}); return site; }
       await settle(() => fsp.rm(dir, { recursive: true, force: true }));
       await settle(() => fsp.rename(part, dir));
-      for (const d of await fsp.readdir(root)) if (d.startsWith(`${id}-`) && d !== path.basename(dir)) fsp.rm(path.join(root, d), { recursive: true, force: true }).catch(() => {});
+      await sweepOld(root, id, dir);
       return site;
     })().catch((e) => { throw new Error(`${APPS[id].name} couldn’t be unpacked (${e.code || e.message}). Check there is free space, then try again.`); }).finally(() => unpackingWeb.delete(id)));
   }

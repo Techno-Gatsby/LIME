@@ -36,7 +36,8 @@ async function start() {
     addEventListener(ev, cb) { if (ev === 'message') this.onmessage = cb; },
     postMessage({ id, result, error }) { const p = waits.get(id); if (!p) return; waits.delete(id); error ? p.no(Object.assign(new Error(error.message), { name: error.name })) : p.ok(result); },
     importScripts(...names) { for (const n of names) vm.runInThisContext(fs.readFileSync(path.join(dir, n), 'utf8'), { filename: path.join(dir, n) }); },
-    async fetch(url) { return new Response(await fsp.readFile(url.pathname), { headers: { 'Content-Type': 'application/wasm' } }); },
+    // A file URL's pathname is /C:/… with %-escapes on Windows; fileURLToPath gives the real path everywhere.
+    async fetch(url) { return new Response(await fsp.readFile(require('url').fileURLToPath(url)), { headers: { 'Content-Type': 'application/wasm' } }); },
     location: require('url').pathToFileURL(entry),
   };
   const had = { exception: process.listeners('uncaughtException'), rejection: process.listeners('unhandledRejection') };
@@ -45,6 +46,10 @@ async function start() {
     vm.runInThisContext(fs.readFileSync(entry, 'utf8'), { filename: entry });
     engine = scope;
     await call('initialize', { cacheSize: 0 });
+  } catch (e) {
+    // A runtime that failed to start stays unusable, so the next request starts it afresh.
+    engine = null;
+    throw e;
   } finally {
     // Emscripten's Node glue hooks the process to abort on any stray error; this thread is shared, so those come off again.
     for (const l of process.listeners('uncaughtException')) if (!had.exception.includes(l)) process.off('uncaughtException', l);
