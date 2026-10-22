@@ -63,7 +63,7 @@ const saveSettings = () => { clearTimeout(saveT); saveT = setTimeout(() => fsp.w
 const publicSettings = () => { const { recent, ...rest } = settings; return { ...rest, rings: homeRings(), platform: process.platform }; };
 const RING_MAX = { first: 9, second: 10 };
 function homeRings(r = settings.rings) {
-  const known = Object.keys(crafts.APPS), seen = new Set(), def = DEFAULTS.rings;
+  const known = Object.keys(crafts.APPS).filter((id) => crafts.usable(id)), seen = new Set(), def = DEFAULTS.rings;
   const src = r && (Array.isArray(r.first) || Array.isArray(r.second)) ? r : def;
   const take = (list, max) => (Array.isArray(list) ? list : []).filter((id) => known.includes(id) && !seen.has(id) && seen.add(id)).slice(0, max);
   const first = take(src.first, RING_MAX.first), second = take(src.second, RING_MAX.second);

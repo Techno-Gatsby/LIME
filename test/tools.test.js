@@ -1419,6 +1419,81 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     ok(items.some((i) => i.layer === 'Hidden' && i.dash?.join() === '3,-1.5'), 'hidden line not dashed when read back');
   });
   F('drawing refuses a scale that doesn’t fit', 'model-drawing', ['box.stl'], { scale: '50' }, /don’t fit on A3/);
+
+  // SolidCraft and Blender: the samples are made here by the apps themselves (a parametric block, and box.stl saved by Blender),
+  // and the cases skip when this build has no engine for them. Set LIME_BLENDER to a blender executable to run Blender's.
+  const CR = E('crafts'), THIRD = path.join(OUT, 'third-party');
+  fs.mkdirSync(THIRD, { recursive: true });
+  const A = (name, tool, inputs, opts, check, skip, extra = {}) => C.push({ name, tool, inputs, opts, check, skip, limit: 900000, ...extra });
+  const AF = (name, tool, inputs, opts, fail, skip) => C.push({ name, tool, inputs, opts, fail, skip, limit: 900000 });
+  const noSolid = CR.hasEngine('solidcraft') ? null : 'no SolidCraft engine on this platform', noBlender = CR.hasEngine('blender') ? null : 'no Blender in this build (set LIME_BLENDER)';
+  const block = path.join(THIRD, 'block.solidcraft'), blend = path.join(THIRD, 'box.blend'), usdz = path.join(THIRD, 'box.usdz'), abc = path.join(THIRD, 'box.abc');
+  if (!noSolid) {
+    const sc = path.join(THIRD, 'block.json');
+    fs.writeFileSync(sc, JSON.stringify({ commands: [{ command: 'parameters.add', params: { name: 'width', expression: '40 mm' } }, { command: 'parameters.add', params: { name: 'depth', expression: '20 mm' } },
+      { command: 'solid.box', params: { length: 'width', width: 'depth', height: '10 mm', body_name: 'Block' } }] }));
+    await U.run(await CR.cli('solidcraft'), ['run', sc, '--save', block, '--quiet']);
+  }
+  if (!noBlender) for (const f of [blend, usdz, abc]) if (!fs.existsSync(f)) await CR.blenderConvert(fx('box.stl'), U.ext(f), f, {});
+  const glbMeshes = (p) => { const b = read(p); ok(b.toString('latin1', 0, 4) === 'glTF', 'not a GLB'); const js = JSON.parse(b.subarray(20, 20 + b.readUInt32LE(12)).toString()); return (js.meshes || []).length; };
+  const volOf = async (o, v, tol = 1) => { const i = await cadInfo(o); ok(Math.abs(i.volume - v) <= tol, `volume ${i.volume} ≠ ${v}`); return i; };
+  A('solidcraft→step: exact, rebuilt by SolidCraft', 'convert-model', [block], { to: 'step' }, async ([o]) => { ok(/^ISO-10303-21;/.test(txt(o)), 'not STEP'); await volOf(o, 8000); }, noSolid);
+  A('solidcraft→stl', 'convert-model', [block], { to: 'stl' }, async ([o]) => { await volOf(o, 8000); }, noSolid);
+  A('solidcraft→3mf', 'convert-model', [block], { to: '3mf' }, async ([o]) => { zipHas(o, '3D/3dmodel.model'); await volOf(o, 8000); }, noSolid);
+  A('solidcraft→iges goes through exact STEP', 'convert-model', [block], { to: 'iges' }, async ([o]) => { await volOf(o, 8000); }, noSolid);
+  A('solidcraft→glb centred: Lime’s own mesh tools', 'convert-model', [block], { to: 'glb', centre: 'centre' }, async ([o]) => { ok(glbMeshes(o) >= 1, 'no meshes'); nearly(glbBox(o), [0.04, 0.01, 0.02], 'glb extents'); }, noSolid);
+  A('measure a solidcraft design', 'cad-info', [block], { save: false }, (o, r) => ok(/Volume: 8(\.0+)? cm³/.test(r[0].text), r[0].text), noSolid);
+  A('solidcraft parameters', 'solid-params', [block], { save: false }, (o, r) => has(r[0].text, 'width = 40 mm', 'depth = 20 mm'), noSolid);
+  A('solidcraft parameters→csv', 'solid-params', [block], { save: true }, ([o]) => has(txt(o), 'name,expression', 'width,40 mm'), noSolid);
+  A('solidcraft change parameters→stl', 'solid-change', [block], { params: 'width = 90 mm; depth=25 mm', to: 'stl' }, async ([o], r) => { await volOf(o, 90 * 25 * 10); has(r[0].note, 'width = 90 mm'); }, noSolid);
+  A('solidcraft change parameters→design keeps them', 'solid-change', [block], { params: 'width = 55 mm', to: 'solidcraft' }, async ([o]) => {
+    zipHas(o, '');
+    const r = await CR.solidParams(o, {}, {});
+    has(r.text, 'width = 55 mm');
+    await volOf(o, 55 * 20 * 10);
+  }, noSolid);
+  AF('solidcraft refuses an unknown parameter', 'solid-change', [block], { params: 'height = 5 mm' }, /no parameter called height/, noSolid);
+  AF('solidcraft refuses a change without a value', 'solid-change', [block], { params: 'width' }, /isn’t a parameter change/, noSolid);
+  A('stl→fbx through Blender', 'convert-model', [fx('box.stl')], { to: 'fbx' }, async ([o]) => { ok(read(o).toString('latin1', 0, 18) === 'Kaydara FBX Binary', 'not a binary FBX'); await volOf(o, 6000, 6); }, noBlender);
+  A('stl→usdz through Blender', 'convert-model', [fx('box.stl')], { to: 'usdz' }, ([o]) => { const z = zipHas(o, '.usdc'); ok(Object.keys(z).length >= 1, 'empty USDZ'); }, noBlender);
+  A('stl→alembic through Blender', 'convert-model', [fx('box.stl')], { to: 'abc' }, ([o]) => ok(read(o).toString('latin1', 0, 5) === 'Ogawa', 'not an Alembic (Ogawa) file'), noBlender);
+  A('step→usd: Lime meshes, Blender writes', 'convert-model', [fx('part.stp')], { to: 'usd' }, ([o]) => ok(read(o).toString('latin1', 0, 8) === 'PXR-USDC', 'not a USD crate file'), noBlender);
+  A('stl→blend through Blender', 'convert-model', [fx('box.stl')], { to: 'blend' }, async ([o]) => { await volOf(o, 6000, 6); }, noBlender);
+  A('blend→glb keeps the mesh', 'convert-model', [blend], { to: 'glb' }, async ([o]) => { ok(glbMeshes(o) >= 1, 'no meshes'); await volOf(o, 6000, 6); }, noBlender);
+  A('blend→stl repaired: Blender reads, Lime repairs', 'convert-model', [blend], { to: 'stl', repair: true }, async ([o]) => { await volOf(o, 6000, 6); }, noBlender);
+  A('usdz→obj through Blender', 'convert-model', [usdz], { to: 'obj' }, async ([o]) => { ok(/^v /m.test(txt(o)), 'no vertices'); await volOf(o, 6000, 6); }, noBlender);
+  A('alembic→3mf: Blender reads, Lime writes', 'convert-model', [abc], { to: '3mf' }, async ([o]) => { zipHas(o, '3D/3dmodel.model'); await volOf(o, 6000, 6); }, noBlender);
+  A('measure a .blend', 'cad-info', [blend], { save: false }, (o, r) => ok(/Volume: 6(\.0+)? cm³/.test(r[0].text), r[0].text), noBlender);
+  // A real picture: the model is lit and shaded (many grey levels), sits in the middle, and the corners are background.
+  const rendered = async (o, w, h) => {
+    const { data, info } = await sharp(o).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
+    ok(info.width === w && info.height === h, `${info.width}×${info.height} ≠ ${w}×${h}`);
+    const at = (x, y) => data[Math.floor(y) * info.width + Math.floor(x)], levels = new Set(data).size;
+    const corner = at(2, 2), mid = [[0.5, 0.5], [0.45, 0.55], [0.55, 0.45]].map(([x, y]) => at(x * w, y * h));
+    ok(levels > 40, `only ${levels} grey levels: a blank picture`);
+    ok(mid.some((v) => Math.abs(v - corner) > 12), `the middle (${mid}) looks like the background (${corner})`);
+  };
+  A('studio render of an STL', 'blender-render', [fx('box.stl')], { quality: 'draft', size: 'small' }, ([o]) => rendered(o, 1024, 768), noBlender);
+  A('studio render of a STEP part, transparent', 'blender-render', [fx('part.stp')], { quality: 'draft', size: 'square', background: 'transparent' }, async ([o]) => {
+    const m = await sharp(o).metadata(); ok(m.hasAlpha, 'no alpha');
+    const { data } = await sharp(o).extractChannel('alpha').raw().toBuffer({ resolveWithObject: true });
+    ok(data[0] === 0 && data.some((a) => a === 255), 'the background isn’t see-through around a solid model');
+  }, noBlender);
+  A('studio render of a SolidCraft design', 'blender-render', [block], { quality: 'draft', size: 'small' }, ([o]) => rendered(o, 1024, 768), noBlender || noSolid);
+  A('turntable gif turns', 'blender-turntable', [blend], { to: 'gif', seconds: 1 }, async ([o]) => {
+    const m = await sharp(o, { animated: true }).metadata();
+    ok(m.pages === 20, `${m.pages} frames, not 20`);
+    const frame = async (i) => sharp(await sharp(o, { page: i }).png().toBuffer());
+    ok((await diff(await frame(0), await frame(5))) > 1, 'frames 1 and 6 are the same: nothing turned');
+  }, noBlender);
+  A('turntable mp4', 'blender-turntable', [fx('box.stl')], { to: 'mp4', seconds: 1 }, async ([o]) => { await dur(o, 1, 0.2); ok(of(await ffp(o), 'video')[0]?.codec_name === 'h264', 'not H.264'); }, noBlender);
+  A('blender opens a model: the import script reads it', 'cad-info', [fx('box.stl')], { save: false }, async () => {
+    const [, expr] = CR.blenderArgs([fx('box.stl'), fx('box.glb')]);
+    const probeOut = path.join(THIRD, 'opened.json');
+    await U.run(await CR.blenderExe(), ['-b', '--factory-startup', '--python-exit-code', '1', '--python-expr', `${expr}\nimport json\njson.dump(sorted(o.type for o in bpy.data.objects if o.type == 'MESH'), open(${JSON.stringify(probeOut)}, 'w'))`]);
+    const meshes = JSON.parse(txt(probeOut));
+    ok(meshes.length === 2, `${meshes.length} meshes came in, not 2`);
+  }, noBlender);
   const dxfSig = (items) => { const e = E('cad').extents(items), k = {}; for (const it of items) k[it.k + (it.fill ? 'F' : '')] = (k[it.k + (it.fill ? 'F' : '')] || 0) + 1; return JSON.stringify({ e: [e.x0, e.y0, e.x1, e.y1].map((v) => +v.toFixed(3)), k, c: [...new Set(items.map((i) => `${i.layer}:${i.rgb}:${i.fill ? 'fill' : i.lw ?? null}`))].sort(), t: items.filter((i) => i.k === 'text').map((i) => i.text) }); };
   for (const f of ['layers.dxf', 'test.dxf', 'unicode.dxf', 'widths.dxf', 'ocs.dxf', 'lines.dxf', 'sample_2018.dwg']) {
     T(`${f}→dxf 2000 reads back the same`, 'convert-cad', [f], { to: 'dxf' }, async ([o]) => {
@@ -1581,7 +1656,11 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     'make-qr type=code128': /too long/, 'make-qr type=code39': /too long/, 'make-qr type=ean13': /12 or 13 digits/, 'make-qr type=upca': /11 or 12 digits/,
     'convert-archive format=gz': /holds a single file/, 'convert-archive format=bz2': /holds a single file/, 'convert-archive format=xz': /holds a single file/,
     ...(process.platform !== 'darwin' && !E('office').libreOfficePath() && !E('office').status().bundled.soffice ? { 'convert-document to=odt': /Saving ODT needs LibreOffice/ } : {}) };
-  const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html' };
+  const SWEEP_EXT = { jpg: 'photo2.jpg', psd: 'layers.psd', png: 'cover.png', svg: 'logo.svg', html: 'chapters.html', solidcraft: block };
+  // Turntables are rendered frame by frame on the processor: one-second turns keep the sweep short.
+  Object.assign(SWEEP, { 'solid-change': [0, { params: 'width = 60 mm' }], 'blender-render': [0, { quality: 'draft', size: 'small' }], 'blender-turntable': [0, { seconds: 1, to: 'gif' }] });
+  const SWEEP_SKIP = [[/^blender-turntable seconds=20$/, 'twenty seconds of frames; one second covers the range'],
+    ...(process.platform === 'linux' ? [[/^blender-(render|turntable) engine=eevee$/, 'Eevee needs a graphics card, and this test machine renders without one']] : [])];
   { const d = require('./diagrams.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }
   const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])] || SWEEP_EXT[(t.extAccept || []).find((e) => SWEEP_EXT[e])]];
   const defaults = (t) => ({ ...Object.fromEntries((t.options || []).map((o) => [o.key, Array.isArray(o.default) ? [...o.default] : o.default])), ...SWEEP[t.id]?.[1] });
@@ -1646,6 +1725,13 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     if (e === 'dng') return ok(/^(II\*\0|MM\0\*)/.test(head), `${name} is not a DNG`);
     if (e === 'fdf') return ok(head.startsWith('%FDF-'), `${name} is not an FDF`);
     if (e === 'xls' || e === 'aaf') { ok(b.toString('hex', 0, 8) === 'd0cf11e0a1b11ae1', `${name} is not a compound file`); return ok(e !== 'xls' || XLSX.read(b).SheetNames.length, `${name} has no sheets`); }
+    if (e === 'fbx') return ok(head.startsWith('Kaydara FBX Binary'), `${name} is not a binary FBX`);
+    if (e === 'usdz') { const z = require('fflate').unzipSync(new Uint8Array(b)); return ok(Object.keys(z).some((k) => /\.usd[ac]?$/.test(k)), `${name} holds no USD layer`); }
+    if (e === 'usd' || e === 'usdc') return ok(head.startsWith('PXR-USDC'), `${name} is not a USD crate file`);
+    if (e === 'usda') return ok(/^#usda 1\.0/.test(head), `${name} is not text USD`);
+    if (e === 'abc') return ok(head.startsWith('Ogawa'), `${name} is not an Alembic (Ogawa) file`);
+    if (e === 'blend') return ok(/^BLENDER|^\x28\xb5\x2f\xfd/.test(head), `${name} is not a .blend file`);
+    if (e === 'solidcraft') { ok(head.startsWith('PK'), `${name} is not a SolidCraft container`); return ok((await E('cad').info(o)).triangles > 0, `${name} does not rebuild`); }
     throw new Error(`no check for .${e} files`);
   };
   const valid = async (o, opts) => { const all = deep(o); ok(all.length, `${path.basename(o)} is empty`); for (const f of all.slice(0, 8)) await validOne(f, opts); };
@@ -1697,8 +1783,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
       }
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
-    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : undefined;
-    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine, limit: t.ai ? 900000 : undefined });
+    const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : sweepIn(t).some((f) => !E('crafts').readable(f)) ? 'the sample needs an app this build lacks' : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : undefined;
+    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine || SWEEP_SKIP.find(([re]) => re.test(`${t.id} ${label}`))?.[1], limit: t.ai || t.craft === 'blender' || (t.id === 'convert-model' && /usd|fbx|abc/.test(label)) ? 900000 : undefined });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
     const opts = { ...defaults(tools.get(id)), ...more }, check = sweepCheck(id, 'batch', opts);
@@ -1902,6 +1988,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^doc-contents levels=[234]$/, 'the document has headings on two levels only'],
     [/^replace-text (regex=true|everywhere=false)$/, 'a plain word reads the same as a pattern, and the document has no headers or notes'], [/^clean-office notes=true$/, 'a Word document has no speaker notes'],
     [/^office-media what=(pictures|all)$/, 'the document holds only a picture'], [/^tidy-sheet header=false$/, 'no row repeats the header row'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
+    [/^blender-render ownCamera=false$/, 'box.stl has no camera or lights of its own'],
     [/^convert-model (repair=true|keep=1)$/, 'the box is a clean mesh of 12 triangles, the fewest Simplify keeps'], [/^model-drawing scale=2$/, 'the stepped block fits at 2:1, the largest scale that fits'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
   ];
   await check('option sweep covers the catalogue', () => {

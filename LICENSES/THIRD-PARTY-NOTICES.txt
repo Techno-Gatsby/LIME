@@ -61,6 +61,21 @@ ArtCraft engines (unmodified command-line builds from github.com/storytold)
   The image editor's crop limits for a straightened photo (move the crop towards the middle, then shrink it) and its
   relative white-balance scale follow LightCraft (crates/geom, crates/ui-egui), MIT OR Apache-2.0, same copyright.
 
+SolidCraft 0.19.0 (unmodified release builds from github.com/bherbruck/solidcraft: the desktop app, solidcraft-cli and the web build)
+  © the SolidCraft contributors, MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE, NOTICE and THIRD-PARTY-LICENSES.txt ship inside it).
+  Every file is pinned by SHA-256. Lime is not affiliated with SolidCraft.
+
+Blender 5.2.2 LTS (the official build from blender.org, Mac arm64 and Windows x64), © Blender Foundation and contributors,
+  GNU General Public License v2 or later (https://www.blender.org/about/license/). Its bundled libraries keep their own licences,
+  listed in the license folder inside the app (blender/license on Windows, Blender.app/Contents/Resources/license on a Mac).
+  Lime runs Blender as a separate program and changes none of its code. To keep the installer small, files Lime never uses
+  are left out of the copy it ships (scripts/blender-trim.mjs lists them): Cycles' CUDA, OptiX and HIP GPU kernels, Open Image
+  Denoise's GPU modules, translations other than the languages Lime reads, the bundled Python's tests, IDLE, Tk and pip,
+  compiled Python bytecode and debug symbols. The complete corresponding source of this version is at
+  https://download.blender.org/source/blender-5.2.2.tar.xz (and https://projects.blender.org/blender/blender, tag v5.2.2);
+  on request we will provide it for at least three years.
+  "Blender" is a trademark of the Blender Foundation. Lime is not affiliated with the Blender Foundation.
+
 Used when already installed on the computer (not bundled)
   LibreOffice (MPL-2.0), Pandoc (GPL-2.0+), Apple Pages, Numbers, Keynote and textutil
 
