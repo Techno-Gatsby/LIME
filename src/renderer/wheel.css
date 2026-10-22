@@ -64,9 +64,9 @@ html, body { background: transparent !important; overflow: hidden; }
 .petal .sheen { fill: url(#gSheen); stroke: url(#gEdge); stroke-width: .9; pointer-events: none; }
 .petal text { pointer-events: none; text-anchor: middle; dominant-baseline: middle; font-family: var(--font-display); transition: fill .14s; }
 .petal .l { font-size: 14px; font-weight: 700; fill: var(--label); letter-spacing: .01em; }
-.petal .h { font-size: 8.4px; font-weight: 650; fill: var(--hint); letter-spacing: .075em; }
-.petals.dense .petal .l { font-size: 12px; }
-.petals.dense .petal .h { font-size: 7.6px; }
+.petal .h { font-size: 8.6px; font-weight: 650; fill: var(--hint); letter-spacing: .04em; }
+.petals.dense .petal .l { font-size: 12.5px; }
+.petals.dense .petal .h { font-size: 8px; }
 .petal.hot { transform: translate(var(--dx), var(--dy)) scale(1.035); }
 .petal.hot .tint { opacity: .97; }
 .petal.hot text { filter: drop-shadow(0 .6px .8px rgba(10, 30, 4, .4)); }

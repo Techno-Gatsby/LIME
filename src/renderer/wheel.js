@@ -221,27 +221,47 @@ function drawRing(list, { dim = false } = {}) {
     const body = `<path class="glass" d="${d}"/><path class="tint" d="${d}"/><path class="rim" d="${d}"/><path class="sheen" d="${d}"/>`;
     const style = `--i:${i};--dx:${(Math.sin(a) * lift).toFixed(2)}px;--dy:${(-Math.cos(a) * lift).toFixed(2)}px`;
     if (!it) return `<g class="petal" style="${style}">${body}</g>`;
-    const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : R_LABEL);
+    // Busy rings set their labels further out, where the slices are wider.
+    const [x, y] = labelAt(i, count, count === 1 ? (R_IN + R_OUT) / 2 : count > 8 ? R_LABEL + 8 : R_LABEL);
     const hint = it.hint ? `<text class="h" x="${x.toFixed(1)}" y="${(y + 9).toFixed(1)}">${esc(String(it.hint).toUpperCase())}</text>` : '';
-    return `<g class="petal${it.danger ? ' danger' : ''}${it.off ? ' off' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 6 : 0)).toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
+    return `<g class="petal${it.danger ? ' danger' : ''}${it.off ? ' off' : ''}${dim ? ' dim' : ''}" data-i="${i}" style="${style}">${body}<text class="l" x="${x.toFixed(1)}" y="${(y - (it.hint ? 6 : 0)).toFixed(1)}" data-cy="${(y + 1.5).toFixed(1)}">${esc(it.label)}</text>${hint}</g>`;
   }).join('');
   fitLabels(count);
   setHot(S.hot >= n ? -1 : S.hot, true);
 }
+// One readable size per ring: labels never go below 10.5px and hints below 7px. A hint that still doesn't fit is left
+// out (the caption under the wheel says it in full), and a two-word label that doesn't fit goes onto two lines.
 function fitLabels(n) {
-  const max = Math.max(36, Math.min(R_OUT - R_IN - 12, 2 * R_LABEL * Math.sin(Math.PI / Math.max(n, 2)) - 16));
-  const mid = (s, k) => { const keep = s.length - k, head = Math.ceil(keep / 2); return `${s.slice(0, head).trimEnd()}…${s.slice(s.length - (keep - head)).trimStart()}`; };
-  for (const [cls, floor] of [['l', 7], ['h', 5]]) {
+  const rl = n > 8 ? R_LABEL + 8 : R_LABEL, max = Math.max(36, Math.min(R_OUT - R_IN - 8, 2 * rl * Math.sin(Math.PI / Math.max(n, 2)) - 6));
+  const glassOf = (t) => t.parentNode.querySelector('path.glass');
+  const fits = (t) => t.getComputedTextLength() <= max && inside(t, glassOf(t));
+  for (const [cls, floor] of [['l', 10.5], ['h', 7]]) {
     const ts = $$(`.petal text.${cls}`, petalsG);
     if (!ts.length) continue;
     const base = parseFloat(getComputedStyle(ts[0]).fontSize);
-    const size = Math.max(floor, Math.min(base, ...ts.map((t) => (base * max * 0.99) / (t.getComputedTextLength() || 1))));
-    for (const t of ts) {
-      if (size < base) t.style.fontSize = `${Math.floor(size * 100) / 100}px`;
-      const s = t.textContent, glass = t.parentNode.querySelector('path.glass');
-      // The chord is only a guide: crowded rings narrow toward the middle, so the label must sit inside the slice itself.
-      for (let k = 1; k < s.length - 1 && (t.getComputedTextLength() > max || !inside(t, glass)); k++) t.textContent = mid(s, k);
+    let size = Math.max(floor, Math.min(base, ...ts.map((t) => (base * max * 0.99) / (t.getComputedTextLength() || 1))));
+    const set = () => { for (const t of ts) t.style.fontSize = `${Math.floor(size * 100) / 100}px`; };
+    if (size < base) set();
+    // The chord is only an estimate: shrink the whole ring a step at a time until every label sits inside its slice.
+    while (cls === 'l' && size > floor && ts.some((t) => !inside(t, glassOf(t)))) { size = Math.max(floor, size - 0.5); set(); }
+  }
+  const mid = (s, k) => { const keep = s.length - k, head = Math.ceil(keep / 2); return `${s.slice(0, head).trimEnd()}…${s.slice(s.length - (keep - head)).trimStart()}`; };
+  for (const l of $$('.petal text.l', petalsG)) {
+    const h = l.parentNode.querySelector('text.h');
+    if (h && !fits(h)) h.remove();
+    if (fits(l)) continue;
+    const words = l.textContent.split(' '), x = l.getAttribute('x'), cy = Number(l.dataset.cy), f = parseFloat(getComputedStyle(l).fontSize);
+    if (words.length > 1) {
+      // Two lines centred on the label's spot; the hint gives up its room.
+      l.parentNode.querySelector('text.h')?.remove();
+      const cut = Math.ceil(words.length / 2), ns = 'http://www.w3.org/2000/svg';
+      l.textContent = '';
+      [words.slice(0, cut).join(' '), words.slice(cut).join(' ')].forEach((w, k) => { const sp = document.createElementNS(ns, 'tspan'); sp.setAttribute('x', x); sp.setAttribute('y', (cy + (k ? 0.56 : -0.56) * f).toFixed(1)); sp.textContent = w; l.appendChild(sp); });
+      if (inside(l, glassOf(l)) && Math.max(...[...l.children].map((sp) => sp.getComputedTextLength())) <= max) continue;
+      l.textContent = words.join(' '); l.setAttribute('y', cy.toFixed(1));
     }
+    const s = l.textContent;
+    for (let k = 1; k < s.length - 1 && !fits(l); k++) l.textContent = mid(s, k);
   }
 }
 function inside(t, glass) {

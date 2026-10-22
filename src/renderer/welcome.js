@@ -27,7 +27,7 @@ const PICS = [
 const STEPS = [
   ['Drop a file on the lime', 'The lime waits at the right edge of the screen. Drag any file onto it and a wheel opens with everything that file can become.'],
   ['Hold Shift while you drag', 'The wheel comes to your pointer, wherever you are, and follows along. Drop the file on a slice to convert it in one go.'],
-  ['Click the lime for the seven apps', 'PhotoCraft, LightCraft, VectorCraft, DesignCraft, EffectCraft, FilmCraft and PdfCraft: open the full app, or run its tools and editors right here.'],
+  ['Click the lime for your apps', 'Four buckets: Office, Design & media, Coding and Engineering. Open an app in a Lime window or as the full app, or run its one-click tools right here.'],
   ['Settings', `Where results are saved, sounds, and the optional helpers (LibreOffice, Pandoc) for exact Office layouts. It’s under the lime in the ${isMac ? 'menu bar' : 'tray'}.`],
 ];
 

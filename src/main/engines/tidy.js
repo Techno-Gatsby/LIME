@@ -5,7 +5,7 @@
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const latin = (t) => !/[֐-ࣿऀ-෿฀-๿　-鿿가-힯]/.test(t);
 
-// Users' own fixes come first, so "sober realty" becomes "Sobha Realty" before anything else reads it.
+// Users' own fixes come first, so "al bar sha" becomes "Al Barsha" before anything else reads it.
 function replaceAll(text, pairs = []) {
   let t = text;
   for (const [from, to] of pairs) {

@@ -35,13 +35,13 @@ export async function html() {
     ${row('clock', 'Stop when I stop talking', 'After about one and a half seconds of quiet', sw('autoStop', d.autoStop))}
     ${row('mic', 'Try it', '', '<button class="btn primary" data-da="try">Dictate now</button>')}
   </div></section>
-  <section><h2>Dictionary</h2><p class="note">Names and words Lime should listen for, such as Sobha, Hutchinson or RFI. When you fix a word before copying, Lime offers to add it here.</p><div class="group">
+  <section><h2>Dictionary</h2><p class="note">Names and words Lime should listen for, such as Hutchinson, Al Barsha or RFI. When you fix a word before copying, Lime offers to add it here.</p><div class="group">
     <div class="dict-chips">${d.words.map((w, i) => `<span class="dict-chip">${esc(w)}<button class="btn subtle" data-da="unword" data-i="${i}" title="Remove" aria-label="Remove ${esc(w)}">${icon('close', 'sm')}</button></span>`).join('')}</div>
     <div class="dict-add"><input class="input" data-df="word" placeholder="Add a word or name" maxlength="60"><button class="btn" data-da="word">Add</button></div>
   </div></section>
   <section><h2>Always change</h2><p class="note">Fix words Lime hears wrongly, every time.</p><div class="group">
     ${d.replace.map(([a, b], i) => row('', `${esc(a)} <span class="faint">→</span> ${esc(b)}`, '', `<button class="btn subtle" data-da="unrep" data-i="${i}" title="Remove">${icon('close', 'sm')}</button>`)).join('')}
-    <div class="dict-add"><input class="input" data-df="from" placeholder="sober realty" maxlength="80"><span class="arrow">→</span><input class="input" data-df="to" placeholder="Sobha Realty" maxlength="80"><button class="btn" data-da="rep">Add</button></div>
+    <div class="dict-add"><input class="input" data-df="from" placeholder="al bar sha" maxlength="80"><span class="arrow">→</span><input class="input" data-df="to" placeholder="Al Barsha" maxlength="80"><button class="btn" data-da="rep">Add</button></div>
   </div></section>`;
 }
 

@@ -47,6 +47,23 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       await frame('b4-tucked-again');
     }
     const img = path.join(samples, 'photo.jpg');
+    if (want('file-rings')) {
+      // Every ring a dropped photo, video, PDF and Word file opens, to check label sizes by eye.
+      const dirF = path.join(dir, 'ring-files'); fs.mkdirSync(dirF, { recursive: true });
+      const ff = require(path.join(__dirname, '..', 'src', 'main', 'engines', 'util')).binPath('ffmpeg'), { execFileSync } = require('child_process');
+      const png = path.join(dirF, 'shot.png'), mp4 = path.join(dirF, 'clip.mp4');
+      execFileSync(ff, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=s=640x400', '-frames:v', '1', png]);
+      execFileSync(ff, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=s=320x240:r=10', '-f', 'lavfi', '-i', 'sine', '-t', '2', '-pix_fmt', 'yuv420p', mp4]);
+      for (const [name, f] of [['png', png], ['mp4', mp4]]) {
+        for (const m of ['convert', 'tools']) {
+          await js('window.__lime.fold()'); await sleep(500);
+          await js(`window.__lime.openWith(${JSON.stringify([f])}, { mode: ${JSON.stringify(m)} })`);
+          await sleep(1500);
+          await shot(`r-${name}-${m}`);
+        }
+      }
+      await js('window.__lime.fold()');
+    }
     if (want('apps')) {
       const pdfFile = path.join(samples, 'doc.pdf');
       await js('window.__lime.fold()');

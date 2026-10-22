@@ -771,7 +771,7 @@ const WHEELS = {
     tools: [W('compress-pdf', 'Compress', 'Smaller'), W('edit-pdf', 'Edit', 'Text & more'), W('sign-pdf', 'Sign', 'Signature'), W('organize-pdf', 'Pages', 'Reorder'), W('split-pdf', 'Split', 'Pages'), W('protect-pdf', 'Protect', 'Password'), W('page-numbers', 'Numbers', 'Pages'), W('watermark-pdf', 'Watermark', 'Text'), W('ocr-pdf', 'Searchable', 'Read scans'), W('rotate-pdf', 'Rotate', '90°'), W('read-aloud', 'Read aloud', 'To MP3')],
   },
   image: {
-    tools: [W('remove-background', 'Remove BG', 'Background'), W('compress-image', 'Compress', 'Smaller'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('edit-image', 'Edit', 'Crop & adjust'), W('enhance-photo', 'Enhance', 'Auto'), W('upscale-ai', 'Upscale', 'AI 2×', { factor: '2' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('image-to-text', 'Text', 'Copy text'), W('strip-metadata', 'Private', 'No location'), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('upscale-ai', 'Upscale', 'AI 4×', { factor: '4' }), W('photo-info', 'Info', 'Camera & place')],
+    tools: [W('remove-background', 'Remove BG', 'Background'), W('compress-image', 'Compress', 'Smaller'), W('resize-image', 'Resize', '50%', { mode: 'percent', percent: 50 }), W('edit-image', 'Edit', 'Crop W('edit-image', 'Edit', 'Crop & adjust' more'), W('enhance-photo', 'Enhance', 'Auto'), W('upscale-ai', 'Upscale', 'AI 2×', { factor: '2' }), W('rotate-image', 'Rotate', '90°', { angle: '90', flip: 'none' }), W('image-to-text', 'Text', 'Copy text'), W('strip-metadata', 'Private', 'No location'), W('scan-to-pdf', 'Scan', 'Clean PDF'), W('upscale-ai', 'Upscale', 'AI 4×', { factor: '4' }), W('photo-info', 'Info', 'Camera')],
   },
   raw: {
     convert: [W('develop-raw', 'JPG', 'Develop', { to: 'jpg', auto: false }), W('develop-raw', 'TIFF', '16-bit', { to: 'tif', auto: false }), W('develop-raw', 'PNG', 'Lossless', { to: 'png', auto: false }), W('develop-raw', 'AVIF', 'Small', { to: 'avif', auto: false }), W('develop-raw', 'DNG', 'Raw', { to: 'dng', auto: false }), W('convert-image', 'Preview', 'Built-in', { to: 'jpg', develop: false })],
@@ -913,6 +913,15 @@ function accepts(t, files) {
 const toolsFor = (files) => TOOLS.filter((t) => accepts(t, files)).map((t) => t.id);
 const extsFor = (t) => (t.accepts.includes('any') ? [] : [...new Set([...t.accepts.flatMap((g) => [...(U.GROUPS[g] || []), ...(MORE_GROUPS[g] || [])]), ...(t.extAccept || [])])]);
 const dedupe = (list) => list.filter((w, i) => list.findIndex((x) => x.tool === w.tool && x.label === w.label) === i);
+// Ten slices at most, so every label stays readable at its full size. The least-used slices give way first: a second
+// slice for a tool already on the ring, then the ones whose job Edit or another slice also does. All stay in search.
+const SPARE = ['file-hash', 'create-archive', 'rotate-image', 'rotate-video', 'rotate-pdf', 'crop-video', 'fade-audio', 'pitch-audio', 'loop-media', 'speed-media', 'volume-media', 'photo-info', 'page-numbers', 'doc-stats', 'unhide-sheet', 'sheet-formulas', 'office-media', 'track-changes', 'mermaid-export'];
+function cap(ring, tools = false, max = 10) {
+  let out = [...ring];
+  if (tools) for (let i = out.length - 1; out.length > max && i > 0; i--) if (out.findIndex((w) => w.tool === out[i].tool) < i) out.splice(i, 1);
+  for (const id of SPARE) { if (out.length <= max) break; const i = out.findLastIndex((w) => w.tool === id); if (i >= 0) out.splice(i, 1); }
+  return out.slice(0, max);
+}
 function wheelsFor(files) {
   const gs = groupsOf(files);
   const g = gs.length === 1 ? gs[0] : gs.every((x) => x === 'image' || x === 'raw') ? 'image' : 'mixed';
@@ -922,7 +931,7 @@ function wheelsFor(files) {
   const ok = (w) => accepts(get(w.tool), files) && (!w.only || files.every((f) => w.only.includes(ex(f)))) && !(w.not && files.some((f) => w.not.includes(ex(f))))
     && !(/^convert-(document|sheet|slides)$/.test(w.tool) && files.every((f) => norm(U.ext(f)) === norm(w.opts?.to))) && (!FFMPEG_TARGETS.has(w.tool) || !w.opts?.to || media().supports(w.opts.to)) && !(w.tool === 'convert-model' && BLENDER_OUT.has(w.opts?.to) && !blenderOk());
   const quick = (w) => (w.full || w.ask ? w : { ...w, quick: true });
-  if (files.length < 2) return { convert: base.convert.filter(ok).map(quick), tools: base.tools.filter(ok) };
+  if (files.length < 2) return { convert: cap(base.convert.filter(ok).map(quick)), tools: cap(base.tools.filter(ok), true) };
   const multi = [...(MULTI[g] || [])];
   if (g === 'mixed' && gs.every((x) => ['doc', 'sheet', 'slides', 'pdf', 'image', 'raw', 'vector', 'cad2d', 'layout', 'ebook'].includes(x))) multi.push(...MULTI.mixed);
   if (g === 'mixed' && gs.every((x) => x === 'video' || x === 'audio')) multi.push(...MULTI.media);

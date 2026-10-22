@@ -75,10 +75,10 @@ module.exports = async ({ dir }) => {
     return 'danda and full stop';
   });
   await check('dictionary: replace list, whole words only', () => {
-    const r = [['sober realty', 'Sobha Realty'], ['r f i', 'RFI']];
-    ok(tidy('please call sober realty about the r f i', { replace: r }) === 'Please call Sobha Realty about the RFI.', tidy('please call sober realty about the r f i', { replace: r }));
-    ok(replaceAll('a sober realty, sober realty.', r) === 'a Sobha Realty, Sobha Realty.', 'twice');
-    ok(replaceAll('the sobered', [['sober', 'Sobha']]) === 'the sobered', 'inside a word');
+    const r = [['al bar sha', 'Al Barsha'], ['r f i', 'RFI']];
+    ok(tidy('please call al bar sha about the r f i', { replace: r }) === 'Please call Al Barsha about the RFI.', tidy('please call al bar sha about the r f i', { replace: r }));
+    ok(replaceAll('a al bar sha, al bar sha.', r) === 'a Al Barsha, Al Barsha.', 'twice');
+    ok(replaceAll('the barshas', [['barsha', 'Barsha']]) === 'the barshas', 'inside a word');
     return 'ok';
   });
 

@@ -474,7 +474,7 @@ function openPrefs(tab) {
 function openWelcome() {
   if (welcomeWin) { welcomeWin.show(); welcomeWin.focus(); return; }
   welcomeWin = new BrowserWindow({
-    width: 700, height: 600, useContentSize: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, show: false, title: 'Welcome to Lime',
+    width: 720, height: 660, useContentSize: true, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, show: false, title: 'Welcome to Lime',
     ...(isMac ? { titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' } : { autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1e1a' : '#f6f8f2' }),
     icon: asset('icon.png'), webPreferences: webPrefs,
   });
