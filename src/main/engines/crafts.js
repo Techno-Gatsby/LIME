@@ -1111,7 +1111,9 @@ for (const e of APPS.code.opens) if (!(e in PREF)) PREF[e] = 'code';
 const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'cadcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft',
   audio: 'soundcraft', doc: 'wordcraft', sheet: 'gridcraft', slides: 'deckcraft', gis: 'maps', hydro: 'hydro', project: 'projectlibre' };
 let bundled = null;
-const bundledApps = () => { if (!bundled) { try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
+// Read again whenever the apps folder changes, so a look before Lime is configured can't stick.
+let bundledFrom = null;
+const bundledApps = () => { if (!bundled || bundledFrom !== U.cfg.apps) { bundledFrom = U.cfg.apps; try { bundled = JSON.parse(fs.readFileSync(path.join(U.cfg.apps, 'manifest.json'), 'utf8')); } catch (_) { bundled = {}; } } return bundled; };
 const appSource = (id) => path.join(U.cfg.apps, `${id}.tar.br`);
 const appDir = (id) => path.join(U.cfg.user, 'apps', `${id}-${bundledApps()[id].version}`);
 // Whether the full app can be opened: installed on this computer, or shipped inside Lime.
@@ -1250,7 +1252,8 @@ async function openApp(id, files = []) {
 // SolidCraft's web build takes a file dropped on its canvas, as WordCraft's does.
 const WEB = { cadcraft: { bridge: true }, gridcraft: { bridge: true }, wordcraft: {}, soundcraft: { empty: true }, deckcraft: { empty: 'blank' }, solidcraft: {} };
 let webs = null;
-const webManifest = () => { if (!webs) { try { webs = JSON.parse(fs.readFileSync(path.join(U.cfg.web, 'manifest.json'), 'utf8')); } catch (_) { webs = {}; } } return webs; };
+let websFrom = null;
+const webManifest = () => { if (!webs || websFrom !== U.cfg.web) { websFrom = U.cfg.web; try { webs = JSON.parse(fs.readFileSync(path.join(U.cfg.web, 'manifest.json'), 'utf8')); } catch (_) { webs = {}; } } return webs; };
 const webSource = (id) => path.join(U.cfg.web || '', `${id}.tar.br`);
 const hasWeb = (id) => !!WEB[id] && !!webManifest()[id] && fs.existsSync(webSource(id));
 const unpackingWeb = new Map();

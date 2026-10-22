@@ -933,6 +933,8 @@ app.whenReady().then(async () => {
   // LibreOffice and Pandoc come packed with Lime; they are laid out once, a moment after the first launch.
   setTimeout(async () => { const helpers = require('./helpers'); for (const id of ['soffice', 'pandoc']) await helpers.ensure(id, HELPERS, helperRoot()).catch(log); }, 4000);
   loadSettings();
+  // Before anything asks which apps ship: the menu below lists them, and an unconfigured path reads as none.
+  require('./engines/util').configure(engineCfg());
   nativeTheme.themeSource = settings.theme;
   if (isMac && !settings.dock) app.dock.hide();
   registerProtocols();
@@ -943,7 +945,6 @@ app.whenReady().then(async () => {
   for (let i = 0; i < POOL; i++) pool.push(spawnWorker('jobs'));
   buildTray();
   globalShortcut.register('Control+Alt+L', hotkey);
-  require('./engines/util').configure(engineCfg());
   createWheel();
   applyCorner();
   startWatcher();
