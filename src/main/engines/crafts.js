@@ -5,21 +5,36 @@ const { spawn } = require('child_process');
 const U = require('./util');
 const { fs, fsp, path, os } = U;
 
-// `opens` is what each app is offered for on the wheel: file groups (see util.GROUPS) or extensions.
+// `opens` is what each app is offered for on the wheel: file groups (see util.GROUPS) or extensions. `bucket` is the
+// slice of the wheel's home ring the app sits in (see BUCKETS); any app with one shows up there by itself.
+const CODE_OPEN = ['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'cts', 'json', 'jsonc', 'json5', 'py', 'pyw', 'pyi', 'ipynb', 'css', 'scss', 'sass', 'less', 'html', 'htm', 'xhtml', 'vue', 'svelte', 'md', 'markdown',
+  'yml', 'yaml', 'toml', 'xml', 'xsd', 'xsl', 'svg', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'psm1', 'bat', 'cmd', 'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 'cs', 'java', 'kt', 'kts', 'scala', 'groovy', 'gradle',
+  'go', 'rs', 'rb', 'php', 'swift', 'dart', 'lua', 'pl', 'pm', 'r', 'jl', 'sql', 'graphql', 'gql', 'proto', 'ini', 'cfg', 'conf', 'properties', 'env', 'tf', 'hcl',
+  'txt', 'log', 'csv', 'tsv', 'tex', 'rst', 'diff', 'patch', 'srt', 'vtt'];
+const BUCKETS = {
+  office: { name: 'Office', short: 'Documents', role: 'Documents, spreadsheets, slides and PDF' },
+  design: { name: 'Design & media', short: 'Creative', role: 'Photos, artwork, layout, motion, video and sound' },
+  coding: { name: 'Coding', short: 'Developer', role: 'Code, Python, web pages and databases' },
+  engineering: { name: 'Engineering', short: 'Technical', role: 'Drawings, models, maps and plans' },
+};
 const APPS = {
-  photocraft: { name: 'PhotoCraft', role: 'Image editing', short: 'Photos', opens: ['image', 'raw'], except: ['svg', 'svgz', 'ico', 'cur', 'icns'] },
-  lightcraft: { name: 'LightCraft', role: 'RAW development', short: 'RAW', opens: ['raw', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'heic', 'heif', 'webp', 'avif', 'jxl'] },
-  vectorcraft: { name: 'VectorCraft', role: 'Vector art', short: 'Vector', opens: ['vector', 'svg', 'pdf', 'eps', 'ai', 'emf', 'wmf', 'dxf', 'afdesign'] },
-  designcraft: { name: 'DesignCraft', role: 'Page layout', short: 'Layout', opens: ['layout', 'idml', 'indd'] },
-  effectcraft: { name: 'EffectCraft', role: 'Motion graphics', short: 'Motion', opens: ['motion', 'lottie', 'ecproj'] },
-  filmcraft: { name: 'FilmCraft', role: 'Video editing', short: 'Video', opens: ['video', 'timeline', 'fcproj', 'otio', 'fcpxml'] },
-  pdfcraft: { name: 'PdfCraft', role: 'PDF workbench', short: 'PDF', opens: ['pdf'] },
-  cadcraft: { name: 'CADCraft', role: '2D drafting', short: 'CAD', opens: ['cad2d'] },
-  soundcraft: { name: 'SoundCraft', role: 'Audio production', short: 'Audio', opens: ['audio', 'scraft'] },
-  wordcraft: { name: 'WordCraft', role: 'Word processing', short: 'Docs', opens: ['docx', 'doc', 'docm', 'dotx', 'dotm', 'odt', 'rtf', 'md', 'markdown', 'txt', 'html', 'htm'] },
-  gridcraft: { name: 'GridCraft', role: 'Spreadsheets', short: 'Sheets', opens: ['sheet'], except: ['numbers', 'dif', 'sylk'] },
-  deckcraft: { name: 'DeckCraft', role: 'Presentations', short: 'Slides', opens: ['pptx', 'pptm', 'ppsx', 'potx', 'deckcraft', 'md', 'markdown'] },
-  webcraft: { name: 'WebCraft', role: 'Web pages', short: 'Web', opens: ['html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'md', 'svg'], builtin: true },
+  photocraft: { name: 'PhotoCraft', role: 'Image editing', short: 'Photos', bucket: 'design', opens: ['image', 'raw'], except: ['svg', 'svgz', 'ico', 'cur', 'icns'] },
+  lightcraft: { name: 'LightCraft', role: 'RAW development', short: 'RAW', bucket: 'design', opens: ['raw', 'jpg', 'jpeg', 'png', 'tif', 'tiff', 'heic', 'heif', 'webp', 'avif', 'jxl'] },
+  vectorcraft: { name: 'VectorCraft', role: 'Vector art', short: 'Vector', bucket: 'design', opens: ['vector', 'svg', 'pdf', 'eps', 'ai', 'emf', 'wmf', 'dxf', 'afdesign'] },
+  designcraft: { name: 'DesignCraft', role: 'Page layout', short: 'Layout', bucket: 'design', opens: ['layout', 'idml', 'indd'] },
+  effectcraft: { name: 'EffectCraft', role: 'Motion graphics', short: 'Motion', bucket: 'design', opens: ['motion', 'lottie', 'ecproj'] },
+  filmcraft: { name: 'FilmCraft', role: 'Video editing', short: 'Video', bucket: 'design', opens: ['video', 'timeline', 'fcproj', 'otio', 'fcpxml'] },
+  pdfcraft: { name: 'PdfCraft', role: 'PDF workbench', short: 'PDF', bucket: 'office', opens: ['pdf'] },
+  cadcraft: { name: 'CADCraft', role: '2D drafting', short: 'CAD', bucket: 'engineering', opens: ['cad2d'] },
+  soundcraft: { name: 'SoundCraft', role: 'Audio production', short: 'Audio', bucket: 'design', opens: ['audio', 'scraft'] },
+  wordcraft: { name: 'WordCraft', role: 'Word processing', short: 'Docs', bucket: 'office', opens: ['docx', 'doc', 'docm', 'dotx', 'dotm', 'odt', 'rtf', 'md', 'markdown', 'txt', 'html', 'htm'] },
+  gridcraft: { name: 'GridCraft', role: 'Spreadsheets', short: 'Sheets', bucket: 'office', opens: ['sheet'], except: ['numbers', 'dif', 'sylk'] },
+  deckcraft: { name: 'DeckCraft', role: 'Presentations', short: 'Slides', bucket: 'office', opens: ['pptx', 'pptm', 'ppsx', 'potx', 'deckcraft', 'md', 'markdown'] },
+  webcraft: { name: 'WebCraft', role: 'Web pages', short: 'Web', bucket: 'coding', opens: ['html', 'htm', 'xhtml', 'css', 'js', 'mjs', 'md', 'svg'], builtin: true },
+  // VSCodium and a CPython runtime ship inside Lime (scripts/engines.mjs); Python is Code with Lime's Python set up in it.
+  code: { name: 'Code', role: 'Code editor', short: 'VSCodium', bucket: 'coding', opens: CODE_OPEN, bundledOnly: true },
+  python: { name: 'Python', role: 'Python IDE', short: 'Python', bucket: 'coding', opens: ['py', 'pyw', 'pyi', 'ipynb'], bundledOnly: true, needs: ['code'] },
+  sqlite: { name: 'SQLite', role: 'Database browser', short: 'Database', bucket: 'coding', opens: ['database'], builtin: true },
   // Engineering: Lime's map and hydrology windows (QGIS, HEC-RAS, HEC-HMS and EPA SWMM open as the full app when they
   // are installed), and ProjectLibre, a full app that ships inside Lime with its own Java runtime.
   maps: { name: 'Maps', role: 'GIS maps', short: 'Maps', opens: ['gis'], builtin: true, external: ['qgis'], bucket: 'engineering' },
@@ -903,15 +918,20 @@ async function deckGraphics(p, opts, ctx) {
 
 function installedApp(id) {
   const name = APPS[id]?.name;
-  if (!name) return null;
+  if (!name || APPS[id].builtin) return null;
   if (U.cfg[id] && fs.existsSync(U.cfg[id])) return U.cfg[id];
+  if (APPS[id].bundledOnly) return null;
   const cands = process.platform === 'darwin'
     ? [`/Applications/${name}.app`, path.join(os.homedir(), 'Applications', `${name}.app`)]
     : U.isWin ? [process.env.ProgramFiles, process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')].filter(Boolean).map((b) => path.join(b, name, `${id}.exe`)) : [`/usr/bin/${id}`, `/usr/local/bin/${id}`];
   return cands.find((c) => fs.existsSync(c)) || null;
 }
 const PREF = { psd: 'photocraft', psb: 'photocraft', pcraft: 'photocraft', svg: 'vectorcraft', ai: 'vectorcraft', eps: 'vectorcraft', afdesign: 'vectorcraft', pdf: 'pdfcraft', idml: 'designcraft', indd: 'designcraft', ecproj: 'effectcraft', lottie: 'effectcraft', fcproj: 'filmcraft', otio: 'filmcraft', fcpxml: 'filmcraft',
-  dwg: 'cadcraft', dxf: 'cadcraft', scraft: 'soundcraft', md: 'wordcraft', markdown: 'wordcraft', deckcraft: 'deckcraft', html: 'webcraft', htm: 'webcraft', xhtml: 'webcraft', css: 'webcraft' };
+  dwg: 'cadcraft', dxf: 'cadcraft', scraft: 'soundcraft', md: 'wordcraft', markdown: 'wordcraft', deckcraft: 'deckcraft', html: 'webcraft', htm: 'webcraft', xhtml: 'webcraft', css: 'webcraft', js: 'webcraft', mjs: 'webcraft',
+  py: 'python', pyw: 'python', pyi: 'python', ipynb: 'python' };
+// Code is first for the source files no other app here takes (TypeScript, JSON, shell scripts, C, Go…), and offered after the
+// usual app for documents Lime already sends elsewhere (a page goes to WebCraft first, a CSV to GridCraft).
+for (const e of APPS.code.opens) if (!(e in PREF)) PREF[e] = 'code';
 const BY_GROUP = { image: 'photocraft', raw: 'lightcraft', vector: 'vectorcraft', cad2d: 'cadcraft', layout: 'designcraft', motion: 'effectcraft', timeline: 'filmcraft', video: 'filmcraft', pdf: 'pdfcraft',
   audio: 'soundcraft', doc: 'wordcraft', sheet: 'gridcraft', slides: 'deckcraft', gis: 'maps', hydro: 'hydro', project: 'projectlibre' };
 let bundled = null;
@@ -921,13 +941,15 @@ const appDir = (id) => path.join(U.cfg.user, 'apps', `${id}-${bundledApps()[id].
 // Whether the full app can be opened: installed on this computer, or shipped inside Lime.
 // A Java app (ProjectLibre) also needs the shared Java runtime that ships beside it.
 const shipped = (id) => !!bundledApps()[id] && fs.existsSync(appSource(id)) && (!bundledApps()[id].java || (!!bundledApps().java && fs.existsSync(appSource('java'))));
-const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || shipped(id));
+const hasApp = (id) => !!APPS[id] && !APPS[id].builtin && (!!installedApp(id) || shipped(id)) && (APPS[id].needs || []).every(hasApp);
 const opens = (id, f) => !APPS[id].except?.includes(U.ext(f)) && (APPS[id].opens.includes(U.ext(f)) || APPS[id].opens.includes(U.groupOf(f)) || !!SNIFF[id]?.(f));
 // The apps that open every one of these files, the likeliest first.
 function appsFor(files) {
   if (!files.length) return [];
   // A GeoTIFF, SWMM results or MS Project XML belong to the engineering apps, whatever their extension suggests.
-  const first = PREF[U.ext(files[0])] || BY_GROUP[require('../engtools').groupOf(files[0], U.ext(files[0])) || U.groupOf(files[0])];
+  const pref = PREF[U.ext(files[0])], byGroup = BY_GROUP[require('../engtools').groupOf(files[0], U.ext(files[0])) || U.groupOf(files[0])];
+  // A file whose contents make it something else (a Lottie .json, a video .ts) goes to that app before Code.
+  const first = pref === 'code' && byGroup ? byGroup : pref || byGroup;
   const ids = Object.keys(APPS).filter((id) => files.every((f) => opens(id, f)));
   return first && ids.includes(first) ? [first, ...ids.filter((id) => id !== first)] : ids;
 }
@@ -1005,6 +1027,7 @@ async function launch(app, files, name) {
 }
 async function openApp(id, files = []) {
   if (!APPS[id]) throw new Error('Unknown app.');
+  if (APPS[id].bundledOnly && !installedApp(id)) return require('./coding').open(id, files);
   const own = installedApp(id);
   if (!own && bundledApps()[id]?.java && shipped(id)) {
     // A Java app runs on the runtime Lime ships with it, in its own folder so it finds its libraries.
@@ -1049,10 +1072,12 @@ async function webApp(id) {
 const versions = () => { try { return JSON.parse(fs.readFileSync(path.join(U.cfg.crafts, 'manifest.json'), 'utf8')); } catch (_) { return {}; } };
 function status() {
   const manifest = versions(), apps = bundledApps();
-  return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version || null, bundled: fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)) || (!!apps[id]?.cli && fs.existsSync(appSource(id))), web: hasWeb(id), app: !!installedApp(id) || (!!apps[id] && fs.existsSync(appSource(id))) }));
+  return Object.entries(APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ id, ...a, version: manifest[id] || apps[id]?.version?.split('+')[0] || null,
+    bundled: a.bundledOnly ? shipped(id) && (a.needs || []).every(shipped) : fs.existsSync(path.join(U.cfg.crafts, exe(id))) || fs.existsSync(path.join(U.cfg.crafts, `${exe(id)}.br`)) || (!!apps[id]?.cli && fs.existsSync(appSource(id))),
+    web: hasWeb(id), app: hasApp(id), artcraft: !a.bundledOnly }));
 }
 
-module.exports = { APPS, EXTERNAL, SNIFF, findExternal, hasExternal, openExternal, bundledManifest, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
+module.exports = { APPS, BUCKETS, CODE_OPEN, bundledApps, appDir, EXTERNAL, SNIFF, findExternal, hasExternal, openExternal, bundledManifest, cli, photo, render, develop, merge, vector, layout, motion, timeline, optimizePdf, auditPdf, pdfInfo, pdfScript, toPdfA, comparePdf, makeFillable, enhanceScan, appFor, appsFor, hasApp, openApp, bundledApp, status,
   autoTone, sharpenPhoto, denoisePhoto, liftShadows, paintPhoto, straightenScans, exportLayers, layerInfo, lookPhoto, smartBw, straightenPhoto, removeDust, hdrBatch,
   traceImage, outlineText, exportArtboards, logoPackage, vectorInfo, preflightLayout, packageLayout, layoutPdf, fixedEpub, bookletPdf, posterFrame, alphaRender, frameSequence, motionInfo,
   splitScenes, mediaInfo, videoLook, cleanVoice, editReady, sanitizePdf, batesPdf, accessCheck, linkUrls, splitChapters, wordCount, printCheck, commentSummary, LIGHT_PRESETS, VIDEO_LOOKS,

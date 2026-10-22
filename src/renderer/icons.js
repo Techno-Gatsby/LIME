@@ -107,9 +107,12 @@ const P = {
   drop: 'M12 3s6 6.5 6 11a6 6 0 01-12 0c0-4.5 6-11 6-11zM9 15a3 3 0 003 3',
   chart: 'M4 20V4M4 20h16M7 16l4-5 3 3 5-7',
   gantt: 'M4 5h7M7 10h9M10 15h8M4 20h16M4 4v16',
+  database: 'M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+  python: 'M12 3H9.5A2.5 2.5 0 007 5.5V9h6M12 21h2.5a2.5 2.5 0 002.5-2.5V15h-6M7 9H5.5A2.5 2.5 0 003 11.5v1A2.5 2.5 0 005.5 15H9a2 2 0 012 2M17 15h1.5a2.5 2.5 0 002.5-2.5v-1A2.5 2.5 0 0018.5 9H15a2 2 0 01-2-2M10 5.8h.01M14 18.2h.01',
+  bucket: 'M4 7h16l-1.5 12.5a1.5 1.5 0 01-1.5 1.5H7a1.5 1.5 0 01-1.5-1.5zM8 7a4 4 0 018 0',
 };
 export function icon(name, size = '') {
   const d = P[name] || P.doc;
   return `<svg class="ic ${size}" viewBox="0 0 24 24" width="${size === 'sm' ? 16 : size === 'lg' ? 28 : 20}" height="${size === 'sm' ? 16 : size === 'lg' ? 28 : 20}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
 }
-export const GROUP_ICON = { pdf: 'pdf', image: 'image', raw: 'image', video: 'video', audio: 'music', doc: 'doc', sheet: 'grid', slides: 'layers', vector: 'pen', cad2d: 'ruler', cad3d: 'cube', layout: 'layers', motion: 'sparkle', timeline: 'video', archive: 'archive', subtitle: 'text', data: 'text', folder: 'folder', any: 'doc' };
+export const GROUP_ICON = { pdf: 'pdf', image: 'image', raw: 'image', video: 'video', audio: 'music', doc: 'doc', sheet: 'grid', slides: 'layers', vector: 'pen', cad2d: 'ruler', cad3d: 'cube', layout: 'layers', motion: 'sparkle', timeline: 'video', archive: 'archive', subtitle: 'text', data: 'text', code: 'code', database: 'database', folder: 'folder', any: 'doc' };

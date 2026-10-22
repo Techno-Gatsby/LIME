@@ -54,7 +54,7 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
       await js('window.__lime.expand("click"); window.__lime.loadHome()');
       await sleep(900);
       await shot('30-apps-home');
-      await js('window.__lime.setHot(window.__lime.S.ring.findIndex((x) => x.label === "PdfCraft"))');
+      await js('window.__lime.openBucket("office"); window.__lime.setHot(window.__lime.S.ring.findIndex((x) => x.label === "PdfCraft"))');
       await shot('31-apps-hover-pdfcraft');
       await js('window.__lime.pick(window.__lime.S.ring.find((x) => x.label === "PdfCraft"))');
       await shot('32-pdfcraft-ring');
@@ -236,9 +236,9 @@ module.exports = async ({ wheel, showWheel, openPrefs, openEditor, openWelcome, 
         await sleep(1200);
         await shot(`38-home-${theme}`);
         shots.push(`38-home-${theme}`);
-        await js('window.__lime.pick(window.__lime.S.ring.find((x) => x.homeMore))');
-        await shot(`39-more-apps-${theme}`);
-        shots.push(`39-more-apps-${theme}`);
+        await js('window.__lime.openBucket("design")');
+        await shot(`39-bucket-design-${theme}`);
+        shots.push(`39-bucket-design-${theme}`);
         await js('window.__lime.back()');
       }
       const sharp = require('sharp'), files = shots.map((n) => path.join(dir, `${n}.png`)), metas = await Promise.all(files.map((f) => sharp(f).metadata()));

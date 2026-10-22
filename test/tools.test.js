@@ -1570,6 +1570,12 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   fs.mkdirSync(SPOKEN, { recursive: true });
   fs.writeFileSync(path.join(SPOKEN, 'spoken.txt'), 'The quick brown fox jumps over the lazy dog. Our meeting has moved to Thursday afternoon, so please bring the updated figures.');
   Object.assign(SWEEP, { 'speech-to-text': [[spokenWav]], 'subtitle-video': [[spokenMp4]] });
+  // The Coding tools take a script and a database made here.
+  const CODING = path.join(OUT, 'coding-in');
+  fs.mkdirSync(CODING, { recursive: true });
+  fs.writeFileSync(path.join(CODING, 'sweep.py'), 'import sys\nprint("sweep", sum(range(10)))\n');
+  const sweepDb = await require('./coding.ui').makeDb(path.join(CODING, 'sweep.db'));
+  Object.assign(SWEEP, { 'run-python': [[path.join(CODING, 'sweep.py')]], 'database-tables': [[sweepDb]], 'database-schema': [[sweepDb]] });
   const spokenCase = { name: 'sweep spoken clip', tool: 'read-aloud', inputs: [path.join(SPOKEN, 'spoken.txt')], opts: { voice: 'en-GB', to: 'wav', speed: '1' }, save: true, skip: ['espeak', 'voice-en-GB'].every((m) => E('speech-ai').have(m)) ? undefined : 'the speech models are not in this build',
     check: async ([o]) => {
       fs.copyFileSync(o, spokenWav);
@@ -1595,7 +1601,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const MEDIA_FMT = { mp4: /mov,mp4/, m4v: /mov,mp4/, mov: /mov,mp4/, '3gp': /mov,mp4/, '3g2': /mov,mp4/, m4a: /mov,mp4/, m4b: /mov,mp4/, mkv: /matroska/, mka: /matroska/, webm: /matroska/, weba: /matroska/,
     wmv: /^asf$/, wma: /^asf$/, mpg: /^mpeg$/, vob: /^mpeg$/, ts: /^mpegts$/, m2ts: /^mpegts$/, ogv: /^ogg$/, ogg: /^ogg$/, opus: /^ogg$/, mp2: /^mp3$/ };
   const PIXEL_EXT = new Set(['heic', 'heif', 'bmp', 'ico', 'icns', 'cur', 'jxl', 'jp2', 'tga', 'qoi', 'dds', 'pcx', 'ppm', 'pgm', 'pbm', 'pam', 'pfm', 'sgi', 'ras', 'xpm', 'xbm', 'wbmp', 'psd']);
-  const TEXT_EXT = { csv: /\S/, tsv: /\S/, txt: /\S/, md: /\S/, html: /<(html|body|table|p|div|h1)\b/i, srt: /-->/, vtt: /^\ufeff?WEBVTT/, ass: /\[Script Info\]/, lrc: /\[\d\d:\d\d/, sub: /^\{\d+\}\{\d+\}/m,
+  const TEXT_EXT = { sql: /CREATE TABLE/, csv: /\S/, tsv: /\S/, txt: /\S/, md: /\S/, html: /<(html|body|table|p|div|h1)\b/i, srt: /-->/, vtt: /^\ufeff?WEBVTT/, ass: /\[Script Info\]/, lrc: /\[\d\d:\d\d/, sub: /^\{\d+\}\{\d+\}/m,
     smi: /<SAMI>/i, edl: /^(TITLE|001)/m, rtf: /^\{\\rtf/, eml: /^[\w-]+: /m, vcf: /BEGIN:VCARD/, obj: /^v /m, dxf: /SECTION[\s\S]*EOF/, rpt: /EPA STORM WATER MANAGEMENT MODEL/, mpx: /^MPX,/ };
   const XML_EXT = new Set(['xml', 'svg', 'ttml', 'fcpxml', 'fb2', 'amf', 'x3d', 'dae', 'xfdf', 'kml', 'gpx', 'gml']);
   const ZIP_MAIN = { docx: 'word/document.xml', xlsx: 'xl/workbook.xml', pptx: 'ppt/presentation.xml', odt: 'content.xml', ods: 'content.xml', epub: 'META-INF/container.xml', htmlz: 'index.html', txtz: 'index.txt',
@@ -1683,7 +1689,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     for (const o of outs) if (id === 'email-attachments') ok(deep(o).length && deep(o).every((f) => fs.statSync(f).size > 0), `${path.basename(o)} holds empty files`); else await valid(o, opts);
     sweepSig.set(`${id} ${label}`, await sigOf(outs, results, opts));
   };
-  const craftEngines = new Set(E('crafts').status().filter((c) => c.bundled).map((c) => c.id));
+  // The SQLite browser is part of Lime itself (sql.js), so its tools always run.
+  const craftEngines = new Set([...E('crafts').status().filter((c) => c.bundled).map((c) => c.id), 'sqlite']);
   for (const t of tools.catalog()) {
     if (t.editor || t.noFiles) continue;
     const base = defaults(t), runs = new Map([[JSON.stringify(base), 'defaults']]), pairs = [];
@@ -1905,6 +1912,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^create-archive level=9$/, 'a tiny text file deflates alike at 5 and 9'], [/^doc-contents levels=[234]$/, 'the document has headings on two levels only'],
     [/^replace-text (regex=true|everywhere=false)$/, 'a plain word reads the same as a pattern, and the document has no headers or notes'], [/^clean-office notes=true$/, 'a Word document has no speaker notes'],
     [/^office-media what=(pictures|all)$/, 'the document holds only a picture'], [/^tidy-sheet header=false$/, 'no row repeats the header row'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
+    [/^run-python timeout=(10|300)$/, 'the script finishes well within any time limit'],
     [/^convert-model (repair=true|keep=1)$/, 'the box is a clean mesh of 12 triangles, the fewest Simplify keeps'], [/^model-drawing scale=2$/, 'the stepped block fits at 2:1, the largest scale that fits'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
   ];
   await check('option sweep covers the catalogue', () => {
@@ -1923,6 +1931,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./accuracy.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./apps2.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./web.test')({ submit, jobs, app, tools, dir })));
+  results.push(...(await require('./coding.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./ai.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./audio.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./codecs.test')({ submit, jobs, app, tools, dir })));

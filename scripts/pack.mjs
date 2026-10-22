@@ -53,6 +53,7 @@ export async function pack(platform, arch, opts) {
     keep('gifski-wasm', /^(package\.json|LICENSE|dist\/encode\.js|pkg\/gifski_wasm(_bg\.wasm|\.js))$/);
     keep('@jsquash/oxipng', /^(package\.json|LICENSE|codec\/pkg\/squoosh_oxipng(_bg\.wasm|\.js))$/);
     keep('exifr', /^(package\.json|LICENSE|dist\/full\.umd\.js)$/);
+    keep('sql.js', /^(package\.json|LICENSE|dist\/sql-wasm\.(js|wasm))$/);
     for (const d of ['type-fest', 'tagged-tag', '@types/emscripten']) rm(nm, d);
   };
   const [dir] = await packager({

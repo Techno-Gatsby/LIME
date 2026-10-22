@@ -70,6 +70,21 @@ Included unchanged, as their makers publish them (Mac and Windows builds)
   Pandoc, John MacFarlane, GPL-2.0-or-later (https://github.com/jgm/pandoc; the source of the included release is at
   https://github.com/jgm/pandoc/releases under its version). Lime runs each as a separate program and does not change it.
 
+The Coding apps (packed at build time, unpacked into Lime's user data on first use; apps/manifest.json names each version)
+  VSCodium 1.140.06880 (Code) .. MIT  VSCodium contributors, built from Microsoft's Code - OSS (MIT)  https://github.com/VSCodium/vscodium
+  (the official release archive; on Windows only Electron's non-English interface translations are left out, and the Mac app
+  is unchanged and keeps its signature). Lime starts it with its own settings and extensions folders, with telemetry and
+  update checks off. VSCodium contains Electron (MIT), Chromium (BSD-3-Clause and others) and Node.js (MIT); their notices
+  are inside the app (ThirdPartyNotices.txt and LICENSES.chromium.html).
+  CPython 3.13.16 (Python) ..... PSF License 2.0  Python Software Foundation  https://www.python.org
+  (python-build-standalone 20261001, MPL-2.0 build scripts, Astral and Gregory Szorc, https://github.com/astral-sh/python-build-standalone;
+  install_only build with debug symbols stripped and the standard library's test suite left out. It carries OpenSSL
+  (Apache-2.0), SQLite (public domain), libffi (MIT), zlib, bzip2, xz (0BSD), Tcl/Tk (TCL) and others, licences in the runtime.)
+  basedpyright 1.40.0 .......... MIT  DetachHead, based on Pyright by Microsoft (MIT)  https://github.com/DetachHead/basedpyright
+  (the VSIX it publishes to Open VSX, installed into Code as Python's language server)
+  sql.js 1.14.2 ................ MIT  sql.js contributors (SQLite itself is public domain)  https://github.com/sql-js/sql.js
+  (the SQLite browser and its Tables and Schema tools)
+
 Portions of the format conversion logic are adapted from Filee by KnifeLemon (https://github.com/KnifeLemon/Filee), MIT License.
 
 Compare documents pairs changed paragraphs the way LibreOffice Writer's Compare Document does (sw/source/core/doc/doccomp.cxx,
