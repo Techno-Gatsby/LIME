@@ -189,7 +189,7 @@ async function apps() {
     console.log('▣', manifest[id].file, '+', cli, `${(fs.statSync(dest).size / 1048576).toFixed(0)} MB`);
     fs.writeFileSync(file, JSON.stringify(manifest));
   });
-  for (const f of ls(APPS)) if (f !== 'manifest.json' && !Object.keys(CRAFT).some((id) => f === `${id}.tar.br`)) fs.rmSync(path.join(APPS, f), { force: true });
+  for (const f of ls(APPS)) if (f !== 'manifest.json' && ![...Object.keys(CRAFT), ...CODING].some((id) => f === `${id}.tar.br`)) fs.rmSync(path.join(APPS, f), { force: true });
 }
 
 async function webs() {
@@ -234,8 +234,8 @@ async function natives() {
 }
 
 const sha256 = (f) => new Promise((ok, no) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', (d) => h.update(d)).on('end', () => ok(h.digest('hex'))).on('error', no); });
-async function pinned(url, sha) {
-  const f = await get(url);
+async function pinned(url, sha, name) {
+  const f = await get(url, name);
   const got = await sha256(f);
   if (got !== sha) { fs.rmSync(f, { force: true }); throw new Error(`${path.basename(f)}: SHA-256 ${got} isn't the pinned ${sha}`); }
   return f;
@@ -408,10 +408,96 @@ async function codecs() {
   console.log('▣ ghostscript', GS.version, `${(fs.statSync(dest).size / 1048576).toFixed(1)} MB`);
 }
 
+// The Coding bucket: VSCodium (the MIT build of VS Code) as Code, a CPython runtime for Python (python-build-standalone,
+// install_only with debug symbols stripped) and basedpyright (MIT, the same VSIX Open VSX serves) as Code's Python
+// language server. Every download is pinned by version and SHA-256 and packed here; Lime never downloads at run time.
+const CODIUM = { version: '1.140.06880', sha: { 'darwin-arm64': '3a0ba1a13b6d743f79ffc20bebd7a2ef8bab2b40e54bcc80fae123da9ed552e0', 'win32-x64': '024ae1e88f431aee300e73c2ece92e42ebde80a7f3c484ff684f455ffa6a6a7f', 'linux-x64': '61223b74f9e40834117311ec4177cb386d09b84c1aae4f9e674c96580569cef3' } };
+const PYTHON = { version: '3.13.16', build: '20261001', triple: { 'darwin-arm64': 'aarch64-apple-darwin', 'win32-x64': 'x86_64-pc-windows-msvc', 'linux-x64': 'x86_64-unknown-linux-gnu' },
+  sha: { 'darwin-arm64': 'd00669acb53c1b014f1fcf5eaea740d8e45c3aff4b1e0244dc0f8697fb211a82', 'win32-x64': 'c402eb9a35aba90de319bbc87d23e6d887eca1551a05cfa80775f92dcf3ebc08', 'linux-x64': 'ffcb50e716789d1a6e1db5e745d4d194ac8ed9b015ccf5eabcaccb179a25e4a8' } };
+const CODE_EXTENSIONS = [{ id: 'detachhead.basedpyright', version: '1.40.0', url: 'https://github.com/DetachHead/basedpyright/releases/download/v1.40.0/vscode-pyright.vsix', sha: '67e47122039ab2a687dd31e470eaa282093efefe7ad20f502c76331b8d058333' }];
+const CODING = ['code', 'python'];
+// Zips with symbolic links (a Mac app bundle) need a tool that keeps them; fflate would write the links as plain files.
+function unzipTree(zip, dest) {
+  mk(dest);
+  if (process.platform === 'darwin') return sh('ditto', ['-x', '-k', zip, dest]);
+  if (process.platform === 'win32') return sh(TAR, ['-xf', zip, '-C', dest]);
+  const tool = which('unzip', 'bsdtar');
+  if (!tool) throw new Error('Install unzip (or bsdtar) to unpack VSCodium on this machine.');
+  sh(tool, tool === 'unzip' ? ['-q', '-o', zip, '-d', dest] : ['-xf', zip, '-C', dest]);
+}
+const brotliStream = (src, dest, q) => new Promise((ok, no) => fs.createReadStream(src).pipe(zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: q, [zlib.constants.BROTLI_PARAM_LGWIN]: 28, [zlib.constants.BROTLI_PARAM_LARGE_WINDOW]: 1, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: fs.statSync(src).size } })).pipe(fs.createWriteStream(dest)).on('finish', ok).on('error', no));
+async function coding() {
+  if (!CODIUM.sha[TARGET]) return console.warn(`! no Code or Python build for ${TARGET}`);
+  mk(APPS);
+  const file = path.join(APPS, 'manifest.json'), q = Number(process.env.LIME_CODING_QUALITY) || 9;
+  const manifest = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  const exts = CODE_EXTENSIONS.map((x) => `${x.id}@${x.version}`).join();
+  const codeDest = path.join(APPS, 'code.tar.br');
+  if (!(has(codeDest) && manifest.code?.version === CODIUM.version && manifest.code?.extensions?.map((x) => `${x.id}@${x.version}`).join() === exts)) {
+    const v = CODIUM.version, rel = `https://github.com/VSCodium/vscodium/releases/download/${v}`;
+    const src = await pinned(PLAT === 'linux' ? `${rel}/VSCodium-${TARGET}-${v}.tar.gz` : `${rel}/VSCodium-${TARGET}-${v}.zip`, CODIUM.sha[TARGET]);
+    const tmp = path.join(CACHE, 'code-app');
+    fs.rmSync(tmp, { recursive: true, force: true });
+    let app, electron, cli;
+    if (PLAT === 'darwin') {
+      // The Mac app is signed: nothing inside the bundle is touched.
+      unzipTree(src, tmp);
+      app = fs.readdirSync(tmp).find((n) => n.endsWith('.app'));
+      const macos = path.join(tmp, app, 'Contents', 'MacOS'), plist = fs.readFileSync(path.join(tmp, app, 'Contents', 'Info.plist'), 'utf8');
+      electron = path.posix.join(app, 'Contents', 'MacOS', (/<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist) || [])[1] || fs.readdirSync(macos).find((n) => !n.startsWith('.')));
+      cli = path.posix.join(app, 'Contents', 'Resources', 'app', 'out', 'cli.js');
+    } else {
+      const root = mk(path.join(tmp, 'VSCodium'));
+      if (WIN) unzipTree(src, root); else sh(TAR, ['-xzf', src, '-C', root]);
+      // Electron's interface translations: Code runs in English, as Lime's own build keeps only en-US and en-GB.
+      for (const l of ls(path.join(root, 'locales'))) if (!/^en-(US|GB)\.pak$/.test(l)) fs.rmSync(path.join(root, 'locales', l));
+      app = 'VSCodium';
+      electron = WIN ? 'VSCodium/VSCodium.exe' : 'VSCodium/codium';
+      cli = 'VSCodium/resources/app/out/cli.js';
+    }
+    if (!fs.existsSync(path.join(tmp, cli)) || !fs.existsSync(path.join(tmp, electron))) throw new Error(`VSCodium ${v}: ${cli} or ${electron} is missing`);
+    mk(path.join(tmp, 'vsix'));
+    const extensions = [];
+    for (const x of CODE_EXTENSIONS) {
+      const name = `${x.id}-${x.version}.vsix`;
+      fs.copyFileSync(await pinned(x.url, x.sha, name), path.join(tmp, 'vsix', name));
+      extensions.push({ id: x.id, version: x.version, file: `vsix/${name}` });
+    }
+    const tar = path.join(CACHE, 'code-app.tar');
+    sh(TAR, ['-cf', tar, '-C', tmp, app, 'vsix']);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    await brotliStream(tar, codeDest, q);
+    fs.rmSync(tar, { force: true });
+    manifest.code = { version: v, file: PLAT === 'darwin' ? app : electron, electron, clijs: cli, extensions };
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    console.log('▣ VSCodium', v, `${(fs.statSync(codeDest).size / 1048576).toFixed(1)} MB`);
+  }
+  const pyDest = path.join(APPS, 'python.tar.br'), pyV = `${PYTHON.version}+${PYTHON.build}`;
+  if (!(has(pyDest) && manifest.python?.version === pyV)) {
+    const name = `cpython-${pyV}-${PYTHON.triple[TARGET]}-install_only_stripped.tar.gz`;
+    const src = await pinned(`https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON.build}/${encodeURIComponent(name)}`, PYTHON.sha[TARGET], name);
+    const tmp = path.join(CACHE, 'python-rt');
+    fs.rmSync(tmp, { recursive: true, force: true });
+    sh(TAR, ['-xzf', src, '-C', mk(tmp)]);
+    // The standard library's own test suite is a large part of the download and no script needs it.
+    const lib = WIN ? path.join(tmp, 'python', 'Lib') : path.join(tmp, 'python', 'lib', `python${PYTHON.version.split('.').slice(0, 2).join('.')}`);
+    for (const d of ['test', 'idlelib/idle_test', 'tkinter/test']) fs.rmSync(path.join(lib, d), { recursive: true, force: true });
+    const tar = path.join(CACHE, 'python-rt.tar');
+    sh(TAR, ['-cf', tar, '-C', tmp, 'python']);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    await brotliStream(tar, pyDest, q);
+    fs.rmSync(tar, { force: true });
+    manifest.python = { version: pyV, file: WIN ? 'python/python.exe' : 'python/bin/python3' };
+    fs.writeFileSync(file, JSON.stringify(manifest));
+    console.log('▣ Python', pyV, `${(fs.statSync(pyDest).size / 1048576).toFixed(1)} MB`);
+  }
+}
+
 const only = process.argv[3];
 if (!only || only === 'engines') await Promise.all([binaries(), data(), natives()]);
 if (!only || only === 'crafts') await crafts();
 if (!only || only === 'apps') await apps();
+if (!only || only === 'coding') await coding();
 if (!only || only === 'web') await webs();
 if (!only || only === 'helpers') await helpers();
 if (!only || only === 'ai') await ai();

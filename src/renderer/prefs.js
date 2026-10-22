@@ -17,69 +17,85 @@ function seg(key, choices) {
   return `<div class="seg" data-k="${key}">${choices.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(s[key]) === v}">${l}</button>`).join('')}</div>`;
 }
 const sw = (key, on = s[key]) => `<label class="switch"><input type="checkbox" data-k="${key}" ${on ? 'checked' : ''}></label>`;
-const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf', cadcraft: 'compass', soundcraft: 'wave', wordcraft: 'doc', gridcraft: 'grid', deckcraft: 'present' };
+const APP_ICON = { photocraft: 'image', lightcraft: 'sparkle', vectorcraft: 'pen', designcraft: 'layers', effectcraft: 'eye', filmcraft: 'video', pdfcraft: 'pdf', cadcraft: 'compass', soundcraft: 'wave', wordcraft: 'doc', gridcraft: 'grid', deckcraft: 'present', webcraft: 'web', code: 'code', python: 'python', sqlite: 'database' };
+const BUCKET_ICON = { office: 'doc', design: 'sparkle', coding: 'code', engineering: 'compass' };
 const fail = (t, why) => { const n = t.querySelector('.why') || t.appendChild(Object.assign(document.createElement('small'), { className: 'why' })); n.textContent = why; n.style.color = 'var(--danger)'; };
 const reason = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-const RING_CAP = { first: 9, second: 10 };
-const RING_CSS = `.rings { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .ring-col h3 { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; font-weight: 600; margin: 0 6px 6px; }
-  .ring-col ol { list-style: none; margin: 0; padding: 4px 0; min-height: 44px; }
-  .ring-col li { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 12px; cursor: grab; position: relative; }
-  .ring-col li .ic { color: var(--green); flex: none; }
-  .ring-col li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ring-col li .acts { display: flex; gap: 2px; opacity: .5; }
-  .ring-col li:hover .acts, .ring-col li:focus-within .acts { opacity: 1; }
-  .ring-col li .acts .btn { min-width: 0; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; }
-  .ring-col li.dragging { opacity: .4; }
-  .ring-col li.drop-before { box-shadow: inset 0 2px 0 var(--green); }
-  .ring-col li.drop-after { box-shadow: inset 0 -2px 0 var(--green); }
-  .ring-col ol.drop-end { box-shadow: inset 0 0 0 2px var(--green); }
-  .rings-foot { display: flex; justify-content: flex-end; margin-top: 8px; }`;
-document.head.append(Object.assign(document.createElement('style'), { textContent: RING_CSS }));
-function ringsSection(eng) {
-  const rings = s.rings || { first: [], second: [] }, names = Object.fromEntries(eng.crafts.map((c) => [c.id, c.name]));
-  const other = (k) => (k === 'first' ? 'second' : 'first');
-  const item = (k, id, i) => `<li draggable="true" data-id="${esc(id)}" data-ring="${k}">${icon(APP_ICON[id] || 'layers', 'sm')}<span class="n">${esc(names[id] || id)}</span><span class="acts">
-    <button class="btn subtle icon" data-a="ring-up" title="Move up" aria-label="Move ${esc(names[id] || id)} up" ${i === 0 ? 'disabled' : ''}>${icon('up', 'sm')}</button>
-    <button class="btn subtle icon" data-a="ring-down" title="Move down" aria-label="Move ${esc(names[id] || id)} down" ${i === rings[k].length - 1 ? 'disabled' : ''}>${icon('down', 'sm')}</button>
-    <button class="btn subtle icon" data-a="ring-move" title="${k === 'first' ? 'Move to More apps' : 'Move to the first ring'}" aria-label="Move ${esc(names[id] || id)} to ${k === 'first' ? 'More apps' : 'the first ring'}" ${rings[other(k)].length >= RING_CAP[other(k)] ? 'disabled' : ''}>${icon(k === 'first' ? 'chevron' : 'back', 'sm')}</button></span></li>`;
-  return `<section class="wheel-apps"><h2>Wheel apps</h2><p class="note">Which apps the wheel shows first, and which wait one slice away under More apps. Drag them to reorder, or across to move them.</p>
-    <div class="rings">${['first', 'second'].map((k) => `<div class="ring-col" data-ring="${k}"><h3>${k === 'first' ? 'First ring' : 'More apps'}<span class="tag">${rings[k].length} of ${RING_CAP[k]}</span></h3><ol class="group" data-ring="${k}">${rings[k].map((id, i) => item(k, id, i)).join('')}</ol></div>`).join('')}</div>
-    <div class="rings-foot"><button class="btn" data-a="rings-reset">Reset to default</button></div></section>`;
+const catalog = await api.invoke('apps:catalog').catch(() => ({ buckets: {}, apps: {} }));
+const BUCKET_CSS = `.buckets { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .bucket-col h3 { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin: 0 6px 6px; }
+  .bucket-col h3 .ic { color: var(--green); }
+  .bucket-col h3 .nm { flex: 1; }
+  .bucket-col h3 .acts { display: flex; gap: 2px; opacity: .5; }
+  .bucket-col:hover h3 .acts, .bucket-col h3:focus-within .acts { opacity: 1; }
+  .bucket-col ol { list-style: none; margin: 0; padding: 4px 0; min-height: 44px; }
+  .bucket-col li { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 12px; cursor: grab; position: relative; }
+  .bucket-col li .ic { color: var(--green); flex: none; }
+  .bucket-col li .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bucket-col li.off .n, .bucket-col li.off > .ic { opacity: .45; }
+  .bucket-col li.off .n::after { content: " · hidden"; color: var(--ink-3); font-size: 11px; }
+  .bucket-col .acts { display: flex; gap: 2px; opacity: .5; align-items: center; }
+  .bucket-col li:hover .acts, .bucket-col li:focus-within .acts { opacity: 1; }
+  .bucket-col .acts .btn { min-width: 0; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; }
+  .bucket-col .acts select { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: transparent; cursor: pointer; appearance: none; position: relative; }
+  .bucket-col .acts .move { position: relative; width: 26px; height: 26px; display: grid; place-items: center; }
+  .bucket-col .acts .move .ic { position: absolute; pointer-events: none; color: var(--ink-2); }
+  .bucket-col .acts .move select:focus-visible { outline: 2px solid var(--accent-soft); }
+  .bucket-col .acts .move select option { color: var(--ink); background: var(--surface); }
+  .bucket-col li.dragging { opacity: .4; }
+  .bucket-col li.drop-before { box-shadow: inset 0 2px 0 var(--green); }
+  .bucket-col li.drop-after { box-shadow: inset 0 -2px 0 var(--green); }
+  .bucket-col ol.drop-end { box-shadow: inset 0 0 0 2px var(--green); }
+  .buckets-foot { display: flex; justify-content: flex-end; margin-top: 8px; }`;
+document.head.append(Object.assign(document.createElement('style'), { textContent: BUCKET_CSS }));
+const blank = () => ({ order: Object.keys(catalog.buckets), apps: Object.fromEntries(Object.keys(catalog.buckets).map((k) => [k, []])), hidden: [] });
+// Settings › Wheel apps: the buckets in order, the apps in each, and which apps are hidden from the wheel.
+function bucketsSection() {
+  const b = s.buckets || blank(), B = catalog.buckets, nm = (id) => catalog.apps[id]?.name || id;
+  const item = (k, id, i, list) => `<li draggable="true" data-id="${esc(id)}" data-bucket="${k}" class="${b.hidden.includes(id) ? 'off' : ''}">${icon(APP_ICON[id] || 'layers', 'sm')}<span class="n" title="${esc(catalog.apps[id]?.role || '')}">${esc(nm(id))}</span><span class="acts">
+    <button class="btn subtle icon" data-a="app-up" title="Move up" aria-label="Move ${esc(nm(id))} up" ${i === 0 ? 'disabled' : ''}>${icon('up', 'sm')}</button>
+    <button class="btn subtle icon" data-a="app-down" title="Move down" aria-label="Move ${esc(nm(id))} down" ${i === list.length - 1 ? 'disabled' : ''}>${icon('down', 'sm')}</button>
+    <span class="move" title="Move to another bucket">${icon('chevron', 'sm')}<select data-a="app-bucket" aria-label="Move ${esc(nm(id))} to another bucket">${b.order.map((o) => `<option value="${o}" ${o === k ? 'selected' : ''}>${esc(B[o]?.name || o)}</option>`).join('')}</select></span>
+    <button class="btn subtle icon" data-a="app-hide" title="${b.hidden.includes(id) ? 'Show on the wheel' : 'Hide from the wheel'}" aria-label="${b.hidden.includes(id) ? 'Show' : 'Hide'} ${esc(nm(id))}" aria-pressed="${b.hidden.includes(id)}">${icon(b.hidden.includes(id) ? 'add' : 'eye', 'sm')}</button></span></li>`;
+  const col = (k, i) => { const list = b.apps[k] || [], shown = list.filter((id) => !b.hidden.includes(id)).length;
+    return `<div class="bucket-col" data-bucket="${k}"><h3>${icon(BUCKET_ICON[k] || 'bucket', 'sm')}<span class="nm">${esc(B[k]?.name || k)}</span><span class="tag">${shown} of ${list.length}</span><span class="acts">
+      <button class="btn subtle icon" data-a="bucket-up" title="Move the bucket earlier" aria-label="Move ${esc(B[k]?.name || k)} earlier" ${i === 0 ? 'disabled' : ''}>${icon('up', 'sm')}</button>
+      <button class="btn subtle icon" data-a="bucket-down" title="Move the bucket later" aria-label="Move ${esc(B[k]?.name || k)} later" ${i === b.order.length - 1 ? 'disabled' : ''}>${icon('down', 'sm')}</button></span></h3>
+      <ol class="group" data-bucket="${k}">${list.map((id, j) => item(k, id, j, list)).join('')}</ol></div>`; };
+  return `<section class="wheel-apps"><h2>Wheel apps</h2><p class="note">Clicking the lime shows these buckets, each opening a ring of its apps. Drag apps to reorder them or into another bucket, move buckets up or down, and hide apps you don’t use.</p>
+    <div class="buckets">${b.order.map(col).join('')}</div>
+    <div class="buckets-foot"><button class="btn" data-a="buckets-reset">Reset to default</button></div></section>`;
 }
-async function setRings(fn, focus) {
-  const r = { first: [...(s.rings?.first || [])], second: [...(s.rings?.second || [])] };
-  if (fn && fn(r) === false) return;
-  s = await api.invoke('settings:set', { rings: fn ? r : null });
+async function setBuckets(fn, focus) {
+  const cur = s.buckets || blank(), b = { order: [...cur.order], apps: Object.fromEntries(Object.entries(cur.apps).map(([k, v]) => [k, [...v]])), hidden: [...cur.hidden] };
+  if (fn && fn(b) === false) return;
+  s = await api.invoke('settings:set', { buckets: fn ? b : null });
   await render();
-  if (focus) (app.querySelector(`li[data-id="${focus[0]}"] [data-a="${focus[1]}"]:not([disabled])`) || app.querySelector(`li[data-id="${focus[0]}"] [data-a]:not([disabled])`))?.focus();
+  if (focus) (app.querySelector(`li[data-id="${focus[0]}"] [data-a="${focus[1]}"]:not([disabled])`) || app.querySelector(`.bucket-col[data-bucket="${focus[0]}"] [data-a="${focus[1]}"]:not([disabled])`) || app.querySelector(`li[data-id="${focus[0]}"] [data-a]:not([disabled])`))?.focus();
 }
-function moveApp(r, id, to, at) {
-  const from = r.first.includes(id) ? 'first' : 'second';
-  if (from !== to && r[to].length >= RING_CAP[to]) return false;
-  const i = r[from].indexOf(id);
-  r[from].splice(i, 1);
-  r[to].splice(Math.max(0, Math.min(at ?? r[to].length, r[to].length)), 0, id);
+function moveApp(b, id, to, at) {
+  const from = Object.keys(b.apps).find((k) => b.apps[k].includes(id));
+  if (!from || !b.apps[to]) return false;
+  b.apps[from].splice(b.apps[from].indexOf(id), 1);
+  b.apps[to].splice(Math.max(0, Math.min(at ?? b.apps[to].length, b.apps[to].length)), 0, id);
   return true;
 }
 let dragId = null;
 const clearDrop = () => app.querySelectorAll('.drop-before, .drop-after, .drop-end, .dragging').forEach((n) => n.classList.remove('drop-before', 'drop-after', 'drop-end', 'dragging'));
 function dropAt(e) {
-  const ol = e.target.closest?.('.ring-col ol');
+  const ol = e.target.closest?.('.bucket-col ol') || e.target.closest?.('.bucket-col')?.querySelector('ol');
   if (!ol) return null;
-  const li = e.target.closest('li'), ring = ol.dataset.ring, ids = [...ol.querySelectorAll('li')].map((n) => n.dataset.id);
-  if (!li) return { ring, at: ids.length, ol };
+  const li = e.target.closest('li'), bucket = ol.dataset.bucket, ids = [...ol.querySelectorAll('li')].map((n) => n.dataset.id);
+  if (!li) return { bucket, at: ids.length, ol };
   const after = e.clientY > li.getBoundingClientRect().top + li.offsetHeight / 2;
-  return { ring, at: ids.indexOf(li.dataset.id) + (after ? 1 : 0), li, after, ol };
+  return { bucket, at: ids.indexOf(li.dataset.id) + (after ? 1 : 0), li, after, ol };
 }
-app.addEventListener('dragstart', (e) => { const li = e.target.closest?.('.ring-col li'); if (!li) return; dragId = li.dataset.id; e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; li.classList.add('dragging'); });
+app.addEventListener('dragstart', (e) => { const li = e.target.closest?.('.bucket-col li'); if (!li) return; dragId = li.dataset.id; e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; li.classList.add('dragging'); });
 app.addEventListener('dragend', () => { dragId = null; clearDrop(); });
 app.addEventListener('dragover', (e) => {
   const d = dragId && dropAt(e);
   if (!d) return;
-  const full = !(s.rings?.[d.ring] || []).includes(dragId) && (s.rings?.[d.ring] || []).length >= RING_CAP[d.ring];
   app.querySelectorAll('.drop-before, .drop-after, .drop-end').forEach((n) => n.classList.remove('drop-before', 'drop-after', 'drop-end'));
-  if (full) return;
   e.preventDefault();
   if (d.li) d.li.classList.add(d.after ? 'drop-after' : 'drop-before'); else d.ol.classList.add('drop-end');
 });
@@ -88,7 +104,13 @@ app.addEventListener('drop', (e) => {
   clearDrop();
   if (!d) return;
   e.preventDefault();
-  setRings((r) => { const same = r[d.ring].includes(id), was = r[d.ring].indexOf(id); return moveApp(r, id, d.ring, same && was < d.at ? d.at - 1 : d.at); });
+  setBuckets((b) => { const list = b.apps[d.bucket] || [], was = list.indexOf(id); return moveApp(b, id, d.bucket, was >= 0 && was < d.at ? d.at - 1 : d.at); });
+});
+app.addEventListener('change', (e) => {
+  const sel = e.target.closest?.('select[data-a="app-bucket"]');
+  if (!sel) return;
+  const id = sel.closest('li').dataset.id;
+  setBuckets((b) => moveApp(b, id, sel.value), [id, 'app-bucket']);
 });
 const row = (ic, title, sub, ctl) => `<div class="row">${ic ? icon(ic, '').replace('class="ic', 'class="ic lead') : ''}<div class="t"><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</div>${ctl || ''}</div>`;
 
@@ -119,13 +141,13 @@ async function render() {
     ${row('fit', 'Reset position', '', '<button class="btn" data-a="reset">Reset</button>')}
   </div></section>
   ${dictHtml}
-  <section><h2>ArtCraft apps</h2><div class="group apps">
+  <section><h2>Apps</h2><div class="group apps">
     ${eng.crafts.map((c) => row(APP_ICON[c.id] || 'layers', esc(c.name), `${esc(c.role)}${c.version ? ` · ${esc(c.version)}` : ''}`, c.app ? `<button class="btn" data-a="app" data-id="${c.id}">Open</button>` : absent)).join('')}
   </div></section>
-  ${ringsSection(eng)}
+  ${bucketsSection()}
   <section><h2>Built-in engines</h2>
   <div class="group">
-    ${eng.crafts.length ? row('cube', 'ArtCraft engines', eng.crafts.map((c) => c.name.replace('Craft', '')).join(' · '), `<span class="dot ${eng.crafts.every((c) => c.bundled) ? 'on' : ''}"></span>`) : ''}
+    ${eng.crafts.some((c) => c.artcraft !== false) ? row('cube', 'ArtCraft engines', eng.crafts.filter((c) => c.artcraft !== false).map((c) => c.name.replace('Craft', '')).join(' · '), `<span class="dot ${eng.crafts.filter((c) => c.artcraft !== false).every((c) => c.bundled) ? 'on' : ''}"></span>`) : ''}
     ${row('video', 'FFmpeg', 'Video and audio conversion', '<span class="dot on"></span>')}
     ${row('image', 'libvips · MuPDF · Tesseract', 'Images, PDF and text recognition in 13 languages', '<span class="dot on"></span>')}
     ${row('ruler', 'LibreDWG · OpenCascade', 'DWG drawings and STEP, IGES and BREP models', '<span class="dot on"></span>')}
@@ -164,10 +186,18 @@ app.addEventListener('click', async (e) => {
     const [f] = await api.invoke('dialog:open', { title: `Find ${el.dataset.what}`, multi: false, filters: isMac ? undefined : [{ name: 'Programs', extensions: ['exe'] }] });
     if (f) { const p = isMac && /\.app$/i.test(f) ? `${f}/Contents/MacOS/soffice` : f; set({ [el.dataset.k]: p }); }
   }
-  if (a === 'rings-reset') setRings(null);
-  if (['ring-up', 'ring-down', 'ring-move'].includes(a)) {
-    const li = e.target.closest('li'), id = li.dataset.id, k = li.dataset.ring;
-    setRings((r) => { const i = r[k].indexOf(id); return a === 'ring-move' ? moveApp(r, id, k === 'first' ? 'second' : 'first') : moveApp(r, id, k, a === 'ring-up' ? i - 1 : i + 1); }, [id, a]);
+  if (a === 'buckets-reset') setBuckets(null);
+  if (a === 'app-up' || a === 'app-down') {
+    const li = e.target.closest('li'), id = li.dataset.id, k = li.dataset.bucket;
+    setBuckets((b) => moveApp(b, id, k, b.apps[k].indexOf(id) + (a === 'app-up' ? -1 : 1)), [id, a]);
+  }
+  if (a === 'app-hide') {
+    const id = e.target.closest('li').dataset.id;
+    setBuckets((b) => { b.hidden = b.hidden.includes(id) ? b.hidden.filter((x) => x !== id) : [...b.hidden, id]; }, [id, a]);
+  }
+  if (a === 'bucket-up' || a === 'bucket-down') {
+    const k = e.target.closest('.bucket-col').dataset.bucket;
+    setBuckets((b) => { const i = b.order.indexOf(k), j = i + (a === 'bucket-up' ? -1 : 1); if (j < 0 || j >= b.order.length) return false; b.order.splice(i, 1); b.order.splice(j, 0, k); }, [k, a]);
   }
   if (a === 'licenses') { const p = await api.invoke('app:paths'); api.invoke('shell:open', `${p.licenses}/THIRD-PARTY-NOTICES.txt`); }
   if (a === 'welcome') api.invoke('welcome:open');

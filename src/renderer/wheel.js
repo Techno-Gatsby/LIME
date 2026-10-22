@@ -6,14 +6,15 @@ const R_IN = 60, R_OUT = 138, R_LABEL = 100, R_PROG = 142.5, LIFT = 5, DWELL = 4
 const TAB = 76, PAD_L = 10, PAD_B = 20, OPEN = { w: 330, h: 416, cx: 165, cy: 194 };
 const SIZES = { s: 0.88, m: 1, l: 1.14 };
 const MODES = [['convert', 'Convert'], ['tools', 'Tools'], ['apps', 'Apps'], ['more', 'More']];
-const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], cadcraft: ['compass', '#2563eb'], soundcraft: ['wave', '#e11d74'], wordcraft: ['doc', '#2b579a'], gridcraft: ['grid', '#1d7a45'], deckcraft: ['present', '#c2410c'], pdfcraft: ['pdf', '#d93b3b'], webcraft: ['web', '#1f8f5f'] };
+const APP_LOOK = { photocraft: ['image', '#2f7fe0'], lightcraft: ['sun', '#e0851f'], vectorcraft: ['pen', '#e2553f'], designcraft: ['layers', '#8b5cf6'], effectcraft: ['sparkle', '#d946a8'], filmcraft: ['video', '#0f9d9a'], cadcraft: ['compass', '#2563eb'], soundcraft: ['wave', '#e11d74'], wordcraft: ['doc', '#2b579a'], gridcraft: ['grid', '#1d7a45'], deckcraft: ['present', '#c2410c'], pdfcraft: ['pdf', '#d93b3b'], webcraft: ['web', '#1f8f5f'], code: ['code', '#2f6fd6'], python: ['python', '#3572a5'], sqlite: ['database', '#0f6f8f'] };
+const BUCKET_LOOK = { office: ['doc', '#2b579a'], design: ['sparkle', '#d946a8'], coding: ['code', '#1f8f5f'], engineering: ['compass', '#2563eb'] };
 const isMac = api.platform === 'darwin';
 const stage = $('#stage'), wheelEl = $('.wheel'), svg = $('.dial'), petalsG = $('.petals'), center = $('.center'), pill = $('.pill'), card = $('.card');
 const capName = $('.caption .name'), capMeta = $('.caption .meta');
 
 let settings = await applyTheme();
 const catalog = Object.fromEntries((await api.invoke('catalog')).map((t) => [t.id, t]));
-const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, over: false, peek: null, baseMode: 'convert', modKey: null, app: null, home: null, homeOn: false, homeMore: false };
+const S = { state: 'idle', files: [], items: null, mode: 'convert', hot: -1, ring: [], job: null, result: null, last: null, thumbs: new Map(), info: null, cardFor: null, over: false, peek: null, baseMode: 'convert', modKey: null, app: null, home: null, homeOn: false, bucket: null };
 let k = SIZES[settings.size] || 1;
 let collapseT = null, foldT = null, shown = 'tab', geo = null, origin = { x: 0, y: 0 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -103,7 +104,7 @@ function toIdle(keepJob) {
   S.dragSummon = false;
   S.peek = null;
   S.app = null;
-  S.homeMore = false;
+  S.bucket = null;
   S.homeOn = false;
   peekSeq++;
   dwellOn(null);
@@ -120,7 +121,7 @@ function expand(why, at, peek) {
   S.peek = null;
   S.items = null;
   S.app = null;
-  S.homeMore = false;
+  S.bucket = null;
   S.homeOn = !S.dragSummon;
   setState('ready');
   S.hot = -1;
@@ -174,30 +175,34 @@ function setState(state) {
 const atHome = () => S.state === 'ready' && S.homeOn && !S.peek;
 function marks() {
   stage.classList.toggle('home', atHome());
-  stage.classList.toggle('drilled', atHome() && !!S.app);
+  stage.classList.toggle('drilled', atHome() && !!(S.app || S.bucket));
 }
 let homeP = null;
 const loadHome = () => (homeP ||= api.invoke('wheel:home').then((list) => { S.home = list; }).catch(() => { homeP = null; }));
-const appsList = () => (S.items ? S.items.apps || [] : S.home || []);
-const appName = (id) => appsList().find((a) => a.id === id)?.name || S.home?.find((a) => a.id === id)?.name || 'That app';
+// The home ring is buckets (Office, Design & media, Coding, Engineering), each holding its apps.
+const homeApps = () => (S.home || []).flatMap((b) => b.apps);
+const appsList = () => (S.items ? S.items.apps || [] : homeApps());
+const appName = (id) => appsList().find((a) => a.id === id)?.name || homeApps().find((a) => a.id === id)?.name || 'That app';
+const bucketOf = (id) => S.home?.find((b) => b.id === id) || null;
+const bucketItem = (b) => ({ bucket: b.id, label: b.name, hint: `${b.apps.length} app${b.apps.length === 1 ? '' : 's'}`, desc: b.apps.map((a) => a.name).join(', ') });
 const drillItem = (a) => ({ drill: a.id, label: a.name, hint: a.short, desc: `${a.role} · ${a.ring.length > 1 ? `${a.ring.length - 1} one-click action${a.ring.length === 2 ? '' : 's'}` : 'open the app'}` });
 const RECENT = { recent: true, label: 'Recent', hint: 'Results', desc: 'What Lime made lately' };
 function homeRing() {
-  const a = S.home?.find((x) => x.id === S.app);
+  const a = homeApps().find((x) => x.id === S.app);
   if (a) return a.ring;
-  const list = S.home || [], first = list.filter((x) => x.place !== 2), second = list.filter((x) => x.place === 2);
-  if (S.homeMore && second.length) return [...second.map(drillItem), RECENT, { homeBack: true, label: 'Back', hint: 'First ring', desc: `Back to ${first.map((x) => x.name).slice(0, 3).join(', ')} and the rest` }];
-  return [...first.map(drillItem), second.length ? { homeMore: true, label: 'More apps', hint: `${second.length} apps`, desc: second.map((x) => x.name).join(', ') } : RECENT];
+  const b = bucketOf(S.bucket);
+  if (b) return [...b.apps.map(drillItem), { homeBack: true, label: 'Back', hint: 'All apps', desc: `Back to ${(S.home || []).map((x) => x.name).join(', ')}` }];
+  return [...(S.home || []).map(bucketItem), RECENT];
 }
 function currentApp() {
-  if (atHome()) return S.home?.find((a) => a.id === S.app) || null;
+  if (atHome()) return homeApps().find((a) => a.id === S.app) || null;
   if (S.mode !== 'apps' || !S.items || !['open', 'ready'].includes(S.state)) return null;
   const list = S.items.apps || [];
   return list.find((a) => a.id === S.app) || (list.length === 1 ? list[0] : null);
 }
-const canBack = () => (!!S.app && (atHome() || (S.mode === 'apps' && appsList().length > 1))) || (atHome() && S.homeMore);
-function back() { if (S.app) S.app = null; else S.homeMore = false; S.hot = -1; redraw(); }
-function homePage(more) { S.homeMore = more; S.app = null; S.hot = -1; redraw(); }
+const canBack = () => (!!S.app && (atHome() || (S.mode === 'apps' && appsList().length > 1))) || (atHome() && !!S.bucket);
+function back() { if (S.app) { if (atHome() && !bucketOf(S.bucket)) S.bucket = homeApps().find((a) => a.id === S.app)?.bucket || null; S.app = null; } else S.bucket = null; S.hot = -1; redraw(); }
+function openBucket(id) { S.bucket = bucketOf(id) ? id : null; S.app = null; S.hot = -1; redraw(); }
 function redraw() {
   marks();
   drawPill();
@@ -288,6 +293,7 @@ function setCap(html, cls = '') {
 }
 const glyph = (name, cls = '') => `<div class="glyph ${cls}">${icon(name, 'lg')}</div>`;
 const appGlyph = (id) => `<div class="glyph app" style="--app:${APP_LOOK[id]?.[1] || 'var(--green)'}">${icon(APP_LOOK[id]?.[0] || 'grid', 'lg')}</div>`;
+const bucketGlyph = (id) => `<div class="glyph app bucket" style="--app:${BUCKET_LOOK[id]?.[1] || 'var(--green)'}">${icon(BUCKET_LOOK[id]?.[0] || 'bucket', 'lg')}</div>`;
 const showFile = (p) => setVis(`f:${p}`, glyph(GROUP_ICON[groupOfFile(p)] || 'doc'), p);
 function shortName(n, max = 40) {
   if (n.length <= max) return n;
@@ -324,6 +330,10 @@ function drawCenter() {
   } else if (app || it?.drill) {
     const id = it?.drill || app.id;
     setVis(`app:${id}`, appGlyph(id));
+    setCap(hot, 'hot');
+  } else if (it?.bucket || (atHome() && S.bucket)) {
+    const id = it?.bucket || S.bucket;
+    setVis(`bucket:${id}`, bucketGlyph(id));
     setCap(hot, 'hot');
   } else if (files.length && (S.state === 'open' || S.state === 'ready')) {
     showFile(files[0]);
@@ -377,6 +387,7 @@ async function drawCaption() {
     if (t) { capName.textContent = t.name; capMeta.textContent = t.desc || ''; }
     else if (it) { capName.textContent = it.action === 'craft' ? `Open ${appName(it.app)}` : it.label; capMeta.textContent = it.desc || it.hint || ''; }
     else if (app) { capName.textContent = app.name; capMeta.textContent = `${app.role} · pick an action, or drop files`; }
+    else if (bucketOf(S.bucket)) { const b = bucketOf(S.bucket); capName.textContent = b.name; capMeta.textContent = `${b.role} · pick an app`; }
     else { capName.textContent = 'Drop files here'; capMeta.textContent = 'or click the lime to choose · hold it to dictate'; }
   } else if (S.state === 'ready') {
     capName.textContent = 'Drop files here';
@@ -387,6 +398,7 @@ async function drawCaption() {
 function actionText(it) {
   if (it.action === 'craft') return `open in ${appName(it.app)}`;
   if (it.drill) return `see ${it.label}’s actions`;
+  if (it.bucket) return `see the ${it.label} apps`;
   const t = it.tool && catalog[it.tool];
   const v = t ? verbFor(t, { ...defaultsFor(t), ...(it.opts || {}) }) : it.label;
   return /^[A-Z][a-z]/.test(v) ? v[0].toLowerCase() + v.slice(1) : v;
@@ -397,7 +409,7 @@ function modHint() {
   return bits.length ? ` · hold ${bits.join(', ')}` : '';
 }
 function drawPill() {
-  if (atHome()) { pill.innerHTML = S.app || S.homeMore ? `<button data-a="home" title="Back (Esc)">${icon('back', 'sm')}${S.app ? (S.homeMore ? 'More apps' : 'All apps') : 'First ring'}</button>` : ''; return; }
+  if (atHome()) { pill.innerHTML = S.app || S.bucket ? `<button data-a="home" title="Back (Esc)">${icon('back', 'sm')}${esc(S.app ? bucketOf(S.bucket)?.name || 'All apps' : 'All apps')}</button>` : ''; return; }
   const modes = S.state === 'open' ? MODES.filter(([m]) => m !== 'apps' || ringFor(m).length) : S.state === 'ready' && S.peek ? MODES.filter(([m]) => ringFor(m).length) : [];
   const label = (id, l) => (id === 'apps' && S.mode === 'apps' && canBack() ? `${icon('back', 'sm')}${esc(appName(S.app))}` : l);
   pill.innerHTML = modes.map(([id, l]) => `<button role="tab" data-m="${id}" aria-selected="${S.mode === id}">${label(id, l)}</button>`).join('');
@@ -454,7 +466,8 @@ async function pick(it, { options = false } = {}) {
   if (S.ring.indexOf(it) === S.hot) flick($('.petal.hot', petalsG), 'picked', 400);
   if (S.state === 'done' || S.state === 'failed') return doneAction(it);
   if (it.drill) { S.app = it.drill; S.hot = -1; redraw(); return; }
-  if (it.homeMore || it.homeBack) return homePage(!!it.homeMore);
+  if (it.bucket) return openBucket(it.bucket);
+  if (it.homeBack) return openBucket(null);
   if (it.recent) return showRecent();
   if (it.appAll) return showAll({ app: it.appAll });
   if (it.off) { flash(it.desc || `${appName(it.app)} isn’t in this build of Lime`); return; }
@@ -756,7 +769,7 @@ function orderList(tool, changed) {
   return box;
 }
 const CATS = [['pdf', 'PDF'], ['image', 'Images'], ['media', 'Video & audio'], ['docs', 'Documents'], ['cad', 'CAD & vector'], ['archive', 'Archives'], ['utility', 'Utilities']];
-const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft', cadcraft: 'CADCraft', soundcraft: 'SoundCraft', wordcraft: 'WordCraft', gridcraft: 'GridCraft', deckcraft: 'DeckCraft', webcraft: 'WebCraft' };
+const CRAFT = { photocraft: 'PhotoCraft', lightcraft: 'LightCraft', vectorcraft: 'VectorCraft', designcraft: 'DesignCraft', effectcraft: 'EffectCraft', filmcraft: 'FilmCraft', pdfcraft: 'PdfCraft', cadcraft: 'CADCraft', soundcraft: 'SoundCraft', wordcraft: 'WordCraft', gridcraft: 'GridCraft', deckcraft: 'DeckCraft', webcraft: 'WebCraft', code: 'Code', python: 'Python', sqlite: 'SQLite' };
 function fuzzy(q, text) {
   const t = text.toLowerCase();
   let score = 0, ti = 0, last = -2;
@@ -773,7 +786,7 @@ const recentTools = () => { try { return JSON.parse(localStorage.getItem('lime.r
 const POPULAR = ['remove-background', 'compress-pdf', 'merge-pdf', 'compress-image', 'resize-image', 'convert-image', 'edit-pdf', 'sign-pdf', 'split-pdf', 'pdf-to-word', 'convert-video', 'compress-video', 'trim-media', 'extract-audio', 'convert-audio', 'image-to-text', 'jpg-to-pdf', 'protect-pdf'];
 function rememberTool(id) { try { localStorage.setItem('lime.recentTools', JSON.stringify([id, ...recentTools().filter((x) => x !== id)].slice(0, 8))); } catch (_) {} }
 function showAll({ app } = {}) {
-  const a = app && (appsList().find((x) => x.id === app) || S.home?.find((x) => x.id === app));
+  const a = app && (appsList().find((x) => x.id === app) || homeApps().find((x) => x.id === app));
   const ids = a ? a.all : S.items.all || [];
   const node = h(`<div><div class="search"><input class="input" type="search" placeholder="Search ${ids.length} tools" spellcheck="false"><button class="btn subtle icon" data-a="x">${icon('close', 'sm')}</button></div><div class="list"></div></div>`);
   const list = $('.list', node), q = $('input', node);
@@ -1030,12 +1043,12 @@ window.addEventListener('dragenter', (e) => {
 });
 let drillWait = null, drillT = null;
 function drillOn(it) {
-  const id = it?.drill || (it?.homeMore ? ':more' : it?.homeBack ? ':back' : null);
+  const key = (x) => x?.drill || (x?.bucket ? `:b:${x.bucket}` : x?.homeBack ? ':back' : null), id = key(it);
   if (id === drillWait) return;
   clearTimeout(drillT);
   drillWait = id;
-  const same = (x) => (x?.drill || (x?.homeMore ? ':more' : x?.homeBack ? ':back' : null)) === id;
-  if (id) drillT = setTimeout(() => { if (same(S.ring[S.hot])) { if (id === ':more' || id === ':back') homePage(id === ':more'); else { S.app = id; S.hot = -1; redraw(); } } drillWait = null; }, DWELL);
+  // Holding a file over a bucket opens it, then over an app opens the app's ring, as a click would.
+  if (id) drillT = setTimeout(() => { if (key(S.ring[S.hot]) === id) { if (id === ':back') openBucket(null); else if (id.startsWith(':b:')) openBucket(id.slice(3)); else { S.app = id; S.hot = -1; redraw(); } } drillWait = null; }, DWELL);
 }
 window.addEventListener('dragover', (e) => {
   if (!isFiles(e)) return;
@@ -1062,7 +1075,8 @@ window.addEventListener('drop', async (e) => {
   sfx('drop');
   const it = S.state === 'ready' && (S.peek || atHome()) ? S.ring[ringIndexAt(e.clientX, e.clientY)] : null;
   S.dropping = true;
-  if (!it || it.recent) { openWith(files).finally(() => { S.dropping = false; }); return; }
+  if (!it || it.recent || it.homeBack) { openWith(files).finally(() => { S.dropping = false; }); return; }
+  if (it.bucket) { openWith(files, { mode: 'apps' }).finally(() => { S.dropping = false; }); return; }
   const home = atHome();
   if (it.drill) { openWith(files, { mode: 'apps', app: it.drill }).finally(() => { S.dropping = false; }); return; }
   const want = itemKey(it);
@@ -1101,7 +1115,7 @@ api.on('wheel:dragEnded', () => {
 });
 api.on('wheel:flash', (msg) => flash(msg));
 api.on('wheel:fold', () => { if (S.state === 'busy') collapseKeepJob(); else collapse(); });
-api.on('settings', (s) => { if (JSON.stringify(s.rings) !== JSON.stringify(settings.rings)) { homeP = null; loadHome().then(() => { if (atHome() && !S.peek) { if (S.app && !S.home?.some((a) => a.id === S.app)) S.app = null; redraw(); } }); } if ((s.icon || null) !== (settings.icon || null)) { setIcon(s.icon); settings = s; iconChanged(); } settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
+api.on('settings', (s) => { if (JSON.stringify(s.buckets) !== JSON.stringify(settings.buckets)) { homeP = null; loadHome().then(() => { if (atHome() && !S.peek) { if (S.app && !homeApps().some((a) => a.id === S.app)) S.app = null; if (S.bucket && !bucketOf(S.bucket)) S.bucket = null; redraw(); } }); } if ((s.icon || null) !== (settings.icon || null)) { setIcon(s.icon); settings = s; iconChanged(); } settings = s; const nk = SIZES[s.size] || 1; if (nk !== k) { k = nk; $$('img.lime').forEach((i) => { i.sizes = `${Math.ceil(i.width * k)}px`; }); layout(); } });
 
 const LENS = { bevel: 0.15, depth: 7, aberration: 0.08 }, DRIFT_R = 180, DRIFT_S = 14, NUDGE = 3, TILT = 2.5;
 const glass = { ptr: null, light: { x: -80, y: -150, ax: -80, ay: -150 }, drift: -2.1, nudge: { el: null, x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0 }, tilt: { x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0 }, raf: 0, last: 0, frame: 0, slow: 0, still: matchMedia('(prefers-reduced-motion: reduce)') };
@@ -1229,4 +1243,4 @@ setState('idle');
 drawRing([]);
 drawCenter();
 layout();
-window.__lime = { S, drawCenter, folding: () => !!folding, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo, atHome, homeRing, currentApp, back, redraw, loadHome, ringFor, sounds, glassAt };
+window.__lime = { S, drawCenter, folding: () => !!folding, openWith, collapse, fold, expand, pick, setHot, setMode, showAll, showOptions, setPeek, ringIndexAt, catalog, geo: () => geo, atHome, homeRing, currentApp, back, redraw, loadHome, homeApps, openBucket, ringFor, sounds, glassAt };

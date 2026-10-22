@@ -52,27 +52,44 @@ const log = (err) => { try { fs.appendFileSync(path.join(app.getPath('userData')
 process.on('uncaughtException', log);
 
 const SETTINGS = () => path.join(app.getPath('userData'), 'settings.json');
-const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, welcomed: false, recent: [], signatures: [], rings: { first: ['pdfcraft', 'photocraft', 'designcraft', 'webcraft', 'cadcraft', 'soundcraft', 'filmcraft'], second: ['vectorcraft', 'lightcraft', 'effectcraft', 'deckcraft', 'gridcraft', 'wordcraft'] } };
+const DEFAULTS = { theme: 'light', askSave: true, outMode: 'beside', outFolder: '', reveal: false, notify: true, float: true, dock: false, login: false, size: 'm', anchor: null, hidden: false, shiftDrag: true, corner: true, sounds: true, welcomed: false, recent: [], signatures: [], buckets: null };
 let settings = { ...DEFAULTS };
 let saveT = null;
 const loadSettings = () => {
   try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS(), 'utf8')) }; } catch (_) { settings = { ...DEFAULTS }; }
   if (!settings.outFolder) settings.outFolder = path.join(app.getPath('downloads'), 'Lime');
+  // Before buckets, Settings kept two rings of apps. Their order carries over as the order inside each bucket.
+  if ('rings' in settings) {
+    try { if (!settings.buckets && settings.rings && typeof settings.rings === 'object') settings.buckets = bucketsFromRings(settings.rings); } catch (_) {}
+    delete settings.rings;
+    saveSettings();
+  }
 };
 const saveSettings = () => { clearTimeout(saveT); saveT = setTimeout(() => fsp.writeFile(SETTINGS(), JSON.stringify(settings, null, 1)).catch(() => {}), 200); };
-const publicSettings = () => { const { recent, ...rest } = settings; return { ...rest, rings: homeRings(), platform: process.platform }; };
-const RING_MAX = { first: 9, second: 10 };
-function homeRings(r = settings.rings) {
-  const known = Object.keys(crafts.APPS), seen = new Set(), def = DEFAULTS.rings;
-  const src = r && (Array.isArray(r.first) || Array.isArray(r.second)) ? r : def;
-  const take = (list, max) => (Array.isArray(list) ? list : []).filter((id) => known.includes(id) && !seen.has(id) && seen.add(id)).slice(0, max);
-  const first = take(src.first, RING_MAX.first), second = take(src.second, RING_MAX.second);
-  for (const id of [...def.second, ...def.first, ...known]) {
-    if (seen.has(id) || !known.includes(id)) continue;
-    seen.add(id);
-    (second.length < RING_MAX.second ? second : first).push(id);
-  }
-  return { first, second };
+const publicSettings = () => { const { recent, ...rest } = settings; return { ...rest, buckets: homeBuckets(), platform: process.platform }; };
+// The wheel's home: the buckets (Office, Design & media, Coding, Engineering) in the person's order, each with its apps in
+// order, and the apps they hid. Every app with a bucket in crafts.APPS has a place, so a new app appears without a setting.
+function homeBuckets(b = settings.buckets) {
+  const B = crafts.BUCKETS, A = crafts.APPS, ids = Object.keys(A).filter((id) => B[A[id].bucket]);
+  const src = b && typeof b === 'object' && !Array.isArray(b) ? b : {};
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  const order = [...new Set([...list(src.order).filter((k) => B[k]), ...Object.keys(B)])];
+  const placed = new Set(), apps = Object.fromEntries(order.map((k) => [k, []]));
+  const given = src.apps && typeof src.apps === 'object' ? src.apps : {};
+  for (const k of order) for (const id of list(given[k])) if (ids.includes(id) && !placed.has(id)) { placed.add(id); apps[k].push(id); }
+  for (const id of ids) if (!placed.has(id)) apps[A[id].bucket].push(id);
+  const hidden = [...new Set(list(src.hidden).filter((id) => ids.includes(id)))];
+  return { order, apps, hidden };
+}
+function bucketsFromRings(r) {
+  const was = [...(Array.isArray(r.first) ? r.first : []), ...(Array.isArray(r.second) ? r.second : [])], at = (id) => (was.includes(id) ? was.indexOf(id) : 1e3);
+  const { order, apps } = homeBuckets(null);
+  for (const k of order) apps[k] = apps[k].map((id, i) => [id, i]).sort((x, y) => at(x[0]) - at(y[0]) || x[1] - y[1]).map(([id]) => id);
+  return { order, apps, hidden: [] };
+}
+function homeRing() {
+  const b = homeBuckets(), B = crafts.BUCKETS;
+  return b.order.map((k) => ({ id: k, ...B[k], apps: b.apps[k].filter((id) => !b.hidden.includes(id)).map((id) => ({ ...appRing(id, []), bucket: k })) })).filter((x) => x.apps.length);
 }
 function addRecent(paths, kind) {
   const at = Date.now();
@@ -597,7 +614,11 @@ function buildTray() {
     { label: 'Quit Lime', accelerator: isMac ? 'Command+Q' : undefined, click: () => { app.isQuitting = true; app.quit(); } },
   ]));
 }
-const appsMenu = () => ({ label: 'Open App', submenu: Object.entries(crafts.APPS).filter(([, a]) => !a.builtin).map(([id, a]) => ({ label: `${a.name} — ${a.role}`, enabled: crafts.hasApp(id), click: () => crafts.openApp(id, []).catch(log) })) });
+const appsMenu = () => {
+  const b = homeBuckets(), item = (id) => ({ label: `${crafts.APPS[id].name} — ${crafts.APPS[id].role}`, enabled: crafts.hasApp(id), click: () => crafts.openApp(id, []).catch(log) });
+  const groups = b.order.map((k) => b.apps[k].filter((id) => !crafts.APPS[id].builtin).map(item)).filter((g) => g.length);
+  return { label: 'Open App', submenu: groups.flatMap((g, i) => (i ? [{ type: 'separator' }, ...g] : g)) };
+};
 async function pickFiles() {
   const r = await dialog.showOpenDialog({ properties: ['openFile', 'openDirectory', 'multiSelections'], title: 'Choose files for Lime' });
   if (!r.canceled && r.filePaths.length) showWheel(r.filePaths);
@@ -651,7 +672,10 @@ async function doAction(item, files) {
   }
 }
 
-const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'], soundcraft: ['edit-audio'], webcraft: ['edit-web'] };
+const EDIT_IN = { photocraft: ['edit-image'], lightcraft: ['edit-image'], vectorcraft: ['edit-vector', 'edit-image'], designcraft: ['edit-layout'], effectcraft: ['edit-motion'], filmcraft: ['edit-video', 'edit-audio', 'edit-timeline'], pdfcraft: ['edit-pdf'], soundcraft: ['edit-audio'], webcraft: ['edit-web'], sqlite: ['edit-database'] };
+const WEB_CODE = ['html', 'htm', 'xhtml', 'css', 'js', 'mjs'];
+// Pages, stylesheets and scripts open in WebCraft; this sends their source to Code instead.
+const editCode = (files) => ({ action: 'craft', app: 'code', label: 'Edit code', hint: 'In Code', desc: files.length ? `${files.length === 1 ? path.basename(files[0]) : `${files.length} files`} as source, in Code` : 'The source of a page, stylesheet or script, in Code' });
 function appRing(id, files) {
   const a = crafts.APPS[id];
   const ok = crafts.hasApp(id);
@@ -660,6 +684,7 @@ function appRing(id, files) {
   const web = crafts.hasWeb(id) && files.length <= 1;
   const ring = web ? [{ action: 'craftweb', app: id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${files.length ? `${path.basename(files[0])} in ` : ''}${a.name}, in a Lime window` }, full] : edit ? [{ tool: edit.id, label: 'Open', hint: 'In Lime', appOpen: true, desc: `${a.name} in a Lime window: ${edit.desc}`, ...(files.length ? {} : { exts: tools.extsFor(edit) }) }, full] : [full];
   if (a.builtin && ring.includes(full)) ring.splice(ring.indexOf(full), 1);
+  if (id === 'webcraft' && crafts.hasApp('code') && files.every((f) => WEB_CODE.includes(path.extname(f).slice(1).toLowerCase()))) ring.push(editCode(files));
   const list = tools.TOOLS.filter((x) => x.craft === id && (!files.length || tools.accepts(x, files))).sort((x, y) => (x.prio ?? 50) - (y.prio ?? 50));
   for (const t of list) {
     for (const [label, hint, opts] of t.petals || [[t.petal?.[0] || t.name, t.petal?.[1] || '', t.petal?.[2]]]) ring.push({ tool: t.id, label, hint, ...(opts ? { opts } : {}), ...(files.length ? {} : { exts: tools.extsFor(t) }) });
@@ -673,6 +698,7 @@ function itemsFor(files) {
   const w = tools.wheelsFor(files), apps = crafts.appsFor(files).map((id) => appRing(id, files));
   const first = apps[0];
   if (first && crafts.hasApp(first.id)) w.tools = [...w.tools.slice(0, 9), { action: 'craft', app: first.id, label: first.name, hint: 'Open in', desc: `Edit in ${first.name} · ${first.role}` }];
+  else if (files.length && crafts.hasApp('code') && files.every((f) => WEB_CODE.includes(path.extname(f).slice(1).toLowerCase()))) w.tools = [...w.tools.slice(0, 9), editCode(files)];
   return { ...w, apps, more: actionsFor(files), all: tools.toolsFor(files) };
 }
 function broadcast(ch, payload) { for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(ch, payload); }
@@ -685,7 +711,7 @@ async function setSettings(patch) {
   if ('anchor' in patch || 'hidden' in patch) sendGeo();
   if ('corner' in patch) applyCorner();
   if ('dock' in patch && isMac) settings.dock ? app.dock.show() : app.dock.hide();
-  if ('rings' in patch) settings.rings = homeRings(patch.rings);
+  if ('buckets' in patch) settings.buckets = patch.buckets ? homeBuckets(patch.buckets) : null;
   if ('dictation' in patch) dictate.apply(before.dictation);
   if ('login' in patch) app.setLoginItemSettings({ openAtLogin: !!settings.login, openAsHidden: true });
   if (['soffice', 'pandoc', ...Object.keys(crafts.APPS)].some((k) => k in patch && patch[k] !== before[k])) { require('./engines/util').configure(engineCfg()); [...pool, utility].forEach((w) => w.postMessage({ type: 'config', cfg: engineCfg() })); }
@@ -699,7 +725,9 @@ function registerIpc() {
   h('app:info', () => ({ version: app.getVersion(), built: require('../../package.json').buildDate || null, platform: process.platform, dark: nativeTheme.shouldUseDarkColors, home: os.homedir() }));
   h('catalog', () => tools.catalog());
   h('wheel:items', (files) => itemsFor(files));
-  h('wheel:home', () => { const r = homeRings(); return [...r.first.map((id) => ({ ...appRing(id, []), place: 1 })), ...r.second.map((id) => ({ ...appRing(id, []), place: 2 }))]; });
+  h('wheel:home', () => homeRing());
+  h('apps:catalog', () => ({ buckets: crafts.BUCKETS, apps: Object.fromEntries(Object.entries(crafts.APPS).filter(([, a]) => a.bucket).map(([id, a]) => [id, { name: a.name, role: a.role, bucket: a.bucket }])) }));
+  hE('sqlite:call', (e, method, ...args) => require('./sqlitehost').call(e.sender, engineCfg, method, ...args));
   h('wheel:action', (item, files) => doAction(item, files));
   h('wheel:layout', ({ mode: m, at, h }) => {
     if (h) openH = h;

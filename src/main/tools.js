@@ -3,6 +3,7 @@ const U = require('./engines/util');
 const { fsp, path } = U;
 
 const lazy = (name) => () => require(`./engines/${name}`);
+const coding = lazy('coding'), sqlite = lazy('sqlite');
 const word = lazy('word'), excel = lazy('excel'), slides = lazy('slides'), kit = lazy('officekit');
 const gif = lazy('gif'), plus = lazy('pdfplus');
 const pdf = lazy('pdf'), img = lazy('image'), media = lazy('media'), arc = lazy('archive'), office = lazy('office'), cad = lazy('cad'), craft = lazy('crafts'), data = lazy('data'), subs = lazy('subtitles'), ebook = lazy('ebook'), fonts = lazy('fonts'), email = lazy('email'), web = lazy('web'), voice = lazy('voice');
@@ -133,6 +134,7 @@ const TOOLS = [
   { id: 'edit-layout', cat: 'docs', name: 'Edit layout', desc: 'Check, fix and export a page layout, with DesignCraft.', accepts: ['layout'], max: 1, editor: 'studio:designcraft' },
   { id: 'edit-motion', cat: 'media', name: 'Edit animation', desc: 'Retime, recolour and render an animation, with EffectCraft.', accepts: ['motion'], max: 1, editor: 'studio:effectcraft' },
   { id: 'edit-web', cat: 'docs', name: 'Edit web page', desc: 'Design view and code side by side, kept in step, with a preview at phone, tablet and desktop widths.', accepts: [], extAccept: WEB_OPEN, max: 1, editor: 'web' },
+  { id: 'edit-database', cat: 'utility', name: 'Browse database', desc: 'Tables, rows, schema and SQL queries for an SQLite database; read-only until you allow changes.', tags: 'sqlite db sql query browser', accepts: ['database'], max: 1, editor: 'sqlite' },
   { id: 'edit-timeline', cat: 'media', name: 'Edit timeline', desc: 'Look through, trim and render an edit, with FilmCraft.', accepts: ['timeline'], max: 1, editor: 'studio:filmcraft' },
   { id: 'merge-pdf', cat: 'pdf', name: 'Merge PDF', desc: 'Combine PDFs and images into one PDF.', accepts: ['pdf', 'image'], min: 2, ordered: true, ext: 'pdf', suffix: ' - merged',
     run: async (files, opts, ctx) => {
@@ -707,6 +709,15 @@ const TOOLS = [
     run: each((f, o, c) => web().pageToPdf(f, o, c)) },
   { id: 'web-text', cat: 'docs', name: 'Extract text', desc: 'The words of the page as plain text, without the markup.', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 20, petal: ['Text', 'Extract'], ext: 'txt', suffix: '', run: each((f, o, c) => web().extractText(f, o, c)) },
   { id: 'validate-html', cat: 'docs', name: 'Validate', desc: 'Unclosed tags, ids used twice, pictures without alt text and more.', tags: 'validator lint html errors', accepts: [], extAccept: WEB_PAGE, craft: 'webcraft', prio: 22, petal: ['Validate', 'Errors'], save: 'none', run: each((f, o, c) => web().validateFile(f, o, c)) },
+  // The Coding apps: Python's Run, and the SQLite browser's two exports (its window is the edit-database editor).
+  { id: 'run-python', cat: 'utility', name: 'Run Python script', desc: 'Runs the script with the Python inside Lime, from a scratch folder and within a time limit, and saves what it printed as text beside it.', tags: 'python py execute script output',
+    accepts: [], extAccept: ['py', 'pyw'], max: 1, ext: 'txt', suffix: ' - output', craft: 'python', prio: 10, petal: ['Run', 'Script'],
+    options: [select('timeout', 'Time limit', [['60', '1 minute'], ['10', '10 seconds'], ['300', '5 minutes']], '60', { advanced: true }), text('args', 'Arguments', '', { advanced: true, placeholder: 'input.csv --verbose' })],
+    run: each((f, o, c) => coding().runPython(f, o, c)) },
+  { id: 'database-tables', cat: 'utility', name: 'Database tables to Excel', desc: 'Every table of an SQLite database in one workbook, a sheet per table.', tags: 'sqlite db export xlsx tables', accepts: ['database'], max: 1, ext: 'xlsx', suffix: ' - tables',
+    craft: 'sqlite', prio: 10, petal: ['Tables', 'To Excel'], run: each((f, o, c) => sqlite().tablesXlsx(f, o, c)) },
+  { id: 'database-schema', cat: 'utility', name: 'Database schema', desc: 'The SQL that builds the database’s tables, views, indexes and triggers.', tags: 'sqlite db schema sql ddl create', accepts: ['database'], max: 1, ext: 'sql', suffix: ' - schema',
+    craft: 'sqlite', prio: 12, petal: ['Schema', 'SQL'], run: each((f, o, c) => sqlite().schema(f, o, c)) },
   // Speech tools on the bundled models (whisper, DeepFilterNet, Spleeter and Piper on the ONNX runtime), all offline.
   { id: 'speech-to-text', cat: 'media', name: 'Subtitles from speech', desc: 'Listens to the speech and writes subtitles (SRT, VTT) or a transcript. Works offline.', tags: 'transcribe transcription captions subtitles srt vtt speech recognition whisper dictation', accepts: ['video', 'audio'], ok: notMidi, ai: 'whisper', ext: (o) => o.to,
     options: [select('to', 'Save as', [['srt', 'Subtitles (SRT)'], ['vtt', 'Subtitles (VTT)'], ['txt', 'Transcript (text)']]), select('lang', 'Language', whisperLangs()), toggle('translate', 'Give me English', false), toggle('accurate', 'Slower, more careful', false, { advanced: true })],
@@ -819,6 +830,8 @@ const WHEELS = {
   },
   contacts: { convert: [W('convert-contacts', 'CSV', 'Table', { to: 'csv' }), W('convert-contacts', 'XLSX', 'Excel', { to: 'xlsx' }), W('convert-contacts', 'JSON', 'Data', { to: 'json' })], tools: [ZIP, HASH] },
   folder: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' }), W('create-archive', 'TAR.GZ', 'Archive', { format: 'tar.gz' }), W('create-archive', 'TAR.XZ', 'Archive', { format: 'tar.xz' })], tools: [] },
+  code: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' })], tools: [W('run-python', 'Run', 'Python'), W('format-html', 'Format', 'Tidy'), W('minify-web', 'Minify', 'Smaller'), HASH] },
+  database: { convert: [W('database-tables', 'XLSX', 'All tables'), W('database-schema', 'SQL', 'Schema'), ZIP], tools: [W('edit-database', 'Browse', 'Tables & SQL'), W('database-tables', 'Tables', 'To Excel'), W('database-schema', 'Schema', 'SQL'), HASH] },
   any: { convert: [ZIP, W('create-archive', '7Z', 'Archive', { format: '7z' })], tools: [HASH] },
 };
 const IMAGE_TARGETS = { jpg: ['JPG', 'Photo'], png: ['PNG', 'Lossless'], webp: ['WebP', 'Web'], heic: ['HEIC', 'iPhone'], avif: ['AVIF', 'Smallest'], pdf: ['PDF', 'Document'], tiff: ['TIFF', 'Print'], psd: ['PSD', 'Layers'], gif: ['GIF', 'Classic'], apng: ['APNG', 'Animated'], ico: ['ICO', 'Icon'], icns: ['ICNS', 'Mac icon'], cur: ['CUR', 'Cursor'] };
@@ -851,7 +864,7 @@ const MULTI = {
 const SINGLE_OUTPUT = new Set(['mix-tracks', 'compare-docs', 'merge-slides', 'hdr-batch', 'scan-to-pdf', 'compare-pdf', 'images-to-cbz', 'create-archive', 'merge-media', 'add-audio', 'merge-pdf', 'merge-documents', 'merge-sheets', 'collage', 'images-to-gif', 'images-to-video', 'hdr-merge', 'panorama', 'merge-models']);
 
 const groupsOf = (files) => [...new Set(files.map(groupOf))];
-const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js', web: 'vendor/weblibs.js' };
+const EDITOR_FILE = { image: 'imgedit.js', media: 'mediaedit.js', studio: 'studio.js', web: 'vendor/weblibs.js', sqlite: 'sqlite.js' };
 require('./diagramtools').register({ TOOLS, WHEELS, EDITOR_FILE, W, each });
 const unshipped = new Set(TOOLS.filter((t) => { const f = EDITOR_FILE[String(t.editor).split(':')[0]]; return f && !require('fs').existsSync(path.join(__dirname, '..', 'renderer', f)); }).map((t) => t.id));
 if (unshipped.size) {

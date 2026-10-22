@@ -42,6 +42,10 @@ const GROUPS = {
   archive: ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'tbz', 'tbz2', 'xz', 'txz', 'zst', 'lz', 'lzma', 'z', 'iso', 'img', 'cab', 'wim', 'dmg', 'arj', 'lzh', 'cpio', 'rpm', 'deb', 'jar', 'apk', 'xpi', 'msi', 'vhd', 'vhdx', 'chm', 'udf', 'squashfs'],
   subtitle: ['srt', 'vtt', 'ass', 'ssa', 'sub'],
   data: ['json', 'yaml', 'yml'],
+  // Source code no other group claims (a .ts is a video unless it reads as text: see groupOf).
+  code: ['py', 'pyw', 'pyi', 'js', 'mjs', 'cjs', 'jsx', 'tsx', 'mts', 'cts', 'css', 'scss', 'sass', 'less', 'vue', 'svelte', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'psm1', 'bat', 'cmd', 'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh',
+    'cs', 'java', 'kt', 'kts', 'scala', 'go', 'rs', 'rb', 'php', 'swift', 'dart', 'lua', 'pl', 'r', 'jl', 'sql', 'graphql', 'proto', 'ini', 'cfg', 'conf', 'properties'],
+  database: ['sqlite', 'sqlite3', 'db3', 's3db', 'sl3'],
 };
 const EXT_GROUP = {};
 for (const [g, list] of Object.entries(GROUPS)) for (const e of list) if (!EXT_GROUP[e]) EXT_GROUP[e] = g;
@@ -55,7 +59,13 @@ function groupOf(p) {
   const e = ext(p);
   if (e === 'json' && sniff(p, /"layers"\s*:/) && sniff(p, /"fr"\s*:/)) return 'motion';
   if (e === 'xml' && sniff(p, /<xmeml/)) return 'timeline';
+  if (e === 'db') return head(p, 16) === 'SQLite format 3\0' ? 'database' : 'any';
+  // MPEG transport streams start every 188-byte packet with 0x47; TypeScript is text.
+  if (e === 'ts') { const h = head(p, 512); if (h && h[0] !== '\x47' && !/[\x00-\x08\x0e-\x1a]/.test(h)) return 'code'; }
   return EXT_GROUP[e] || 'any';
+}
+function head(p, n) {
+  try { const fd = fs.openSync(p, 'r'), b = Buffer.alloc(n), k = fs.readSync(fd, b, 0, n, 0); fs.closeSync(fd); return b.subarray(0, k).toString('latin1'); } catch (_) { return ''; }
 }
 function sniff(p, re) {
   try {

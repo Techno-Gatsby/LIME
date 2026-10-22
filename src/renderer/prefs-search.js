@@ -43,12 +43,12 @@ export function wireSearch(app) {
     for (const sec of app.querySelectorAll(':scope > section')) {
       const head = norm(`${sec.querySelector('h2')?.textContent || ''} ${sec.querySelector('.note')?.textContent || ''}`);
       const all = !words.length || words.every((w) => head.includes(w));
-      const items = [...sec.querySelectorAll('.row, .ring-col li')];
+      const items = [...sec.querySelectorAll('.row, .bucket-col li')];
       let shown = 0;
       for (const el of items) { const ok = all || words.every((w) => textOf(el).includes(w)); el.hidden = !ok; if (ok) shown++; }
       for (const g of sec.querySelectorAll('.group')) { const first = [...g.querySelectorAll(':scope > .row')].find((r) => !r.hidden); g.querySelectorAll('.lead-shown').forEach((r) => r.classList.remove('lead-shown')); first?.classList.add('lead-shown'); }
-      sec.querySelectorAll('.ring-col').forEach((c) => { c.hidden = !all && ![...c.querySelectorAll('li')].some((l) => !l.hidden); });
-      sec.querySelectorAll('.note, .rings-foot').forEach((n) => { n.hidden = !all; });
+      sec.querySelectorAll('.bucket-col').forEach((c) => { c.hidden = !all && ![...c.querySelectorAll('li')].some((l) => !l.hidden); });
+      sec.querySelectorAll('.note, .buckets-foot').forEach((n) => { n.hidden = !all; });
       sec.hidden = !all && !shown;
       if (!sec.hidden) any = true;
     }
