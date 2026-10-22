@@ -124,4 +124,52 @@ async function readAloud(f, o, ctx) {
   } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
 }
 
-module.exports = { VOICES, transcribe, subtitleVideo, cleanVoice, splitStems, removeVocals, readAloud, textOf };
+// Speech in one language spoken again in another: whisper hears it, the translation models translate each line, and
+// a Piper voice reads every line at the moment it was said (a little faster when the translation runs longer). A video
+// keeps its picture, with the original sound low underneath and the translated subtitles as a track.
+async function translateSpeech(f, o, ctx) {
+  const T = require('./translate'), info = await sound(f), to = VOICES.some(([v]) => v === o.to) ? o.to : 'en-GB', lang = to.slice(0, 2);
+  const tmp = await U.tmpDir('dub');
+  try {
+    let r = heard(await whisper.transcribeFile(f, { ...o, lang: o.from || 'auto', translate: false }, part(ctx, 0, 0.35)), f);
+    let from = r.lang;
+    // A language the translation models don't know is heard again straight into English, and goes on from there.
+    if (from !== lang && !T.route(from, lang)) { r = heard(await whisper.transcribeFile(f, { ...o, lang: from, translate: true }, part(ctx, 0.35, 0.45)), f); from = 'en'; }
+    const segs = r.segments.filter((x) => String(x.text || '').trim());
+    const lines = from === lang ? segs.map((x) => x.text.trim()) : await T.translate(segs.map((x) => x.text.trim()), from, lang, { progress: (p) => ctx.progress?.(0.45 + 0.1 * p, 'Translating'), signal: ctx.signal });
+    const subs = segs.map((x, i) => ({ ...x, text: lines[i] }));
+    const srt = path.join(tmp, 'translated.srt');
+    await fsp.writeFile(srt, whisper.toSrt(subs));
+    if (o.output === 'srt') { const out = ctx.out.file(f, `${U.base(f)}-${lang}.srt`); await fsp.copyFile(srt, out); return out; }
+    const [espeakDir, voiceDir] = await Promise.all([ai.payload('espeak'), ai.payload(`voice-${to}`)]);
+    const say = async (text, speed, i) => { const raw = path.join(tmp, `l${i}.f32`); const q = await ai.call('tts', { espeakDir, model: path.join(voiceDir, 'voice.onnx'), text, speed, out: raw }, { signal: ctx.signal }); return { pcm: new Float32Array((await fsp.readFile(raw)).buffer.slice(0)), rate: q.rate }; };
+    const parts = [];
+    for (let i = 0; i < subs.length; i++) {
+      const x = subs[i], slot = Math.max(0.5, (subs[i + 1]?.start ?? x.end + 1) - x.start);
+      let a = await say(x.text, 1, i);
+      const len = a.pcm.length / a.rate;
+      if (len > slot * 1.05) a = await say(x.text, Math.min(1.6, len / slot), i);
+      parts.push({ start: x.start, ...a });
+      ctx.progress?.(0.55 + 0.35 * ((i + 1) / subs.length), `Speaking line ${i + 1} of ${subs.length}`);
+    }
+    const rate = parts[0]?.rate || 22050, total = Math.max(info.duration || 0, ...parts.map((p) => p.start + p.pcm.length / rate)) + 0.25;
+    const mix = new Float32Array(Math.ceil(total * rate));
+    let cursor = 0;
+    for (const p of parts) { const at = Math.max(Math.round(p.start * rate), cursor); mix.set(p.pcm.subarray(0, Math.max(0, mix.length - at)), at); cursor = at + p.pcm.length; }
+    const raw = path.join(tmp, 'dub.f32');
+    await fsp.writeFile(raw, Buffer.from(mix.buffer));
+    const pcm = ['-f', 'f32le', '-ar', String(rate), '-ac', '1', '-i', raw], rest = part(ctx, 0.9, 1);
+    if (info.video && o.output !== 'audio') {
+      const e = U.ext(f), mp4 = ['mp4', 'm4v', 'mov'].includes(e), out = ctx.out.file(f, `${U.base(f)}-${lang}.${mp4 ? e : 'mkv'}`);
+      const keep = Number(o.original ?? 0.15);
+      const audio = keep > 0 ? ['-filter_complex', `[0:a]volume=${keep}[o];[1:a]aresample=48000[d];[o][d]amix=inputs=2:duration=longest:normalize=0[a]`, '-map', '0:v', '-map', '[a]'] : ['-map', '0:v', '-map', '1:a'];
+      await media().ffmpeg(['-i', f, ...pcm, '-i', srt, ...audio, '-map', '2', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-c:s', mp4 ? 'mov_text' : 'srt', '-metadata:s:a:0', `language=${ISO3[lang]}`, '-metadata:s:s:0', `language=${ISO3[lang]}`, out], rest, total, 'Saving', out);
+      return out;
+    }
+    const out = ctx.out.file(f, `${U.base(f)}-${lang}.mp3`);
+    await media().ffmpeg([...pcm, ...CODEC.mp3, out], rest, total, 'Saving', out);
+    return out;
+  } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }
+}
+
+module.exports = { translateSpeech, VOICES, transcribe, subtitleVideo, cleanVoice, splitStems, removeVocals, readAloud, textOf };

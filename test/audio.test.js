@@ -21,7 +21,7 @@ module.exports = async ({ submit, jobs, dir }) => {
     if (only && !only.test(name)) return;
     const t0 = Date.now();
     let status = 'PASS', detail = '';
-    if (!have(need)) { status = 'SKIP'; detail = `no ${need} payload (LIME_AI)`; } else { try { detail = (await fn()) || ''; } catch (e) { status = 'FAIL'; detail = e.message; } }
+    if (!have(need)) { status = 'SKIP'; detail = `no ${need} payload (LIME_AI)`; } else { try { detail = (await fn()) || ''; } catch (e) { status = e.skip ? 'SKIP' : 'FAIL'; detail = e.message; } }
     console.log(`${status} ${name.padEnd(34)} ${String(Date.now() - t0).padStart(6)}ms  ${detail}`.slice(0, 240));
     results.push({ name, status, detail });
   };
@@ -126,6 +126,21 @@ module.exports = async ({ submit, jobs, dir }) => {
     ok(lit > 200, `only ${lit} bright pixels in the lower part of the burned frame`);
     return `track + ${lit} burned-in pixels`;
   });
+  await check('translate speech · English video dubbed into German, with German subtitles', async () => {
+    if (!E('translate').available()) throw Object.assign(new Error('no translation models in this build'), { skip: true });
+    const video = path.join(OUT, 'talk.mp4');
+    if (!fs.existsSync(video)) execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=navy:s=320x240:r=10', '-i', voice(), '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video]);
+    const [dub] = await run('translate-speech', [video], { to: 'de', output: 'dub', original: '0.15' }, 'dub');
+    const st = probe(dub).streams, subs = st.filter((s) => s.codec_type === 'subtitle'), aud = st.filter((s) => s.codec_type === 'audio');
+    ok(st.some((s) => s.codec_type === 'video') && aud.length === 1 && subs.length === 1 && subs[0].tags?.language === 'deu', `streams: ${JSON.stringify(st.map((s) => [s.codec_type, s.tags?.language]))}`);
+    const [srt] = await run('translate-speech', [video], { to: 'de', output: 'srt' }, 'dub-srt');
+    const said = fs.readFileSync(srt, 'utf8');
+    ok(/Fuchs|springt|Hund|Donnerstag|Treffen|Besprechung/i.test(said) && !/lazy dog/i.test(said), `not German: ${said.slice(0, 200)}`);
+    const [mp3] = await run('translate-speech', [voice()], { to: 'de', output: 'audio' }, 'dub-mp3');
+    const d = Number(probe(mp3).format.duration);
+    ok(mp3.endsWith('.mp3') && d > 3, `German speech is ${d} s`);
+    return `German track, deu subtitles, ${d.toFixed(1)} s of German speech: ${said.split(/\r?\n/).find((l) => /[a-zäöüß]{4}/i.test(l) && !/-->/.test(l))}`;
+  }, 'espeak');
 
   await check('clean up voice noise · SNR improves', async () => {
     const clean = pcm(voice(), 48000), n = clean.length, noisy = new Float32Array(n);

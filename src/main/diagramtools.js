@@ -80,6 +80,16 @@ function register({ TOOLS, WHEELS, EDITOR_FILE, W, each }) {
     options: [{ key: 'to', type: 'select', label: 'Into', choices: langs, default: 'en' }, { key: 'from', type: 'select', label: 'From', choices: [['auto', 'Detect'], ...langs], default: 'auto', advanced: true }],
     run: each((f, o, c) => T().run(f, o, c)),
   });
+  // Speech translated and spoken again: the voices Lime reads with, in the languages it translates between.
+  if (translate) TOOLS.push({
+    id: 'translate-speech', cat: 'media', name: 'Translate speech', desc: 'Hears the speech, translates it and speaks it in another language at the same moments. A video is dubbed, with translated subtitles.', tags: 'dub dubbing voice translate translation speech language interpreter voiceover whisper piper',
+    accepts: ['video', 'audio'], ok: (files) => !files.some((f) => ['mid', 'midi'].includes(U.ext(f))), ai: 'whisper', suffix: '-translated', ext: (o, files) => (o.output === 'srt' ? 'srt' : o.output === 'audio' || U.groupOf(files[0] || '') !== 'video' ? 'mp3' : ['mp4', 'm4v', 'mov'].includes(U.ext(files[0] || '')) ? U.ext(files[0]) : 'mkv'),
+    options: [{ key: 'to', type: 'select', label: 'Into', choices: require('./engines/voice').VOICES, default: 'en-GB' },
+      { key: 'output', type: 'choice', label: 'Give me', choices: [['dub', 'Translated speech'], ['audio', 'Speech only (MP3)'], ['srt', 'Translated subtitles']], default: 'dub' },
+      { key: 'original', type: 'choice', label: 'Original voice', choices: [['0.15', 'Quietly underneath'], ['0', 'Removed']], default: '0.15', when: { output: 'dub' } },
+      { key: 'from', type: 'select', label: 'Spoken in', choices: [['auto', 'Detect'], ...langs], default: 'auto', advanced: true }],
+    run: each((f, o, c) => require('./engines/voice').translateSpeech(f, o, c)),
+  });
   const has = (id) => TOOLS.some((t) => t.id === id);
   WHEELS.diagram = {
     convert: [W('diagram-export', 'PNG', 'Picture', { to: 'png' }), W('diagram-export', 'SVG', 'Vector', { to: 'svg' }), W('diagram-export', 'PDF', 'Document', { to: 'pdf' }), W('mermaid-export', 'SVG', 'Mermaid', { to: 'svg' }), W('mermaid-export', 'PNG', 'Mermaid', { to: 'png' })].filter((w) => has(w.tool)),
@@ -92,6 +102,10 @@ function register({ TOOLS, WHEELS, EDITOR_FILE, W, each }) {
     WHEELS.doc.tools.splice(2, 0, { ...tr, only: TRANSLATE_IN });
     WHEELS.subtitle.tools.unshift({ ...tr, only: ['srt', 'vtt'] });
     WHEELS.pdf.tools.push(tr);
+    // Translate takes the slot of the least-used slice (Speed, Loop): both stay in search and the tool list.
+    const swap = (ring, id) => { const i = ring.findIndex((w) => w.tool === id); const w = W('translate-speech', 'Translate', 'Speech', {}, { ask: true }); if (i >= 0) ring.splice(i, 1, w); else ring.push(w); };
+    swap(WHEELS.video.tools, 'speed-media');
+    swap(WHEELS.audio.tools, 'loop-media');
   }
 }
 

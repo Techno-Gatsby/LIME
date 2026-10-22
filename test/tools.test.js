@@ -1644,7 +1644,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   const SPOKEN = path.join(OUT, 'spoken'), spokenWav = path.join(SPOKEN, 'spoken.wav'), spokenMp4 = path.join(SPOKEN, 'spoken.mp4');
   fs.mkdirSync(SPOKEN, { recursive: true });
   fs.writeFileSync(path.join(SPOKEN, 'spoken.txt'), 'The quick brown fox jumps over the lazy dog. Our meeting has moved to Thursday afternoon, so please bring the updated figures.');
-  Object.assign(SWEEP, { 'speech-to-text': [[spokenWav]], 'subtitle-video': [[spokenMp4]] });
+  Object.assign(SWEEP, { 'speech-to-text': [[spokenWav]], 'subtitle-video': [[spokenMp4]], 'translate-speech': [[spokenMp4], { output: 'srt' }] });
   // The Coding tools take a script and a database made here.
   const CODING = path.join(OUT, 'coding-in');
   fs.mkdirSync(CODING, { recursive: true });
@@ -1999,6 +1999,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     [/^replace-text (regex=true|everywhere=false)$/, 'a plain word reads the same as a pattern, and the document has no headers or notes'], [/^clean-office notes=true$/, 'a Word document has no speaker notes'],
     [/^office-media what=(pictures|all)$/, 'the document holds only a picture'], [/^tidy-sheet header=false$/, 'no row repeats the header row'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
     [/^run-python timeout=(10|300)$/, 'the script finishes well within any time limit'],
+    [/^translate-speech to=en-US$/, 'the sample is English already: British and American subtitles read the same'],
+    [/^translate-speech from=en$/, 'the sample is English, which is what Detect finds'],
     [/^blender-render ownCamera=false$/, 'box.stl has no camera or lights of its own'],
     [/^convert-model (repair=true|keep=1)$/, 'the box is a clean mesh of 12 triangles, the fewest Simplify keeps'], [/^model-drawing scale=2$/, 'the stepped block fits at 2:1, the largest scale that fits'], [/^file-hash algos=none$/, 'no algorithm falls back to SHA-256'], [/^rename-files case=lower$/, 'the new name is lower case already'],
   ];
