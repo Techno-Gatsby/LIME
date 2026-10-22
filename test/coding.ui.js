@@ -35,9 +35,13 @@ module.exports = async ({ check, js, openPrefs, prefs, openEditor, editors, dir 
   const until = async (fn, ms = 5000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await sleep(100); } return false; };
 
   await check('Settings › Wheel apps · reorder, move, hide, reorder buckets, drag, reset', async () => {
+    // A Settings window closed just before may still be going away: wait for it, or calls into it never answer.
+    const old = prefs();
+    if (old && !old.isDestroyed()) old.close();
+    await until(() => !prefs(), 5000);
     openPrefs();
     let pw = null;
-    await until(() => (pw = prefs()), 5000);
+    await until(() => (pw = prefs()) && !pw.isDestroyed(), 5000);
     const wc = pw.webContents, pjs = (code) => js(code, wc);
     while (wc.isLoading()) await sleep(150);
     await until(() => pjs('document.querySelectorAll(".wheel-apps .bucket-col").length === 4'), 6000);
@@ -78,6 +82,7 @@ module.exports = async ({ check, js, openPrefs, prefs, openEditor, editors, dir 
     await pjs(`(() => { const i = document.querySelector('.prefs-search input'); i.value = ''; i.dispatchEvent(new Event('input')); })()`);
     if (found.join() !== 'SQLite') throw new Error(`searching “sqlite” shows ${found}`);
     pw.close();
+    await until(() => !prefs(), 5000);
     return 'moved PdfCraft down, GridCraft to Coding, SoundCraft by drag; hid DeckCraft; Office after Design & media; search finds SQLite; reset restored all';
   });
 
