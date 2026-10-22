@@ -26,7 +26,15 @@ async function encode(src, raw, { rate, channels }, info, ctx, name, label, ext)
 }
 
 // A file with no speech in it (music, a tone, silence) gives no segments: say so rather than save an empty file.
-const heard = (r, f) => { if (!r.segments?.some((x) => String(x.text || '').trim())) throw new Error(`No speech heard in ${path.basename(f)}.`); return r; };
+// Whisper can loop over trailing silence, repeating the sentence it just heard; those repeats are dropped.
+const said = (x) => String(x.text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const heard = (r, f) => {
+  if (!r.segments?.some((x) => String(x.text || '').trim())) throw new Error(`No speech heard in ${path.basename(f)}.`);
+  const seen = new Set();
+  r.segments = r.segments.filter((x) => { const k = said(x); if (k.split(' ').length >= 3 && seen.has(k)) return false; seen.add(k); return true; });
+  if (r.text != null) r.text = r.segments.map((x) => String(x.text || '').trim()).join(' ');
+  return r;
+};
 async function transcribe(f, o, ctx) {
   const to = o.to || 'srt';
   await sound(f);

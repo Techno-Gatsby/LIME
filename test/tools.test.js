@@ -1666,7 +1666,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   // Turntables are rendered frame by frame on the processor: one-second turns of small frames keep the sweep short.
   Object.assign(SWEEP, { 'solid-change': [0, { params: 'width = 60 mm' }], 'blender-render': [0, { quality: 'draft', size: 'small' }], 'blender-turntable': [0, { seconds: 1, to: 'gif', width: 240, height: 240 }] });
   const SWEEP_SKIP = [[/^blender-turntable seconds=20$/, 'twenty seconds of frames; one second covers the range'],
-    ...(process.platform === 'linux' ? [[/^blender-(render|turntable) engine=eevee$/, 'Eevee needs a graphics card, and this test machine renders without one']] : [])];
+    ...(process.platform === 'linux' || process.env.CI ? [[/^blender-(render|turntable) engine=eevee$/, 'Eevee needs a graphics card, and this test machine renders without one']] : [])];
   { const d = require('./diagrams.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }
   { const d = await require('./engineering.test').sweep(FX); Object.assign(SWEEP, d.inputs); Object.assign(SWEEP_REFUSE, d.refuse); }
   const sweepIn = (t) => SWEEP[t.id]?.[0] || [SWEEP_IN[t.accepts.find((g) => SWEEP_IN[g])] || SWEEP_EXT[(t.extAccept || []).find((e) => SWEEP_EXT[e])]];
@@ -1794,7 +1794,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
     const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : sweepIn(t).some((f) => !E('crafts').readable(f)) ? 'the sample needs an app this build lacks' : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : t.engine && !require('../src/main/engtools').engineReady(t.engine) ? `the ${t.engine} engine isn’t in this build` : undefined;
-    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine, limit: t.ai ? 900000 : undefined });
+    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine || SWEEP_SKIP.find(([re]) => re.test(`${t.id} ${label}`))?.[1], limit: t.ai ? 900000 : undefined });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
     const opts = { ...defaults(tools.get(id)), ...more }, check = sweepCheck(id, 'batch', opts);

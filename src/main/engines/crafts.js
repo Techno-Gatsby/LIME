@@ -1056,9 +1056,13 @@ const renderJob = (opts) => {
   const samples = { draft: 24, good: 96, best: 256 }[opts.quality] || Number(opts.samples) || 96;
   return { width: Number(opts.width) || width, height: Number(opts.height) || height, samples, engine: opts.engine === 'eevee' ? 'eevee' : 'cycles', background: opts.background || 'studio', ownCamera: opts.ownCamera !== false, ownLights: opts.ownLights !== false };
 };
+// Eevee needs a graphics card; without a usable one Blender crashes, so the render is made again with Cycles on the processor.
+const eeveeOr = async (job, fn) => {
+  try { return await fn(job); } catch (e) { if (job.engine !== 'eevee' || e.code === 'TIMEOUT' || e.name === 'AbortError') throw e; return fn({ ...job, engine: 'cycles' }); }
+};
 async function studioRender(p, opts, ctx) {
   const out = ctx.out.file(p, `${U.base(p)} - render.png`);
-  await forBlender(p, ctx, (src) => blender({ op: 'render', in: src, out, ...renderJob(opts) }, ctx, 'Rendering with Blender'));
+  await forBlender(p, ctx, (src) => eeveeOr(renderJob(opts), (job) => blender({ op: 'render', in: src, out, ...job }, ctx, 'Rendering with Blender')));
   if (!fs.existsSync(out)) throw new Error('Blender finished without writing a picture.');
   return out;
 }
@@ -1069,7 +1073,7 @@ async function turntable(p, opts, ctx) {
   if (!opts.size && !opts.width) [job.width, job.height] = to === 'gif' ? [600, 600] : [1280, 720];
   const dir = await U.tmpDir('turntable');
   try {
-    await forBlender(p, ctx, (src) => blender({ ...job, in: src, out: dir }, ctx, 'Rendering the turntable', { frames: true, timeout: 3600000 }));
+    await forBlender(p, ctx, (src) => eeveeOr(job, (j) => blender({ ...j, in: src, out: dir }, ctx, 'Rendering the turntable', { frames: true, timeout: 3600000 })));
     const out = ctx.out.file(p, `${U.base(p)} - turntable.${to}`);
     const input = ['-framerate', String(fps), '-i', path.join(dir, 'frame-%04d.png')];
     const args = to === 'gif' ? [...input, '-vf', 'split[a][b];[a]palettegen[p];[b][p]paletteuse', '-loop', '0', out]

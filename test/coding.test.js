@@ -42,7 +42,7 @@ module.exports = async ({ submit, jobs, dir }) => {
     ok(!none.length, `no bucket: ${none}`);
     const by = (k) => Object.keys(C.APPS).filter((id) => C.APPS[id].bucket === k);
     ok(by('office').join() === 'pdfcraft,wordcraft,gridcraft,deckcraft', `office ${by('office')}`);
-    ok(by('design').join() === 'photocraft,lightcraft,vectorcraft,designcraft,effectcraft,filmcraft,soundcraft', `design ${by('design')}`);
+    ok(by('design').filter((id) => !C.APPS[id].optional).join() === 'photocraft,lightcraft,vectorcraft,designcraft,effectcraft,filmcraft,soundcraft', `design ${by('design')}`);
     ok(['webcraft', 'code', 'python', 'sqlite'].every((id) => by('coding').includes(id)) && by('engineering').includes('cadcraft'), 'coding or engineering');
     return Object.keys(C.BUCKETS).map((k) => `${k} ${by(k).length}`).join(', ');
   });
