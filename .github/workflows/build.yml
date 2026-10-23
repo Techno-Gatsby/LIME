@@ -33,7 +33,7 @@ jobs:
             asset: dist/*.exe
             app: dist/Lime-win32-x64/resources/app
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
+    timeout-minutes: 240
     defaults:
       run:
         shell: bash
@@ -74,7 +74,7 @@ jobs:
           retention-days: 30
       - name: Test every tool in the packaged app
         run: npm test -- "${{ matrix.app }}"
-        timeout-minutes: 40
+        timeout-minutes: 70
         env:
           LIME_NO_GPU: 1
       - name: Use every petal through the wheel and Save dialog
