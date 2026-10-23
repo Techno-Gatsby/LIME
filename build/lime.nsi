@@ -53,17 +53,30 @@ Section "Lime"
   SectionIn RO
   !insertmacro CloseApp
 !ifdef SPLIT
-  ; Run from inside the zip, Windows extracts only the installer and the apps would silently be left out.
-  IfFileExists "$EXEDIR\Lime-data\*.*" +3 0
-  MessageBox MB_ICONSTOP|MB_OK "The Lime-data folder isn't next to Lime-Setup.exe, so the apps can't be installed.$\r$\n$\r$\nRight-click the Lime download, choose Extract All, then run Lime-Setup.exe from the extracted folder."
+  ; The large archives come beside the installer: a Lime-data folder (the build download) or Lime-data.zip (the release).
+  ; Run from inside a zip, Windows extracts only the installer, and the apps would silently be left out.
+  IfFileExists "$EXEDIR\Lime-data\*.*" data_ok 0
+  IfFileExists "$EXEDIR\Lime-data.zip" data_ok 0
+  MessageBox MB_ICONSTOP|MB_OK "Lime-data.zip (or the Lime-data folder) isn't next to $EXEFILE, so the apps can't be installed.$\r$\n$\r$\nPut both downloads in the same folder, or extract the whole Lime download, then run $EXEFILE again."
   Abort
+  data_ok:
 !endif
   SetOutPath "$INSTDIR"
   RMDir /r "$INSTDIR\resources\app"
 !ifdef SPLIT
   ; The large archives sit in Lime-data beside the installer (see dist-win.mjs).
   !include "${SPLIT}"
+  IfFileExists "$EXEDIR\Lime-data\*.*" 0 data_zip
   CopyFiles /SILENT "$EXEDIR\Lime-data\*.*" "$INSTDIR\resources"
+  Goto data_done
+  data_zip:
+  DetailPrint "Unpacking Lime-data.zip…"
+  nsExec::ExecToLog `powershell -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath '$EXEDIR\Lime-data.zip' -DestinationPath '$INSTDIR\resources' -Force"`
+  Pop $0
+  StrCmp $0 "0" data_done 0
+  MessageBox MB_ICONSTOP|MB_OK "Lime-data.zip couldn't be unpacked ($0). Check there is free space and that the download finished, then run $EXEFILE again."
+  Abort
+  data_done:
 !else
   File /r "${SRC}\*.*"
 !endif

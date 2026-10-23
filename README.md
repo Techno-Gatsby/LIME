@@ -4,6 +4,8 @@ A drop-anything converter that lives on your desktop as a small wheel. Drop file
 
 ## Install
 
+Download Lime from the [latest release](https://github.com/Techno-Gatsby/LIME/releases/latest). No account needed.
+
 ### Mac (Apple silicon)
 
 1. Open `Lime-1.0.0-arm64.dmg` and drag **Lime** onto **Applications**.
@@ -17,7 +19,7 @@ Apple hasn't notarised Lime yet, so macOS blocks the first launch:
 
 ### Windows 10 / 11 (64-bit)
 
-Run `Lime-Setup-1.0.0-x64.exe`. It installs for your account only, with no admin rights needed. It adds Start menu and desktop shortcuts, plus **Convert with Lime** in the File Explorer right-click menu.
+Download both `Lime-Setup-1.0.0-x64.exe` and `Lime-data.zip` into the same folder; leave the zip as it is. Run `Lime-Setup-1.0.0-x64.exe`: it unpacks the apps from `Lime-data.zip` as it installs (the apps are too large to fit in one download). It installs for your account only, with no admin rights needed. It adds Start menu and desktop shortcuts, plus **Convert with Lime** in the File Explorer right-click menu.
 
 The installer isn't code-signed yet, so SmartScreen shows a warning: click **More info › Run anyway**. On a managed work laptop, IT policy may block unsigned apps entirely; if so, ask IT to allow `Lime.exe`.
 
