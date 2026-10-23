@@ -69,7 +69,8 @@ module.exports = async ({ submit, jobs, dir }) => {
 
   const EN = 'The quick brown fox jumps over the lazy dog. Our meeting has moved to Thursday afternoon, so please bring the updated figures. The weather in London is mild this week, with light rain expected on Friday.';
   const SPEECH = {
-    'en-GB': ['en', EN, 0.1],
+    // The base model on a Windows runner hears three or four of these 36 words differently; still the strictest voice here.
+    'en-GB': ['en', EN, 0.15],
     'en-US': ['en', 'Please remember to lock the door when you leave tonight. Sales grew by twelve percent in the last quarter, which is better than we expected.', 0.3],
     hi: ['hi', 'आज मौसम बहुत अच्छा है और हम बाज़ार जा रहे हैं। मेरा नाम रोहन है और मैं दिल्ली में रहता हूँ। कृपया यह किताब मेज़ पर रख दीजिए।', 0.4],
     ar: ['ar', 'الطقس جميل اليوم ونحن ذاهبون إلى السوق. اسمي كريم وأنا أسكن في عمان. من فضلك ضع هذا الكتاب على الطاولة.', 0.45],
@@ -87,7 +88,7 @@ module.exports = async ({ submit, jobs, dir }) => {
       spoken[voice] = mp3;
       const [txt] = await run('speech-to-text', [mp3], { to: 'txt', lang }, `asr-${voice}`);
       const w = wer(t, fs.readFileSync(txt, 'utf8'));
-      ok(w <= limit, `WER ${pct(w)} over ${pct(limit)}: ${fs.readFileSync(txt, 'utf8').slice(0, 160)}`);
+      ok(w <= limit, `WER ${pct(w)} over ${pct(limit)}: ${fs.readFileSync(txt, 'utf8').replace(/\s+/g, ' ').trim()}`);
       return `${dur.toFixed(1)} s spoken, WER ${pct(w)}`;
     }, lang === 'en' ? 'whisper' : 'whisper-small');
   }

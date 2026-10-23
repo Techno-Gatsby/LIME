@@ -2621,6 +2621,8 @@ module.exports = async ({ openCraftWeb, wheel, sensor, watcher, summon, shiftSum
   });
 
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
+  // The failures again at the end, where a CI log's tail shows them.
+  for (const r of fail) console.log(`FAIL ${r.name}  ${String(r.detail || '').slice(0, 400)}`);
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed through the wheel${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'ui-report.json'), JSON.stringify(results, null, 1));
   app.isQuitting = true;

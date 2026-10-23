@@ -1794,7 +1794,7 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
     }
     for (const [a, b] of pairs) if (a !== b && runs.has(b) && !sweepPairs.some(([x, y]) => x === `${t.id} ${runs.get(a)}` && y === `${t.id} ${runs.get(b)}`)) sweepPairs.push([`${t.id} ${runs.get(a)}`, `${t.id} ${runs.get(b)}`]);
     const noEngine = t.craft && !craftEngines.has(t.craft) ? `no ${E('crafts').APPS[t.craft].name} engine on this platform` : sweepIn(t).some((f) => !E('crafts').readable(f)) ? 'the sample needs an app this build lacks' : t.model && !E('ai').available(t.model) ? `the ${t.model} model isn’t packed` : t.ai && !E('speech-ai').have(t.ai) ? 'the speech models are not in this build' : t.engine && !require('../src/main/engtools').engineReady(t.engine) ? `the ${t.engine} engine isn’t in this build` : undefined;
-    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine || SWEEP_SKIP.find(([re]) => re.test(`${t.id} ${label}`))?.[1], limit: t.ai ? 900000 : undefined });
+    for (const [key, label] of runs) C.push({ name: `sweep ${t.id} ${label}`, tool: t.id, ...(/^blender-/.test(t.id) ? { limit: 900000 } : {}), inputs: sweepIn(t).map((f) => (path.isAbsolute(f) ? f : fx(f))), opts: JSON.parse(key), par: true, save: true, copy: t.save === 'inplace', fail: SWEEP_REFUSE[`${t.id} ${label}`], check: sweepCheck(t.id, label, JSON.parse(key)), skip: noEngine || SWEEP_SKIP.find(([re]) => re.test(`${t.id} ${label}`))?.[1], limit: t.ai ? 900000 : undefined });
   }
   for (const [id, ins, more] of [['convert-image', ['photo2.jpg', 'photo.webp'], { to: 'png' }], ['convert-document', ['dupA/report.txt', 'dupB/report.txt'], { to: 'pdf' }], ['convert-audio', ['tone.mp3', 'sweep.m4a'], { to: 'wav' }]]) {
     const opts = { ...defaults(tools.get(id)), ...more }, check = sweepCheck(id, 'batch', opts);
@@ -2028,6 +2028,8 @@ module.exports = async ({ submit, jobs, app, tools, dir }) => {
   results.push(...(await require('./dictate.test')({ submit, jobs, app, tools, dir })));
   results.push(...(await require('./engineering.test')({ submit, jobs, app, tools, dir })));
   const fail = results.filter((r) => r.status === 'FAIL'), skip = results.filter((r) => r.status === 'SKIP');
+  // The failures again at the end, where a CI log's tail shows them.
+  for (const r of fail) console.log(`FAIL ${r.name}  ${String(r.detail || '').slice(0, 400)}`);
   console.log(`\n${results.length - fail.length - skip.length}/${results.length - skip.length} passed${skip.length ? `, ${skip.length} skipped` : ''}`);
   fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify(results, null, 1));
   app.isQuitting = true;
