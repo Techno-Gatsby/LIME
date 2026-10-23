@@ -6,6 +6,11 @@ on:
     tags: ['v*']
     paths-ignore: ['**.md', 'LICENSES/**']
   workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a release with this tag (for example v1.0.0); leave empty for a plain build
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -83,12 +88,14 @@ jobs:
         env:
           LIME_NO_GPU: 1
       # A release goes out even when a test was flaky (the failure still shows on the run); only a missing build stops it.
-      - if: ${{ !cancelled() && github.ref_type == 'tag' }}
+      - if: ${{ !cancelled() && (github.ref_type == 'tag' || inputs.release) }}
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release }}
         run: |
-          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')" || echo "::warning::The tag does not match package.json's version; the update check compares package.json versions"
+          test "$TAG" = "v$(node -p 'require("./package.json").version')" || echo "::warning::The tag does not match package.json's version; the update check compares package.json versions"
           node scripts/update-feed.mjs ${{ matrix.asset }} ${{ matrix.target }}
           # Release files stop at 2 GiB, so the Windows archives travel as Lime-data.zip, which the installer unpacks.
           DATA=
           if [ -d dist/Lime-data ]; then (cd dist/Lime-data && /c/Windows/System32/tar.exe -a --options zip:compression=store -cf ../Lime-data.zip *) && DATA=dist/Lime-data.zip; fi
-          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --title "Lime $GITHUB_REF_NAME" --notes "Lime for Mac (Apple silicon) and Windows (64-bit). Mac: open the .dmg and drag Lime to Applications. Windows: download both Lime-Setup-….exe and Lime-data.zip into the same folder (leave the zip as it is), then run the setup. See the README for first-launch steps."" || true
-          gh release upload "$GITHUB_REF_NAME" ${{ matrix.asset }} $DATA dist/lime-update-${{ matrix.target }}.json -R "$GITHUB_REPOSITORY" --clobber
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Lime $TAG" --notes "Lime for Mac (Apple silicon) and Windows (64-bit). Mac: open the .dmg and drag Lime to Applications. Windows: download both Lime-Setup-….exe and Lime-data.zip into the same folder (leave the zip as it is), then run the setup. See the README for first-launch steps."" || true
+          gh release upload "$TAG" ${{ matrix.asset }} $DATA dist/lime-update-${{ matrix.target }}.json -R "$GITHUB_REPOSITORY" --clobber
